@@ -16,6 +16,8 @@ It can:
 
 If `--build-compilers` is not provided, the script assumes the selected compiler binaries have already been built. If the expected executable is missing, it stops with an error instead of building automatically.
 
+Tests placed directly under `tests/` are run with both compilers. Tests under `tests/clang_only/` are only run with clang, and tests under `tests/gcc_only/` are only run with gcc.
+
 Examples:
 
 ```bash

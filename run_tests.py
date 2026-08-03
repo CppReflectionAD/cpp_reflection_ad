@@ -15,6 +15,8 @@ ROOT = Path(__file__).resolve().parent
 TESTS_DIR = ROOT / "tests"
 BUILD_ROOT = ROOT / "build"
 ARTIFACTS_DIR = BUILD_ROOT / "artifacts"
+CLANG_ONLY_DIR = "clang_only"
+GCC_ONLY_DIR = "gcc_only"
 
 
 @dataclass(frozen=True)
@@ -173,15 +175,28 @@ def build_specs(args: argparse.Namespace) -> dict[str, CompilerSpec]:
     }
 
 
-def discover_tests(patterns: list[str] | None) -> list[Path]:
+def is_test_applicable(test_file: Path, compiler_name: str) -> bool:
+    relative_path = test_file.relative_to(TESTS_DIR)
+    if not relative_path.parts:
+        return True
+
+    top_level_dir = relative_path.parts[0]
+    if top_level_dir == CLANG_ONLY_DIR:
+        return compiler_name == "clang"
+    if top_level_dir == GCC_ONLY_DIR:
+        return compiler_name == "gcc"
+    return True
+
+
+def discover_tests(patterns: list[str] | None, compiler_name: str) -> list[Path]:
     if not TESTS_DIR.is_dir():
         raise SystemExit(f"Tests directory not found: {TESTS_DIR}")
 
     if not patterns:
-        tests = sorted(TESTS_DIR.glob("*.cpp"))
+        candidates = sorted(TESTS_DIR.rglob("*.cpp"))
     else:
         seen: set[Path] = set()
-        tests = []
+        candidates = []
         for pattern in patterns:
             for test_file in sorted(TESTS_DIR.glob(pattern)):
                 if (
@@ -190,11 +205,19 @@ def discover_tests(patterns: list[str] | None) -> list[Path]:
                     and test_file not in seen
                 ):
                     seen.add(test_file)
-                    tests.append(test_file)
+                    candidates.append(test_file)
+
+    tests = [
+        test_file
+        for test_file in candidates
+        if test_file.is_file() and is_test_applicable(test_file, compiler_name)
+    ]
 
     if not tests:
         requested = ", ".join(patterns or ["*.cpp"])
-        raise SystemExit(f"No test files found for pattern(s): {requested}")
+        raise SystemExit(
+            f"No test files found for compiler {compiler_name} and pattern(s): {requested}"
+        )
     return tests
 
 
@@ -365,7 +388,6 @@ def summarize(results: list[TestResult], ran_executables: bool) -> int:
 def main() -> int:
     args = parse_args()
     specs = build_specs(args)
-    tests = discover_tests(args.tests)
 
     if args.build_compilers:
         build_selected_compilers(specs, args)
@@ -373,6 +395,7 @@ def main() -> int:
     results: list[TestResult] = []
     for compiler_name in selected_compilers(args):
         spec = specs[compiler_name]
+        tests = discover_tests(args.tests, compiler_name)
         validate_compiler_executable(spec)
         for test_file in tests:
             result = compile_and_maybe_run(spec, test_file, args)
