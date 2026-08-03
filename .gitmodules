@@ -2,3 +2,7 @@
 	path = clang-p2996
 	url = https://github.com/siqiyyyy/clang-p2996.git
 	branch = expr-reflect
+[submodule "gcc-mirror"]
+	path = gcc-mirror
+	url = https://github.com/yesmanchyk/gcc-mirror.git
+	branch = no_expression_kind
