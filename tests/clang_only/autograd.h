@@ -221,7 +221,7 @@ consteval std::vector<Node> build_nodes() {
   for (info s : m::statements_of(m::body_of(Fn))) {
     if (m::is_declaration_statement(s)) {
       info v = m::declared_variable_of(s);
-      std::size_t slot = detail::lower(c, m::initializer_of(s));
+      std::size_t slot = detail::lower(c, m::initializer_of(v));
       c.envDecl.push_back(v);
       c.envSlot.push_back(slot);
     } else if (m::is_return_statement(s)) {
