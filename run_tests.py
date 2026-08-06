@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -17,6 +18,28 @@ BUILD_ROOT = ROOT / "build"
 ARTIFACTS_DIR = BUILD_ROOT / "artifacts"
 CLANG_ONLY_DIR = "clang_only"
 GCC_ONLY_DIR = "gcc_only"
+
+# The clang reflection fork is built from the clang-p2996 submodule into this
+# repo's own build/ tree, so the repo is self-contained (no dependency on any
+# externally pre-built compiler). The clang "root" is that build tree: it holds
+# bin/clang++, include/c++/v1/meta, and lib/libc++.so, and the clang flag
+# profile is derived from it. Override with --clang-root / CLANG_P2996_ROOT to
+# point at a compiler built elsewhere.
+DEFAULT_CLANG_ROOT = os.environ.get(
+    "CLANG_P2996_ROOT", str(BUILD_ROOT / "clang-p2996")
+)
+# Standalone libc++/libc++abi/libunwind (runtimes) build tree. Built with the
+# freshly built clang; its headers/libs are emitted into the clang root via
+# LLVM_BINARY_DIR (see build_clang_runtimes).
+DEFAULT_CLANG_RUNTIMES_DIR = str(BUILD_ROOT / "libcxx")
+DEFAULT_GCC_TOOLCHAIN = os.environ.get(
+    "REFLECT_GCC_TOOLCHAIN", "/opt/rh/gcc-toolset-13/root/usr"
+)
+
+# Per-test compile flags are declared inline via a `// TEST-FLAGS: ...` comment
+# in the first few lines of a test (e.g. benchmarks that need -O2).
+TEST_FLAGS_DIRECTIVE = "// TEST-FLAGS:"
+TEST_FLAGS_SCAN_LINES = 10
 
 
 @dataclass(frozen=True)
@@ -49,6 +72,11 @@ class CompilerSpec:
     source_dir: Path
     build_dir: Path
     executable: Path
+    # Reflection flag profile for this compiler: everything the compiler needs
+    # beyond -std and the source/-o pair (reflection features, stdlib, include
+    # and library paths). This is what lets the same test compile under a
+    # different compiler by simply selecting a different profile.
+    cxxflags: tuple[str, ...] = ()
 
 
 def parse_args() -> argparse.Namespace:
@@ -89,9 +117,45 @@ def parse_args() -> argparse.Namespace:
         help="Parallel build jobs. Default: host CPU count.",
     )
     parser.add_argument(
-        "--clang-build-dir",
-        default=str(BUILD_ROOT / "clang-p2996"),
-        help="Build directory for clang-p2996.",
+        "--clang-root",
+        default=DEFAULT_CLANG_ROOT,
+        help=(
+            "Root of the built clang-p2996 (holds bin/clang++, include/c++/v1/meta, "
+            "lib/libc++.so); doubles as the clang build tree. The clang reflection "
+            "flag profile is derived from this. "
+            f"Default: {DEFAULT_CLANG_ROOT} (env CLANG_P2996_ROOT)."
+        ),
+    )
+    parser.add_argument(
+        "--clang-runtimes-dir",
+        default=DEFAULT_CLANG_RUNTIMES_DIR,
+        help=(
+            "Build directory for the standalone libc++/libc++abi/libunwind runtimes. "
+            f"Default: {DEFAULT_CLANG_RUNTIMES_DIR}."
+        ),
+    )
+    parser.add_argument(
+        "--host-cxx",
+        default=os.environ.get("REFLECT_HOST_CXX", "clang++"),
+        help="Host C++ compiler used to build clang. Default: clang++ (env REFLECT_HOST_CXX).",
+    )
+    parser.add_argument(
+        "--host-cc",
+        default=os.environ.get("REFLECT_HOST_CC", "clang"),
+        help="Host C compiler used to build clang. Default: clang (env REFLECT_HOST_CC).",
+    )
+    parser.add_argument(
+        "--python-executable",
+        default=sys.executable,
+        help="Python interpreter passed to the LLVM build (Python3_EXECUTABLE).",
+    )
+    parser.add_argument(
+        "--gcc-toolchain",
+        default=DEFAULT_GCC_TOOLCHAIN,
+        help=(
+            "GCC toolchain clang uses for the C++ runtime/linker "
+            f"(--gcc-toolchain=...). Default: {DEFAULT_GCC_TOOLCHAIN}."
+        ),
     )
     parser.add_argument(
         "--gcc-build-dir",
@@ -100,7 +164,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--clang-executable",
-        help="Path to an existing clang++ executable to use instead of the default build output.",
+        help="Path to a clang++ executable, overriding <clang-root>/bin/clang++.",
     )
     parser.add_argument(
         "--gcc-executable",
@@ -148,19 +212,43 @@ def selected_compilers(args: argparse.Namespace) -> list[str]:
     return [args.compiler]
 
 
+def clang_cxxflags(clang_root: Path, gcc_toolchain: str) -> tuple[str, ...]:
+    """Reflection flag profile for the clang-p2996 fork.
+
+    Mirrors DEMO_FLAGS in the top-level Makefile: the reflection features, the
+    libc++ stdlib, the -isystem for the installed <meta> header, and the
+    library/rpath for libc++ (all rooted at the built compiler tree).
+    """
+    libcxx_inc = clang_root / "include" / "c++" / "v1"
+    libcxx_lib = clang_root / "lib"
+    return (
+        "-freflection",
+        "-fparameter-reflection",
+        "-fexpansion-statements",
+        "-stdlib=libc++",
+        f"--gcc-toolchain={gcc_toolchain}",
+        "-isystem",
+        str(libcxx_inc),
+        f"-L{libcxx_lib}",
+        f"-Wl,-rpath,{libcxx_lib}",
+    )
+
+
 def build_specs(args: argparse.Namespace) -> dict[str, CompilerSpec]:
-    clang_build_dir = Path(args.clang_build_dir).resolve()
+    clang_root = Path(args.clang_root).resolve()
     gcc_build_dir = Path(args.gcc_build_dir).resolve()
     return {
         "clang": CompilerSpec(
             name="clang",
             source_dir=ROOT / "clang-p2996",
-            build_dir=clang_build_dir,
+            # The clang root doubles as its build tree (runtimes + <meta> land here).
+            build_dir=clang_root,
             executable=(
                 Path(args.clang_executable).resolve()
                 if args.clang_executable
-                else clang_build_dir / "bin" / "clang++"
+                else clang_root / "bin" / "clang++"
             ),
+            cxxflags=clang_cxxflags(clang_root, args.gcc_toolchain),
         ),
         "gcc": CompilerSpec(
             name="gcc",
@@ -171,6 +259,10 @@ def build_specs(args: argparse.Namespace) -> dict[str, CompilerSpec]:
                 if args.gcc_executable
                 else gcc_build_dir / "g++"
             ),
+            # Reflection flag profile for the gcc-mirror (no_expression_kind)
+            # fork is TBD until a gcc AD engine + tests exist. gcc tests are
+            # not expected to run yet.
+            cxxflags=(),
         ),
     }
 
@@ -221,37 +313,141 @@ def discover_tests(patterns: list[str] | None, compiler_name: str) -> list[Path]
     return tests
 
 
-def build_clang(spec: CompilerSpec, args: argparse.Namespace) -> None:
-    ensure_directory(spec.build_dir)
-    configure = [
-        "cmake",
-        "-S",
-        str(spec.source_dir / "llvm"),
-        "-B",
-        str(spec.build_dir),
-        "-G",
-        "Ninja",
-        "-DLLVM_ENABLE_PROJECTS=clang",
-        "-DCMAKE_BUILD_TYPE=Release",
-    ]
-    configure_result = run_command(configure, cwd=ROOT, verbose=args.verbose)
-    require_success(configure_result, "clang configure")
+def parse_test_flags(test_file: Path) -> list[str]:
+    """Read an inline `// TEST-FLAGS: ...` directive from the top of a test.
 
-    build = [
-        "cmake",
-        "--build",
-        str(spec.build_dir),
-        "--target",
-        "clang",
-        "clang++",
-        "-j",
-        str(args.jobs),
-    ]
-    build_result = run_command(build, cwd=ROOT, verbose=args.verbose)
-    require_success(build_result, "clang build")
+    Lets a single test declare extra compile flags (e.g. `-O2` for benchmarks)
+    without special-casing it in the harness. Returns [] if none is present.
+    """
+    try:
+        with test_file.open("r", encoding="utf-8", errors="replace") as handle:
+            for _ in range(TEST_FLAGS_SCAN_LINES):
+                line = handle.readline()
+                if not line:
+                    break
+                stripped = line.strip()
+                if stripped.startswith(TEST_FLAGS_DIRECTIVE):
+                    return shlex.split(stripped[len(TEST_FLAGS_DIRECTIVE):])
+    except OSError:
+        pass
+    return []
+
+
+def ensure_submodule(source_dir: Path, args: argparse.Namespace) -> None:
+    """Check out a submodule on demand so the repo builds from a bare clone.
+
+    A fresh clone leaves clang-p2996/gcc-mirror as empty submodule dirs; the
+    build needs their sources. Idempotent: a no-op once populated.
+    """
+    if (source_dir / ".git").exists() or any(source_dir.iterdir()):
+        return
+    result = run_command(
+        ["git", "submodule", "update", "--init", str(source_dir.name)],
+        cwd=ROOT,
+        verbose=args.verbose,
+    )
+    require_success(result, f"submodule checkout ({source_dir.name})")
+
+
+def build_clang(spec: CompilerSpec, args: argparse.Namespace) -> None:
+    """Build the clang-p2996 fork and its libc++ runtimes into the clang root.
+
+    Faithful port of the reference recipe: build clang with a host clang + lld
+    (keeps link memory low), then build libc++/libc++abi as a standalone
+    runtimes project with the freshly built clang, emitting headers/libs into
+    the clang root, and finally sync the fork's <meta> header into place.
+    """
+    ensure_submodule(spec.source_dir, args)
+    ensure_directory(spec.build_dir)
+
+    # Configure clang (idempotent; skip if already configured).
+    if not (spec.build_dir / "build.ninja").is_file():
+        configure = [
+            "cmake",
+            "-S",
+            str(spec.source_dir / "llvm"),
+            "-B",
+            str(spec.build_dir),
+            "-G",
+            "Ninja",
+            "-DLLVM_ENABLE_PROJECTS=clang;clang-tools-extra",
+            "-DCMAKE_BUILD_TYPE=RelWithDebInfo",
+            "-DLLVM_USE_LINKER=lld",
+            f"-DCMAKE_C_COMPILER={args.host_cc}",
+            f"-DCMAKE_CXX_COMPILER={args.host_cxx}",
+            f"-DPython3_EXECUTABLE={args.python_executable}",
+            "-DLLVM_TARGETS_TO_BUILD=X86",
+            f"-DLLVM_PARALLEL_COMPILE_JOBS={args.jobs}",
+            # Linking clang is memory-hungry; serialize link steps.
+            "-DLLVM_PARALLEL_LINK_JOBS=1",
+        ]
+        require_success(
+            run_command(configure, cwd=ROOT, verbose=args.verbose), "clang configure"
+        )
+
+    build = ["ninja", "-C", str(spec.build_dir), "-j", str(args.jobs), "clang", "clang++"]
+    require_success(run_command(build, cwd=ROOT, verbose=args.verbose), "clang build")
+
+    build_clang_runtimes(spec, args)
+
+
+def build_clang_runtimes(spec: CompilerSpec, args: argparse.Namespace) -> None:
+    """Build libc++/libc++abi/libunwind and install the <meta> header.
+
+    Uses the freshly built clang and points LLVM_BINARY_DIR at the clang root so
+    the generated headers land in <root>/include/c++/v1 and libs in <root>/lib —
+    exactly where the clang flag profile's -isystem/-L expect them.
+    """
+    runtimes_dir = Path(args.clang_runtimes_dir).resolve()
+    built_clang = spec.build_dir / "bin" / "clang"
+    built_clangxx = spec.build_dir / "bin" / "clang++"
+    ensure_directory(runtimes_dir)
+
+    if not (runtimes_dir / "build.ninja").is_file():
+        configure = [
+            "cmake",
+            "-S",
+            str(spec.source_dir / "runtimes"),
+            "-B",
+            str(runtimes_dir),
+            "-G",
+            "Ninja",
+            f"-DCMAKE_C_COMPILER={built_clang}",
+            f"-DCMAKE_CXX_COMPILER={built_clangxx}",
+            f"-DCMAKE_C_FLAGS=--gcc-toolchain={args.gcc_toolchain}",
+            f"-DCMAKE_CXX_FLAGS=--gcc-toolchain={args.gcc_toolchain}",
+            "-DCMAKE_BUILD_TYPE=RelWithDebInfo",
+            "-DLLVM_ENABLE_RUNTIMES=libcxx;libcxxabi;libunwind",
+            f"-DLLVM_BINARY_DIR={spec.build_dir}",
+            f"-DLLVM_CONFIG_PATH={spec.build_dir / 'bin' / 'llvm-config'}",
+        ]
+        require_success(
+            run_command(configure, cwd=ROOT, verbose=args.verbose), "runtimes configure"
+        )
+
+    build = ["ninja", "-C", str(runtimes_dir), "-j", str(args.jobs), "cxx", "cxxabi"]
+    require_success(run_command(build, cwd=ROOT, verbose=args.verbose), "runtimes build")
+
+    sync_meta_header(spec)
+
+
+def sync_meta_header(spec: CompilerSpec) -> None:
+    """Copy the fork's <meta> header into the installed libc++ include dir.
+
+    The fork ships libcxx/include/meta but doesn't wire it into the runtimes
+    header install, so it's copied in explicitly (also lets header-only edits
+    take effect without a full runtimes rebuild).
+    """
+    meta_src = spec.source_dir / "libcxx" / "include" / "meta"
+    meta_dest = spec.build_dir / "include" / "c++" / "v1" / "meta"
+    if not meta_src.is_file():
+        raise SystemExit(f"<meta> header not found in fork: {meta_src}")
+    ensure_directory(meta_dest.parent)
+    shutil.copyfile(meta_src, meta_dest)
 
 
 def build_gcc(spec: CompilerSpec, args: argparse.Namespace) -> None:
+    ensure_submodule(spec.source_dir, args)
     ensure_directory(spec.build_dir)
     configure = [
         str(spec.source_dir / "configure"),
@@ -289,7 +485,8 @@ def validate_compiler_executable(spec: CompilerSpec) -> None:
         return
     raise SystemExit(
         f"Compiler executable not found for {spec.name}: {spec.executable}\n"
-        "Build the compiler first with --build-compilers or override the executable path."
+        f"Build it from the submodule with --build-compilers --compiler {spec.name}, "
+        "or point --clang-root at an existing build."
     )
 
 
@@ -308,6 +505,8 @@ def compile_and_maybe_run(
     compile_command = [
         str(spec.executable),
         f"-std={args.std}",
+        *spec.cxxflags,
+        *parse_test_flags(test_file),
         *args.extra_cxxflag,
         str(test_file),
         "-o",
