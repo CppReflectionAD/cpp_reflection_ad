@@ -3,26 +3,48 @@
 Proof of concept for automatic differentiation of C++ code using static reflection. Based on (and hoping to extend) the C++ reflection proposal P2996R13:
 https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2025/p2996r13.html
 
+## Tests
+
+Reflection-AD tests live under `tests/`:
+
+- `tests/clang_only/` — the clang (`expr-reflect`) engine (`autograd.h`,
+  `autograd_tensor.h`, `tensor.h`) and its tests: self-checking demos
+  (`ad_scalar_demo.cpp`, `ad_tensor_demo.cpp`) and benchmarks (`ad_bench.cpp`,
+  `ad_tensor_bench.cpp`, which carry `// TEST-FLAGS: -O2`).
+- `tests/gcc_only/` — reserved for the gcc (`no_expression_kind`) port.
+- `tests/` (directly) — compiler-agnostic tests run under **both** compilers.
+
+The two forks expose different reflection APIs, so tests are compiler-specific
+for now. Each compiler has a **flag profile** (its reflection/stdlib flags), so
+once a gcc engine exposes the same `ad::` interface its drivers can move up to
+`tests/` and run under both compilers unchanged.
+
 ## Test Runner
 
-The top-level test harness is `run_tests.py`.
+`run_tests.py` selects `clang`/`gcc`/both, compiles every `.cpp` under `tests/`
+(respecting the `clang_only`/`gcc_only`/shared dirs), optionally runs the
+binaries, and reports compile vs runtime failures. A test may add flags via a
+`// TEST-FLAGS: ...` comment near its top (benchmarks use it for `-O2`).
 
-It can:
-- select `clang`, `gcc`, or both,
-- build the corresponding compiler submodules,
-- compile all `.cpp` files under `tests/`,
-- optionally run the produced executables,
-- report compile-time and runtime failures separately.
-
-If `--build-compilers` is not provided, the script assumes the selected compiler binaries have already been built. If the expected executable is missing, it stops with an error instead of building automatically.
-
-Tests placed directly under `tests/` are run with both compilers. Tests under `tests/clang_only/` are only run with clang, and tests under `tests/gcc_only/` are only run with gcc.
-
-Examples:
+The repo is **self-contained**: `--build-compilers` builds clang from its own
+`clang-p2996` submodule into `build/` — no externally pre-built compiler needed.
+It checks out the submodule, builds clang (host `clang` + `lld`), builds the
+`libc++`/`libc++abi`/`libunwind` runtimes with that clang, and syncs the fork's
+`<meta>` header. Host prerequisites: `git`, `cmake`, `ninja`, host
+`clang`/`clang++`, `ld.lld`.
 
 ```bash
-python3 run_tests.py --compiler clang
+# one-time: build clang + runtimes into build/clang-p2996 (slow — builds LLVM)
 python3 run_tests.py --compiler clang --build-compilers
-python3 run_tests.py --compiler both --build-compilers --run-executables
-python3 run_tests.py --compiler gcc --tests hello_world.cpp --run-executables
+
+# run the tests (clang root defaults to build/clang-p2996)
+python3 run_tests.py --compiler clang --run-executables
+
+# a single test; --verbose prints the exact compile commands
+python3 run_tests.py --compiler clang --tests 'clang_only/ad_scalar_demo.cpp' --run-executables
+
+# use a clang built elsewhere (or set CLANG_P2996_ROOT)
+python3 run_tests.py --compiler clang --clang-root /path/to/clang-p2996 --run-executables
 ```
+
+Each demo prints its own `ALL CHECKS PASSED` / `ALL MATCH` on success.
