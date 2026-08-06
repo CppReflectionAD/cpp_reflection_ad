@@ -419,8 +419,10 @@ def build_clang(spec: CompilerSpec, args: argparse.Namespace) -> None:
             "clang configure",
         )
 
-    log(f"[clang] building clang/clang++ with ninja (-j{args.jobs})...")
-    build = ["ninja", "-C", str(spec.build_dir), "-j", str(args.jobs), "clang", "clang++"]
+    # The `clang` target also produces the clang++/clang-cl symlinks; there is
+    # no separate `clang++` ninja target.
+    log(f"[clang] building clang (+ clang++ symlink) with ninja (-j{args.jobs})...")
+    build = ["ninja", "-C", str(spec.build_dir), "-j", str(args.jobs), "clang"]
     require_success(run_command_streamed(build, cwd=ROOT, verbose=args.verbose), "clang build")
 
     build_clang_runtimes(spec, args)
