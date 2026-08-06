@@ -221,7 +221,7 @@ consteval std::vector<Node> build_nodes() {
   for (info s : m::statements_of(m::body_of(Fn))) {
     if (m::is_declaration_statement(s)) {
       info v = m::declared_variable_of(s);
-      std::size_t slot = detail::lower(c, m::initializer_of(v));
+      std::size_t slot = detail::lower(c, m::initializer_of(s));
       c.envDecl.push_back(v);
       c.envSlot.push_back(slot);
     } else if (m::is_return_statement(s)) {
@@ -321,7 +321,7 @@ consteval std::vector<Node> build_marked_nodes_reversed() {
 // evaluated at `args`. Compiles to inlined arithmetic (zero-cost).
 template <info Fn, std::size_t Wrt, typename T = double, typename... Args>
 constexpr T forward_derivative(Args... args) {
-  constexpr auto nodes = std::define_static_array(build_marked_nodes<Fn, (1ull << Wrt)>());
+  static constexpr auto nodes = std::define_static_array(build_marked_nodes<Fn, (1ull << Wrt)>());
   constexpr std::size_t N = nodes.size();
 
   const T in[] = { static_cast<T>(args)... };
@@ -401,8 +401,8 @@ constexpr std::array<T, sizeof...(Args)> gradient_of(Args... args) {
 // path for scalar-output, many-input functions (the "autograd" case).
 template <info Fn, typename T = double, typename... Args>
 constexpr std::array<T, sizeof...(Args)> gradient_reverse(Args... args) {
-  constexpr auto nodes = std::define_static_array(build_marked_nodes<Fn, ~0ull>());
-  constexpr auto rnodes = std::define_static_array(build_marked_nodes_reversed<Fn, ~0ull>());
+  static constexpr auto nodes = std::define_static_array(build_marked_nodes<Fn, ~0ull>());
+  static constexpr auto rnodes = std::define_static_array(build_marked_nodes_reversed<Fn, ~0ull>());
   constexpr std::size_t N = nodes.size();
   constexpr std::size_t P = sizeof...(Args);
 
