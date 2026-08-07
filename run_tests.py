@@ -496,10 +496,16 @@ def build_gcc(spec: CompilerSpec, args: argparse.Namespace) -> None:
     log("[gcc] building the gcc-mirror fork (this can take a long time)")
     ensure_submodule(spec.source_dir, args)
     ensure_directory(spec.build_dir)
+
+    deps = ["contrib/download_prerequisites"]
+    deps_result = run_command(deps, cwd=spec.source_dir, verbose=args.verbose)
+
     log("[gcc] configuring gcc...")
     configure = [
         str(spec.source_dir / "configure"),
+        "--disable-bootstrap", 
         "--disable-multilib",
+        "--disable-nls",
         "--enable-languages=c,c++",
     ]
     configure_result = run_command_streamed(
