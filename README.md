@@ -41,7 +41,7 @@ python3 run_tests.py --compiler clang --build-compilers
 python3 run_tests.py --compiler clang --run-executables
 
 # a single test; --verbose prints the exact compile commands
-python3 run_tests.py --compiler clang --tests 'clang_only/ad_scalar_demo.cpp' --run-executables
+python3 run_tests.py --compiler clang --tests 'ad_scalar_demo.cpp' --run-executables
 
 # use a clang built elsewhere (or set CLANG_P2996_ROOT)
 python3 run_tests.py --compiler clang --clang-root /path/to/clang-p2996 --run-executables
