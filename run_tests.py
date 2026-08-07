@@ -291,10 +291,7 @@ def build_specs(args: argparse.Namespace) -> dict[str, CompilerSpec]:
                 if args.gcc_executable
                 else gcc_binary_dir / "bin" / "g++"
             ),
-            # Reflection flag profile for the gcc-mirror (no_expression_kind)
-            # fork is TBD until a gcc AD engine + tests exist. gcc tests are
-            # not expected to run yet.
-            cxxflags=(),
+            cxxflags=("-std=c++26", "-freflection"),
         ),
     }
 
