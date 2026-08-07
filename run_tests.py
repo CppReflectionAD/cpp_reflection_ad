@@ -71,6 +71,7 @@ class CompilerSpec:
     name: str
     source_dir: Path
     build_dir: Path
+    binary_dir: Path
     executable: Path
     # Reflection flag profile for this compiler: everything the compiler needs
     # beyond -std and the source/-o pair (reflection features, stdlib, include
@@ -265,12 +266,14 @@ def clang_cxxflags(clang_root: Path, gcc_toolchain: str) -> tuple[str, ...]:
 def build_specs(args: argparse.Namespace) -> dict[str, CompilerSpec]:
     clang_root = Path(args.clang_root).resolve()
     gcc_build_dir = Path(args.gcc_build_dir).resolve()
+    gcc_binary_dir = gcc_build_dir / "artifacts"
     return {
         "clang": CompilerSpec(
             name="clang",
             source_dir=ROOT / "clang-p2996",
             # The clang root doubles as its build tree (runtimes + <meta> land here).
             build_dir=clang_root,
+            binary_dir=clang_root,
             executable=(
                 Path(args.clang_executable).resolve()
                 if args.clang_executable
@@ -282,10 +285,11 @@ def build_specs(args: argparse.Namespace) -> dict[str, CompilerSpec]:
             name="gcc",
             source_dir=ROOT / "gcc-mirror",
             build_dir=gcc_build_dir,
+            binary_dir=gcc_binary_dir,
             executable=(
                 Path(args.gcc_executable).resolve()
                 if args.gcc_executable
-                else gcc_build_dir / "g++"
+                else gcc_binary_dir / "bin" / "g++"
             ),
             # Reflection flag profile for the gcc-mirror (no_expression_kind)
             # fork is TBD until a gcc AD engine + tests exist. gcc tests are
@@ -507,6 +511,7 @@ def build_gcc(spec: CompilerSpec, args: argparse.Namespace) -> None:
         "--disable-multilib",
         "--disable-nls",
         "--enable-languages=c,c++",
+        f"--prefix={spec.binary_dir}",
     ]
     configure_result = run_command_streamed(
         configure, cwd=spec.build_dir, verbose=args.verbose
@@ -517,6 +522,12 @@ def build_gcc(spec: CompilerSpec, args: argparse.Namespace) -> None:
     build = ["make", "-j", str(args.jobs)]
     build_result = run_command_streamed(build, cwd=spec.build_dir, verbose=args.verbose)
     require_success(build_result, "gcc build")
+
+    log(f"[gcc] installing...")
+    install = ["make", "install"]
+    install_result = run_command_streamed(install, cwd=spec.build_dir, verbose=args.verbose)
+    require_success(install_result, "gcc install")
+
     log(f"[gcc] done -> {spec.executable}")
 
 
