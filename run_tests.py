@@ -184,6 +184,11 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def log(message: str) -> None:
+    """Print a progress banner (flushed immediately) for long-running steps."""
+    print(f"==> {message}", flush=True)
+
+
 def run_command(command: list[str], cwd: Path | None, verbose: bool) -> CommandResult:
     if verbose:
         location = str(cwd) if cwd is not None else str(ROOT)
@@ -199,6 +204,29 @@ def run_command(command: list[str], cwd: Path | None, verbose: bool) -> CommandR
         returncode=completed.returncode,
         stdout=completed.stdout,
         stderr=completed.stderr,
+    )
+
+
+def run_command_streamed(
+    command: list[str], cwd: Path | None, verbose: bool
+) -> CommandResult:
+    """Run a command with its stdout/stderr inherited (live) rather than captured.
+
+    Used for the long build steps (submodule checkout, cmake, ninja) so the user
+    sees progress as it happens. Output isn't captured, so on failure we rely on
+    what was already printed.
+    """
+    location = str(cwd) if cwd is not None else str(ROOT)
+    if verbose:
+        print(f"[{location}] $ {shlex.join(command)}", flush=True)
+    else:
+        print(f"    $ {shlex.join(command)}", flush=True)
+    completed = subprocess.run(command, cwd=cwd)
+    return CommandResult(
+        command=command,
+        returncode=completed.returncode,
+        stdout="",
+        stderr="",
     )
 
 
@@ -341,8 +369,9 @@ def ensure_submodule(source_dir: Path, args: argparse.Namespace) -> None:
     """
     if (source_dir / ".git").exists() or any(source_dir.iterdir()):
         return
-    result = run_command(
-        ["git", "submodule", "update", "--init", str(source_dir.name)],
+    log(f"[{source_dir.name}] checking out submodule (large clone, be patient)...")
+    result = run_command_streamed(
+        ["git", "submodule", "update", "--init", "--progress", str(source_dir.name)],
         cwd=ROOT,
         verbose=args.verbose,
     )
@@ -357,11 +386,15 @@ def build_clang(spec: CompilerSpec, args: argparse.Namespace) -> None:
     runtimes project with the freshly built clang, emitting headers/libs into
     the clang root, and finally sync the fork's <meta> header into place.
     """
+    log("[clang] building the clang-p2996 fork + libc++ (this can take a long time)")
     ensure_submodule(spec.source_dir, args)
     ensure_directory(spec.build_dir)
 
     # Configure clang (idempotent; skip if already configured).
-    if not (spec.build_dir / "build.ninja").is_file():
+    if (spec.build_dir / "build.ninja").is_file():
+        log(f"[clang] already configured ({spec.build_dir}); skipping cmake")
+    else:
+        log("[clang] configuring clang (cmake)...")
         configure = [
             "cmake",
             "-S",
@@ -382,13 +415,18 @@ def build_clang(spec: CompilerSpec, args: argparse.Namespace) -> None:
             "-DLLVM_PARALLEL_LINK_JOBS=1",
         ]
         require_success(
-            run_command(configure, cwd=ROOT, verbose=args.verbose), "clang configure"
+            run_command_streamed(configure, cwd=ROOT, verbose=args.verbose),
+            "clang configure",
         )
 
-    build = ["ninja", "-C", str(spec.build_dir), "-j", str(args.jobs), "clang", "clang++"]
-    require_success(run_command(build, cwd=ROOT, verbose=args.verbose), "clang build")
+    # The `clang` target also produces the clang++/clang-cl symlinks; there is
+    # no separate `clang++` ninja target.
+    log(f"[clang] building clang (+ clang++ symlink) with ninja (-j{args.jobs})...")
+    build = ["ninja", "-C", str(spec.build_dir), "-j", str(args.jobs), "clang"]
+    require_success(run_command_streamed(build, cwd=ROOT, verbose=args.verbose), "clang build")
 
     build_clang_runtimes(spec, args)
+    log(f"[clang] done -> {spec.executable}")
 
 
 def build_clang_runtimes(spec: CompilerSpec, args: argparse.Namespace) -> None:
@@ -403,7 +441,10 @@ def build_clang_runtimes(spec: CompilerSpec, args: argparse.Namespace) -> None:
     built_clangxx = spec.build_dir / "bin" / "clang++"
     ensure_directory(runtimes_dir)
 
-    if not (runtimes_dir / "build.ninja").is_file():
+    if (runtimes_dir / "build.ninja").is_file():
+        log(f"[runtimes] already configured ({runtimes_dir}); skipping cmake")
+    else:
+        log("[runtimes] configuring libc++/libc++abi/libunwind (cmake)...")
         configure = [
             "cmake",
             "-S",
@@ -422,12 +463,17 @@ def build_clang_runtimes(spec: CompilerSpec, args: argparse.Namespace) -> None:
             f"-DLLVM_CONFIG_PATH={spec.build_dir / 'bin' / 'llvm-config'}",
         ]
         require_success(
-            run_command(configure, cwd=ROOT, verbose=args.verbose), "runtimes configure"
+            run_command_streamed(configure, cwd=ROOT, verbose=args.verbose),
+            "runtimes configure",
         )
 
+    log(f"[runtimes] building libc++/libc++abi with ninja (-j{args.jobs})...")
     build = ["ninja", "-C", str(runtimes_dir), "-j", str(args.jobs), "cxx", "cxxabi"]
-    require_success(run_command(build, cwd=ROOT, verbose=args.verbose), "runtimes build")
+    require_success(
+        run_command_streamed(build, cwd=ROOT, verbose=args.verbose), "runtimes build"
+    )
 
+    log("[runtimes] syncing <meta> header into libc++ include dir...")
     sync_meta_header(spec)
 
 
@@ -447,19 +493,25 @@ def sync_meta_header(spec: CompilerSpec) -> None:
 
 
 def build_gcc(spec: CompilerSpec, args: argparse.Namespace) -> None:
+    log("[gcc] building the gcc-mirror fork (this can take a long time)")
     ensure_submodule(spec.source_dir, args)
     ensure_directory(spec.build_dir)
+    log("[gcc] configuring gcc...")
     configure = [
         str(spec.source_dir / "configure"),
         "--disable-multilib",
         "--enable-languages=c,c++",
     ]
-    configure_result = run_command(configure, cwd=spec.build_dir, verbose=args.verbose)
+    configure_result = run_command_streamed(
+        configure, cwd=spec.build_dir, verbose=args.verbose
+    )
     require_success(configure_result, "gcc configure")
 
+    log(f"[gcc] building with make (-j{args.jobs})...")
     build = ["make", "-j", str(args.jobs)]
-    build_result = run_command(build, cwd=spec.build_dir, verbose=args.verbose)
+    build_result = run_command_streamed(build, cwd=spec.build_dir, verbose=args.verbose)
     require_success(build_result, "gcc build")
+    log(f"[gcc] done -> {spec.executable}")
 
 
 def build_selected_compilers(
@@ -512,10 +564,13 @@ def compile_and_maybe_run(
         "-o",
         str(output_path),
     ]
+    relative_path = test_file.relative_to(ROOT)
+    log(f"[{spec.name}] compiling {relative_path} ...")
     compile_result = run_command(compile_command, cwd=ROOT, verbose=args.verbose)
 
     run_result: CommandResult | None = None
     if compile_result.returncode == 0 and args.run_executables:
+        log(f"[{spec.name}] running {relative_path} ...")
         run_result = run_command([str(output_path)], cwd=ROOT, verbose=args.verbose)
 
     return TestResult(
@@ -589,6 +644,7 @@ def main() -> int:
     specs = build_specs(args)
 
     if args.build_compilers:
+        log(f"building compiler(s): {', '.join(selected_compilers(args))}")
         build_selected_compilers(specs, args)
 
     results: list[TestResult] = []
@@ -596,6 +652,7 @@ def main() -> int:
         spec = specs[compiler_name]
         tests = discover_tests(args.tests, compiler_name)
         validate_compiler_executable(spec)
+        log(f"[{spec.name}] compiling {len(tests)} test(s) with {spec.executable}")
         for test_file in tests:
             result = compile_and_maybe_run(spec, test_file, args)
             results.append(result)
