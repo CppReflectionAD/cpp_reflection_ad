@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import platform
 import shlex
 import shutil
 import subprocess
@@ -25,9 +26,7 @@ GCC_ONLY_DIR = "gcc_only"
 # bin/clang++, include/c++/v1/meta, and lib/libc++.so, and the clang flag
 # profile is derived from it. Override with --clang-root / CLANG_P2996_ROOT to
 # point at a compiler built elsewhere.
-DEFAULT_CLANG_ROOT = os.environ.get(
-    "CLANG_P2996_ROOT", str(BUILD_ROOT / "clang-p2996")
-)
+DEFAULT_CLANG_ROOT = os.environ.get("CLANG_P2996_ROOT", str(BUILD_ROOT / "clang-p2996"))
 # Standalone libc++/libc++abi/libunwind (runtimes) build tree. Built with the
 # freshly built clang; its headers/libs are emitted into the clang root via
 # LLVM_BINARY_DIR (see build_clang_runtimes).
@@ -185,6 +184,23 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def detect_llvm_target() -> str:
+    """Auto-detect LLVM target based on current machine architecture.
+
+    Maps platform.machine() to LLVM target names:
+    - ARM64/aarch64 -> AArch64
+    - x86_64 -> X86
+    """
+    machine = platform.machine().lower()
+    if machine in ("arm64", "aarch64"):
+        return "AArch64"
+    elif machine in ("x86_64", "amd64"):
+        return "X86"
+    else:
+        # Default to all targets if architecture is unknown
+        return "all"
+
+
 def log(message: str) -> None:
     """Print a progress banner (flushed immediately) for long-running steps."""
     print(f"==> {message}", flush=True)
@@ -241,7 +257,22 @@ def selected_compilers(args: argparse.Namespace) -> list[str]:
     return [args.compiler]
 
 
-def clang_cxxflags(clang_root: Path, gcc_toolchain: str) -> tuple[str, ...]:
+def macos_sdk_path(verbose: bool) -> str:
+    """Resolve the active macOS SDK path via xcrun."""
+    result = run_command(["xcrun", "--show-sdk-path"], cwd=ROOT, verbose=verbose)
+    if result.returncode != 0:
+        details = render_command_failure(result)
+        raise SystemExit(f"Failed to resolve macOS SDK path\n\n{details}")
+
+    sdk_path = result.stdout.strip()
+    if not sdk_path:
+        raise SystemExit("xcrun --show-sdk-path returned an empty SDK path")
+    return sdk_path
+
+
+def clang_cxxflags(
+    clang_root: Path, gcc_toolchain: str, verbose: bool
+) -> tuple[str, ...]:
     """Reflection flag profile for the clang-p2996 fork.
 
     Mirrors DEMO_FLAGS in the top-level Makefile: the reflection features, the
@@ -250,17 +281,23 @@ def clang_cxxflags(clang_root: Path, gcc_toolchain: str) -> tuple[str, ...]:
     """
     libcxx_inc = clang_root / "include" / "c++" / "v1"
     libcxx_lib = clang_root / "lib"
-    return (
+    flags: list[str] = [
         "-freflection",
         "-fparameter-reflection",
         "-fexpansion-statements",
         "-stdlib=libc++",
-        f"--gcc-toolchain={gcc_toolchain}",
         "-isystem",
         str(libcxx_inc),
         f"-L{libcxx_lib}",
         f"-Wl,-rpath,{libcxx_lib}",
-    )
+    ]
+
+    if sys.platform == "darwin":
+        flags.extend(["-isysroot", macos_sdk_path(verbose)])
+    elif gcc_toolchain:
+        flags.append(f"--gcc-toolchain={gcc_toolchain}")
+
+    return tuple(flags)
 
 
 def build_specs(args: argparse.Namespace) -> dict[str, CompilerSpec]:
@@ -279,7 +316,7 @@ def build_specs(args: argparse.Namespace) -> dict[str, CompilerSpec]:
                 if args.clang_executable
                 else clang_root / "bin" / "clang++"
             ),
-            cxxflags=clang_cxxflags(clang_root, args.gcc_toolchain),
+            cxxflags=clang_cxxflags(clang_root, args.gcc_toolchain, args.verbose),
         ),
         "gcc": CompilerSpec(
             name="gcc",
@@ -356,7 +393,7 @@ def parse_test_flags(test_file: Path) -> list[str]:
                     break
                 stripped = line.strip()
                 if stripped.startswith(TEST_FLAGS_DIRECTIVE):
-                    return shlex.split(stripped[len(TEST_FLAGS_DIRECTIVE):])
+                    return shlex.split(stripped[len(TEST_FLAGS_DIRECTIVE) :])
     except OSError:
         pass
     return []
@@ -406,11 +443,10 @@ def build_clang(spec: CompilerSpec, args: argparse.Namespace) -> None:
             "Ninja",
             "-DLLVM_ENABLE_PROJECTS=clang;clang-tools-extra",
             "-DCMAKE_BUILD_TYPE=RelWithDebInfo",
-            "-DLLVM_USE_LINKER=lld",
             f"-DCMAKE_C_COMPILER={args.host_cc}",
             f"-DCMAKE_CXX_COMPILER={args.host_cxx}",
             f"-DPython3_EXECUTABLE={args.python_executable}",
-            "-DLLVM_TARGETS_TO_BUILD=X86",
+            f"-DLLVM_TARGETS_TO_BUILD={detect_llvm_target()}",
             f"-DLLVM_PARALLEL_COMPILE_JOBS={args.jobs}",
             # Linking clang is memory-hungry; serialize link steps.
             "-DLLVM_PARALLEL_LINK_JOBS=1",
@@ -424,7 +460,9 @@ def build_clang(spec: CompilerSpec, args: argparse.Namespace) -> None:
     # no separate `clang++` ninja target.
     log(f"[clang] building clang (+ clang++ symlink) with ninja (-j{args.jobs})...")
     build = ["ninja", "-C", str(spec.build_dir), "-j", str(args.jobs), "clang"]
-    require_success(run_command_streamed(build, cwd=ROOT, verbose=args.verbose), "clang build")
+    require_success(
+        run_command_streamed(build, cwd=ROOT, verbose=args.verbose), "clang build"
+    )
 
     build_clang_runtimes(spec, args)
     log(f"[clang] done -> {spec.executable}")
@@ -446,6 +484,11 @@ def build_clang_runtimes(spec: CompilerSpec, args: argparse.Namespace) -> None:
         log(f"[runtimes] already configured ({runtimes_dir}); skipping cmake")
     else:
         log("[runtimes] configuring libc++/libc++abi/libunwind (cmake)...")
+        c_flags = ""
+        cxx_flags = ""
+        if sys.platform != "darwin" and args.gcc_toolchain:
+            c_flags = f"--gcc-toolchain={args.gcc_toolchain}"
+            cxx_flags = c_flags
         configure = [
             "cmake",
             "-S",
@@ -456,8 +499,8 @@ def build_clang_runtimes(spec: CompilerSpec, args: argparse.Namespace) -> None:
             "Ninja",
             f"-DCMAKE_C_COMPILER={built_clang}",
             f"-DCMAKE_CXX_COMPILER={built_clangxx}",
-            f"-DCMAKE_C_FLAGS=--gcc-toolchain={args.gcc_toolchain}",
-            f"-DCMAKE_CXX_FLAGS=--gcc-toolchain={args.gcc_toolchain}",
+            f"-DCMAKE_C_FLAGS={c_flags}",
+            f"-DCMAKE_CXX_FLAGS={cxx_flags}",
             "-DCMAKE_BUILD_TYPE=RelWithDebInfo",
             "-DLLVM_ENABLE_RUNTIMES=libcxx;libcxxabi;libunwind",
             f"-DLLVM_BINARY_DIR={spec.build_dir}",
@@ -504,7 +547,7 @@ def build_gcc(spec: CompilerSpec, args: argparse.Namespace) -> None:
     log("[gcc] configuring gcc...")
     configure = [
         str(spec.source_dir / "configure"),
-        "--disable-bootstrap", 
+        "--disable-bootstrap",
         "--disable-multilib",
         "--disable-nls",
         "--enable-languages=c,c++",
@@ -522,7 +565,9 @@ def build_gcc(spec: CompilerSpec, args: argparse.Namespace) -> None:
 
     log(f"[gcc] installing...")
     install = ["make", "install"]
-    install_result = run_command_streamed(install, cwd=spec.build_dir, verbose=args.verbose)
+    install_result = run_command_streamed(
+        install, cwd=spec.build_dir, verbose=args.verbose
+    )
     require_success(install_result, "gcc install")
 
     log(f"[gcc] done -> {spec.executable}")
