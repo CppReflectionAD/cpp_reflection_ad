@@ -37,12 +37,16 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <numbers>
 #include <string_view>
 #include <utility>
 
 namespace ad {
 using std::meta::info;
+using namespace std::numbers;
 namespace m = std::meta;
+
+constexpr double two_over_root_pi = 2. * std::numbers::inv_sqrtpi_v<double>;
 
 // ---------------------------------------------------------------------------
 // IR
@@ -50,7 +54,7 @@ namespace m = std::meta;
 enum class OpKind {
   Input, Const, Output,
   Add, Sub, Mul, Div, Neg,
-  Sin, Cos, Exp, Log, Sqrt,
+  Sin, Cos, Exp, Log, Sqrt, Erfc,
   // Tensor ops (recognised as named calls; VJPs live in the tensor engine).
   Matmul, Transpose, Sum, Relu,
 };
@@ -124,6 +128,7 @@ consteval OpKind callOp(std::string_view name) {
   if (name == "exp")  return OpKind::Exp;
   if (name == "log")  return OpKind::Log;
   if (name == "sqrt") return OpKind::Sqrt;
+  if (name == "erfc") return OpKind::Erfc;
   if (name == "matmul")    return OpKind::Matmul;
   if (name == "transpose") return OpKind::Transpose;
   if (name == "sum")       return OpKind::Sum;
@@ -245,7 +250,7 @@ consteval std::vector<Node> build_nodes() {
 // Ops whose derivative rule reads the primal value of an operand / of itself.
 consteval bool deriv_reads_operand_vals(OpKind op) {  // reads val[a] (and val[b])
   return op == OpKind::Mul || op == OpKind::Div ||
-         op == OpKind::Sin || op == OpKind::Cos || op == OpKind::Log;
+         op == OpKind::Sin || op == OpKind::Cos || op == OpKind::Log || op == OpKind::Erfc;
 }
 consteval bool deriv_reads_self_val(OpKind op) {       // reads val[self]
   return op == OpKind::Exp || op == OpKind::Sqrt;
@@ -344,6 +349,7 @@ constexpr T forward_derivative(Args... args) {
       else if constexpr (n.op == OpKind::Exp)    val[n.self] = std::exp(val[n.a]);
       else if constexpr (n.op == OpKind::Log)    val[n.self] = std::log(val[n.a]);
       else if constexpr (n.op == OpKind::Sqrt)   val[n.self] = std::sqrt(val[n.a]);
+      else if constexpr (n.op == OpKind::Erfc)   val[n.self] = std::erfc(val[n.a]);
     }
 
     // Tangent (activity-gated: a non-varied operand contributes a zero term,
@@ -357,6 +363,7 @@ constexpr T forward_derivative(Args... args) {
     else if constexpr (n.op == OpKind::Exp)    tang[n.self] = val[n.self] * tang[n.a];
     else if constexpr (n.op == OpKind::Log)    tang[n.self] = tang[n.a] / val[n.a];
     else if constexpr (n.op == OpKind::Sqrt)   tang[n.self] = tang[n.a] / (T{2} * val[n.self]);
+    else if constexpr (n.op == OpKind::Erfc)   tang[n.self] = tang[n.a] * -1 * two_over_root_pi * (std::exp(-1 * (val[n.a] * val[n.a]))) ;
     else if constexpr (n.op == OpKind::Add) {
       if constexpr (n.va && n.vb) tang[n.self] = tang[n.a] + tang[n.b];
       else if constexpr (n.va)    tang[n.self] = tang[n.a];
@@ -426,6 +433,7 @@ constexpr std::array<T, sizeof...(Args)> gradient_reverse(Args... args) {
       else if constexpr (n.op == OpKind::Exp)    val[n.self] = std::exp(val[n.a]);
       else if constexpr (n.op == OpKind::Log)    val[n.self] = std::log(val[n.a]);
       else if constexpr (n.op == OpKind::Sqrt)   val[n.self] = std::sqrt(val[n.a]);
+      else if constexpr (n.op == OpKind::Erfc)   val[n.self] = std::erfc(val[n.a]);
     }
   }
 
@@ -462,6 +470,8 @@ constexpr std::array<T, sizeof...(Args)> gradient_reverse(Args... args) {
       if constexpr (n.va) adj[n.a] += adj[n.self] / val[n.a];
     } else if constexpr (n.op == OpKind::Sqrt) {
       if constexpr (n.va) adj[n.a] += adj[n.self] / (T{2} * val[n.self]);
+    } else if constexpr (n.op == OpKind::Erfc) {
+      if constexpr (n.va) adj[n.a] += adj[n.self] * -1 * two_over_root_pi * (std::exp(-1 * (val[n.a] * val[n.a]))) ;
     }
     // Input / Const have no operands: nothing to propagate.
   }
