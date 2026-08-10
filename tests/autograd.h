@@ -46,6 +46,8 @@ using std::meta::info;
 using namespace std::numbers;
 namespace m = std::meta;
 
+constexpr double two_over_root_pi = 2. * std::numbers::inv_sqrtpi_v<double>;
+
 // ---------------------------------------------------------------------------
 // IR
 // ---------------------------------------------------------------------------
@@ -361,7 +363,7 @@ constexpr T forward_derivative(Args... args) {
     else if constexpr (n.op == OpKind::Exp)    tang[n.self] = val[n.self] * tang[n.a];
     else if constexpr (n.op == OpKind::Log)    tang[n.self] = tang[n.a] / val[n.a];
     else if constexpr (n.op == OpKind::Sqrt)   tang[n.self] = tang[n.a] / (T{2} * val[n.self]);
-    else if constexpr (n.op == OpKind::Erfc)   tang[n.self] = tang[n.a] * (-2 / std::sqrt(pi)) * (std::exp(-1 * (val[n.a] * val[n.a]))) ;
+    else if constexpr (n.op == OpKind::Erfc)   tang[n.self] = tang[n.a] * -1 * two_over_root_pi * (std::exp(-1 * (val[n.a] * val[n.a]))) ;
     else if constexpr (n.op == OpKind::Add) {
       if constexpr (n.va && n.vb) tang[n.self] = tang[n.a] + tang[n.b];
       else if constexpr (n.va)    tang[n.self] = tang[n.a];
@@ -469,7 +471,7 @@ constexpr std::array<T, sizeof...(Args)> gradient_reverse(Args... args) {
     } else if constexpr (n.op == OpKind::Sqrt) {
       if constexpr (n.va) adj[n.a] += adj[n.self] / (T{2} * val[n.self]);
     } else if constexpr (n.op == OpKind::Erfc) {
-      if constexpr (n.va) adj[n.a] += adj[n.self] * (-2 / std::sqrt(pi)) * (std::exp(-1 * (val[n.a] * val[n.a]))) ;
+      if constexpr (n.va) adj[n.a] += adj[n.self] * -1 * two_over_root_pi * (std::exp(-1 * (val[n.a] * val[n.a]))) ;
     }
     // Input / Const have no operands: nothing to propagate.
   }
