@@ -21,7 +21,7 @@
 #ifndef REFLECT_DEMO_AUTOGRAD_TENSOR_H
 #define REFLECT_DEMO_AUTOGRAD_TENSOR_H
 
-#include "autograd.h"
+#include "../autograd.h"
 
 namespace ad {
 
