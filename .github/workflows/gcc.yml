@@ -35,6 +35,7 @@ jobs:
       - name: Test AD
         run: |
           python3 run_tests.py --compiler gcc --tests 'ad_scalar_demo.cpp' --run-executables
+          python3 run_tests.py --compiler gcc --tests  black_scholes_demo.cpp --run-executables
 
       - name: Test Reflection
         run: |
