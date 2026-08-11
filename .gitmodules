@@ -9,4 +9,4 @@
 [submodule "gcc-darwin-reflect"]
 	path = gcc-darwin-reflect
 	url = https://github.com/iains/gcc-darwin-arm64.git
-	branch = master
+	branch = master-wip-apple-si
