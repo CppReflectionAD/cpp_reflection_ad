@@ -1,0 +1,40 @@
+name: Test Clang
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          # Use 'true' for top-level submodules or 'recursive' for nested submodules
+          submodules: true 
+
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            ninja-build \
+            clang \
+            lld \
+            python3 \
+            zlib1g-dev \
+            git
+
+      - name: Build Clang
+        continue-on-error: true
+        run: |
+          python3 run_tests.py --compiler clang --build-compilers
+
+      - name: Test AD
+        run: |
+          python3 run_tests.py --compiler clang --run-executables
