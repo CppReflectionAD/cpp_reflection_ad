@@ -26,8 +26,10 @@
 //
 // Scope: straight-line bodies (parameters, `T v = expr;` locals, one
 // `return expr;`), scalar T, ops + - * / unary-minus and unary calls
-// sin/cos/exp/log/sqrt. The core is rule-driven so more ops / tensors are
-// additive.
+// sin/cos/exp/log/sqrt/erfc. The core is rule-driven so more ops / tensors are
+// additive. Calls to user-defined helpers are inlined (the callee's body is
+// reflected into the same DAG), so ordinary functions compose; the callee must
+// itself be straight-line and non-recursive (free functions only).
 
 #ifndef REFLECT_DEMO_AUTOGRAD_H
 #define REFLECT_DEMO_AUTOGRAD_H
@@ -93,7 +95,14 @@ struct Ctx {
   std::vector<Node> nodes;
   std::vector<info> envDecl;      // decl -> slot environment
   std::vector<std::size_t> envSlot;
+  std::vector<info> callStack;    // callees currently being inlined (cycle guard)
 };
+
+// Forward decls: lower / lower_body / inline_call are mutually recursive (a call
+// site inlines its callee's body, which may contain further calls).
+consteval std::size_t lower(Ctx &c, info e);
+consteval std::size_t lower_body(Ctx &c, info body);
+consteval std::size_t inline_call(Ctx &c, info call);
 
 // Resolve a referenced variable to its SSA slot by identifier name. We match by
 // name (unique within a straight-line body) rather than reflection identity
@@ -133,7 +142,16 @@ consteval OpKind callOp(std::string_view name) {
   if (name == "transpose") return OpKind::Transpose;
   if (name == "sum")       return OpKind::Sum;
   if (name == "relu")      return OpKind::Relu;
-  return OpKind::Sin;  // unsupported call
+  return OpKind::Sin;  // unsupported call (never reached: guarded by known_callop)
+}
+
+// A call is a primitive op (has a built-in VJP) iff callOp recognizes its name.
+// Any other call is a user-defined helper and gets inlined (see inline_call).
+consteval bool known_callop(std::string_view name) {
+  return name == "sin" || name == "cos" || name == "exp" || name == "log" ||
+         name == "sqrt" || name == "erfc" || name == "add" || name == "sub" ||
+         name == "mul" || name == "div" || name == "matmul" ||
+         name == "transpose" || name == "sum" || name == "relu";
 }
 
 // Peel "transparent" wrapper nodes so we reach the real subexpression:
@@ -188,7 +206,10 @@ consteval std::size_t lower(Ctx &c, info e) {
   if (m::is_function_call(e)) {
     // operands_of(call) = [callee, arg0, arg1, ...].
     auto ops = m::operands_of(e);
-    OpKind op = callOp(m::identifier_of(m::callee_of(e)));
+    std::string_view name = m::identifier_of(m::callee_of(e));
+    if (!known_callop(name))              // user helper -> inline its body
+      return inline_call(c, e);
+    OpKind op = callOp(name);
     if (op_has_b(op)) {                    // binary call, e.g. matmul(a, b)
       std::size_t a = lower(c, ops[1]);
       std::size_t b = lower(c, ops[2]);
@@ -208,6 +229,69 @@ consteval std::size_t lower(Ctx &c, info e) {
   return s;
 }
 
+// Lower the statements of a straight-line body into `c`, resolving names against
+// the current environment; returns the slot of the (single) return value. Shared
+// by build_nodes (top-level function) and inline_call (inlined callee).
+consteval std::size_t lower_body(Ctx &c, info body) {
+  std::size_t root = 0;
+  for (info s : m::statements_of(body)) {
+    if (m::is_declaration_statement(s)) {
+      info v = m::declared_variable_of(s);
+      std::size_t slot = lower(c, m::initializer_of(v));
+      c.envDecl.push_back(v);
+      c.envSlot.push_back(slot);
+    } else if (m::is_return_statement(s)) {
+      root = lower(c, m::return_value_of(s));
+    }
+  }
+  return root;
+}
+
+// Inline a call to a user-defined helper: lower its arguments in the caller
+// scope, bind the callee's parameters to those argument slots, and lower the
+// callee's body into the SAME DAG. The result is the callee's return slot, so
+// the whole helper expands to primitive nodes with no new IR kinds -- activity
+// analysis and codegen are unaffected, and arguments are evaluated once (a param
+// used N times reuses its one slot).
+consteval std::size_t inline_call(Ctx &c, info call) {
+  auto ops = m::operands_of(call);          // [callee, arg0, arg1, ...]
+  info callee = m::callee_of(call);
+
+  // Cycle guard: recursive helpers are out of scope (would not terminate here).
+  for (info f : c.callStack)
+    if (f == callee)
+      throw "reflection AD: cannot inline a recursive function call";
+
+  // A helper with no reflectable body (declaration only) cannot be inlined; a
+  // silent constant would give a wrong derivative, so reject it explicitly.
+  info body = m::body_of(callee);
+  if (m::statements_of(body).empty())
+    throw "reflection AD: cannot inline a call whose callee has no visible body";
+
+  // (a) lower argument expressions in the CALLER scope -> slots.
+  std::vector<std::size_t> argSlots;
+  for (std::size_t i = 1; i < ops.size(); ++i)
+    argSlots.push_back(lower(c, ops[i]));
+
+  // (b) open a lexical scope; bind callee parameters to the argument slots.
+  std::size_t mark = c.envDecl.size();
+  auto params = m::parameters_of(callee);
+  for (std::size_t i = 0; i < params.size(); ++i) {
+    c.envDecl.push_back(params[i]);
+    c.envSlot.push_back(argSlots[i]);
+  }
+
+  // (c) lower the callee body into the same DAG (nested calls inline via lower).
+  c.callStack.push_back(callee);
+  std::size_t ret = lower_body(c, body);
+  c.callStack.pop_back();
+
+  // (d) close the scope: drop callee params + locals, restoring the caller env.
+  c.envDecl.resize(mark);
+  c.envSlot.resize(mark);
+  return ret;
+}
+
 }  // namespace detail
 
 // Build the SSA node list for a reflected function. The last node is the root
@@ -222,17 +306,7 @@ consteval std::vector<Node> build_nodes() {
     c.envSlot.push_back(s);
   }
 
-  std::size_t root = 0;
-  for (info s : m::statements_of(m::body_of(Fn))) {
-    if (m::is_declaration_statement(s)) {
-      info v = m::declared_variable_of(s);
-      std::size_t slot = detail::lower(c, m::initializer_of(v));
-      c.envDecl.push_back(v);
-      c.envSlot.push_back(slot);
-    } else if (m::is_return_statement(s)) {
-      root = detail::lower(c, m::return_value_of(s));
-    }
-  }
+  std::size_t root = detail::lower_body(c, m::body_of(Fn));
 
   std::size_t s = c.nodes.size();
   c.nodes.push_back(Node{OpKind::Output, s, root, 0});
