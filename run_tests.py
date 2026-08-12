@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import platform
 import shlex
@@ -34,6 +35,29 @@ DEFAULT_CLANG_RUNTIMES_DIR = str(BUILD_ROOT / "libcxx")
 DEFAULT_GCC_TOOLCHAIN = os.environ.get(
     "REFLECT_GCC_TOOLCHAIN", "/opt/rh/gcc-toolset-13/root/usr"
 )
+
+if sys.platform == "darwin":
+    DEFAULT_GCC_SOURCE_DIR = os.environ.get(
+        "REFLECT_GCC_SOURCE_DIR", str(ROOT / "gcc-darwin-reflect")
+    )
+    DEFAULT_GCC_BUILD_DIR = os.environ.get(
+        "REFLECT_GCC_BUILD_DIR", str(BUILD_ROOT / "gcc-darwin-reflect")
+    )
+    DEFAULT_GCC_PATCHES_DIR = os.environ.get(
+        "REFLECT_GCC_PATCHES_DIR", "/tmp/gcc-reflect-patches"
+    )
+    DEFAULT_GCC_SYNC_FROM = os.environ.get(
+        "REFLECT_GCC_SYNC_FROM", str(ROOT / "gcc-mirror")
+    )
+else:
+    DEFAULT_GCC_SOURCE_DIR = os.environ.get(
+        "REFLECT_GCC_SOURCE_DIR", str(ROOT / "gcc-mirror")
+    )
+    DEFAULT_GCC_BUILD_DIR = os.environ.get(
+        "REFLECT_GCC_BUILD_DIR", str(BUILD_ROOT / "gcc-mirror")
+    )
+    DEFAULT_GCC_PATCHES_DIR = os.environ.get("REFLECT_GCC_PATCHES_DIR", "")
+    DEFAULT_GCC_SYNC_FROM = os.environ.get("REFLECT_GCC_SYNC_FROM", "")
 
 # Per-test compile flags are declared inline via a `// TEST-FLAGS: ...` comment
 # in the first few lines of a test (e.g. benchmarks that need -O2).
@@ -158,9 +182,53 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--gcc-source-dir",
+        default=DEFAULT_GCC_SOURCE_DIR,
+        help=(
+            "Path to the GCC source tree used for gcc builds. "
+            f"Default: {DEFAULT_GCC_SOURCE_DIR}."
+        ),
+    )
+    parser.add_argument(
         "--gcc-build-dir",
-        default=str(BUILD_ROOT / "gcc-mirror"),
-        help="Build directory for gcc-mirror.",
+        default=DEFAULT_GCC_BUILD_DIR,
+        help=f"Build directory for gcc. Default: {DEFAULT_GCC_BUILD_DIR}.",
+    )
+    parser.add_argument(
+        "--gcc-patches-dir",
+        default=DEFAULT_GCC_PATCHES_DIR,
+        help=(
+            "Optional directory for exported GCC reflection patches. "
+            "Used by macOS darwin-reflect workflows. "
+            f"Default: {DEFAULT_GCC_PATCHES_DIR or '(empty)'}"
+        ),
+    )
+    parser.add_argument(
+        "--gcc-sync-from",
+        default=DEFAULT_GCC_SYNC_FROM,
+        help=(
+            "On macOS, sync reflection commits from this source GCC repo into "
+            "--gcc-source-dir before build. "
+            f"Default: {DEFAULT_GCC_SYNC_FROM or '(disabled)'}"
+        ),
+    )
+    parser.add_argument(
+        "--gcc-sync-base-ref",
+        default="master",
+        help=(
+            "Base ref in --gcc-sync-from used to compute the patch stack "
+            "(merge-base against --gcc-sync-ref). Default: master."
+        ),
+    )
+    parser.add_argument(
+        "--gcc-sync-ref",
+        default="HEAD",
+        help="Ref in --gcc-sync-from that contains reflection commits. Default: HEAD.",
+    )
+    parser.add_argument(
+        "--no-gcc-sync",
+        action="store_true",
+        help="Disable macOS GCC patch sync from --gcc-sync-from before build.",
     )
     parser.add_argument(
         "--clang-executable",
@@ -302,6 +370,7 @@ def clang_cxxflags(
 
 def build_specs(args: argparse.Namespace) -> dict[str, CompilerSpec]:
     clang_root = Path(args.clang_root).resolve()
+    gcc_source_dir = Path(args.gcc_source_dir).resolve()
     gcc_build_dir = Path(args.gcc_build_dir).resolve()
     gcc_binary_dir = gcc_build_dir / "artifacts"
     return {
@@ -320,7 +389,7 @@ def build_specs(args: argparse.Namespace) -> dict[str, CompilerSpec]:
         ),
         "gcc": CompilerSpec(
             name="gcc",
-            source_dir=ROOT / "gcc-mirror",
+            source_dir=gcc_source_dir,
             build_dir=gcc_build_dir,
             binary_dir=gcc_binary_dir,
             executable=(
@@ -405,8 +474,20 @@ def ensure_submodule(source_dir: Path, args: argparse.Namespace) -> None:
     A fresh clone leaves clang-p2996/gcc-mirror as empty submodule dirs; the
     build needs their sources. Idempotent: a no-op once populated.
     """
-    if (source_dir / ".git").exists() or any(source_dir.iterdir()):
+    if source_dir.is_dir() and (
+        (source_dir / ".git").exists() or any(source_dir.iterdir())
+    ):
         return
+
+    if source_dir.name not in {"clang-p2996", "gcc-mirror"}:
+        raise SystemExit(
+            "Compiler source directory is missing or empty: "
+            f"{source_dir}\n"
+            "This path is not a known submodule, so it is not auto-initialized. "
+            "Clone/populate it first, or pass --gcc-source-dir to an existing tree."
+        )
+
+    ensure_directory(source_dir)
     log(f"[{source_dir.name}] checking out submodule (large clone, be patient)...")
     result = run_command_streamed(
         ["git", "submodule", "update", "--init", "--progress", str(source_dir.name)],
@@ -537,7 +618,8 @@ def sync_meta_header(spec: CompilerSpec) -> None:
 
 
 def build_gcc(spec: CompilerSpec, args: argparse.Namespace) -> None:
-    log("[gcc] building the gcc-mirror fork (this can take a long time)")
+    log(f"[gcc] building from {spec.source_dir} (this can take a long time)")
+    maybe_sync_gcc_sources_for_macos(spec, args)
     ensure_submodule(spec.source_dir, args)
     ensure_directory(spec.build_dir)
 
@@ -553,6 +635,8 @@ def build_gcc(spec: CompilerSpec, args: argparse.Namespace) -> None:
         "--enable-languages=c,c++",
         f"--prefix={spec.binary_dir}",
     ]
+    if sys.platform == "darwin":
+        configure.append(f"--with-sysroot={macos_sdk_path(args.verbose)}")
     configure_result = run_command_streamed(
         configure, cwd=spec.build_dir, verbose=args.verbose
     )
@@ -571,6 +655,144 @@ def build_gcc(spec: CompilerSpec, args: argparse.Namespace) -> None:
     require_success(install_result, "gcc install")
 
     log(f"[gcc] done -> {spec.executable}")
+
+
+def maybe_sync_gcc_sources_for_macos(
+    spec: CompilerSpec, args: argparse.Namespace
+) -> None:
+    """On macOS, apply new reflection commits from gcc-mirror to darwin GCC.
+
+    This keeps the Linux/default source of truth (gcc-mirror) and the macOS
+    darwin build tree aligned by replaying only new commits since the previous
+    sync state. Non-macOS runs are unaffected.
+    """
+    if sys.platform != "darwin" or args.no_gcc_sync:
+        return
+
+    if not args.gcc_sync_from:
+        return
+
+    sync_from = Path(args.gcc_sync_from).resolve()
+    sync_to = spec.source_dir.resolve()
+
+    if sync_from == sync_to:
+        return
+
+    if not (sync_from / ".git").exists():
+        raise SystemExit(f"gcc sync source is not a git repo: {sync_from}")
+    if not (sync_to / ".git").exists():
+        raise SystemExit(
+            "gcc sync target is not a git repo: "
+            f"{sync_to}\n"
+            "Clone the darwin fork first, or point --gcc-source-dir at a git checkout."
+        )
+
+    ensure_directory(
+        Path(args.gcc_patches_dir)
+        if args.gcc_patches_dir
+        else BUILD_ROOT / "gcc-sync-patches"
+    )
+    patches_dir = (
+        Path(args.gcc_patches_dir).resolve()
+        if args.gcc_patches_dir
+        else (BUILD_ROOT / "gcc-sync-patches").resolve()
+    )
+    state_file = spec.build_dir / ".gcc_sync_state.json"
+
+    source_head = require_git_output(
+        sync_from, ["git", "rev-parse", args.gcc_sync_ref], args.verbose
+    )
+    base_commit = require_git_output(
+        sync_from,
+        ["git", "merge-base", args.gcc_sync_ref, args.gcc_sync_base_ref],
+        args.verbose,
+    )
+
+    start_commit = base_commit
+    if state_file.is_file():
+        try:
+            state = json.loads(state_file.read_text(encoding="utf-8"))
+            previous = state.get("last_synced_source_commit", "")
+            if previous:
+                ancestor_check = run_command(
+                    ["git", "merge-base", "--is-ancestor", previous, source_head],
+                    cwd=sync_from,
+                    verbose=args.verbose,
+                )
+                if ancestor_check.returncode == 0:
+                    start_commit = previous
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    pending = require_git_output(
+        sync_from,
+        ["git", "rev-list", "--count", f"{start_commit}..{source_head}"],
+        args.verbose,
+    )
+    if pending == "0":
+        log("[gcc-sync] no new gcc-mirror commits to apply for macOS")
+        return
+
+    log(f"[gcc-sync] exporting {pending} commit(s) from {sync_from}...")
+    shutil.rmtree(patches_dir, ignore_errors=True)
+    ensure_directory(patches_dir)
+    export_result = run_command_streamed(
+        [
+            "git",
+            "format-patch",
+            "-o",
+            str(patches_dir),
+            f"{start_commit}..{source_head}",
+        ],
+        cwd=sync_from,
+        verbose=args.verbose,
+    )
+    require_success(export_result, "gcc sync: format-patch")
+
+    patch_files = sorted(patches_dir.glob("*.patch"))
+    if not patch_files:
+        raise SystemExit(
+            "gcc sync expected patches but none were exported. "
+            f"range: {start_commit}..{source_head}"
+        )
+
+    log(f"[gcc-sync] applying {len(patch_files)} patch(es) to {sync_to}...")
+    apply_result = run_command_streamed(
+        ["git", "am", "--3way", *[str(path) for path in patch_files]],
+        cwd=sync_to,
+        verbose=args.verbose,
+    )
+    if apply_result.returncode != 0:
+        raise SystemExit(
+            "gcc sync failed while applying patches. Resolve conflicts in "
+            f"{sync_to} then run 'git am --continue', or abort with 'git am --abort'."
+        )
+
+    ensure_directory(state_file.parent)
+    state_file.write_text(
+        json.dumps(
+            {
+                "last_synced_source_commit": source_head,
+                "sync_from": str(sync_from),
+                "sync_to": str(sync_to),
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def require_git_output(repo: Path, command: list[str], verbose: bool) -> str:
+    """Run a git command and return stripped stdout or raise with details."""
+    result = run_command(command, cwd=repo, verbose=verbose)
+    require_success(result, f"git command failed in {repo}")
+    value = result.stdout.strip()
+    if not value:
+        raise SystemExit(
+            f"git command returned empty output in {repo}: {shlex.join(command)}"
+        )
+    return value
 
 
 def build_selected_compilers(
