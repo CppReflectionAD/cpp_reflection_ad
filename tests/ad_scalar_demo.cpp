@@ -52,6 +52,7 @@ int main() {
   std::printf("higher-order (differentiate the DAG recursively):\n");
   { 
     double x = 1.7;
+    check("poly'(x)",  ad::partial_derivative<^^poly, 0>(x), 2*x);
     check("poly''(x)",  ad::partial_derivative<^^poly, 0, 0>(x), 2.0);
     check("poly'''(x)", ad::partial_derivative<^^poly, 0, 0, 0>(x), 0.0);
     // sin(x^2)'' = 2cos(x^2) - 4x^2 sin(x^2)
