@@ -32,7 +32,7 @@ DEFAULT_CLANG_ROOT = os.environ.get("CLANG_P2996_ROOT", str(BUILD_ROOT / "clang-
 # LLVM_BINARY_DIR (see build_clang_runtimes).
 DEFAULT_CLANG_RUNTIMES_DIR = str(BUILD_ROOT / "libcxx")
 DEFAULT_GCC_TOOLCHAIN = os.environ.get(
-    "REFLECT_GCC_TOOLCHAIN", "/opt/rh/gcc-toolset-13/root/usr"
+    "REFLECT_GCC_TOOLCHAIN", ("/opt/rh/gcc-toolset-13/root/usr" if os.path.exists("/opt/rh/gcc-toolset-13/root/usr") else "/usr")
 )
 
 # Per-test compile flags are declared inline via a `// TEST-FLAGS: ...` comment
@@ -291,6 +291,9 @@ def clang_cxxflags(
         f"-L{libcxx_lib}",
         f"-Wl,-rpath,{libcxx_lib}",
     ]
+    for sub in libcxx_lib.glob("*linux*"):
+        if sub.is_dir():
+            flags.extend([f"-L{sub}", f"-Wl,-rpath,{sub}"])
 
     if sys.platform == "darwin":
         flags.extend(["-isysroot", macos_sdk_path(verbose)])
