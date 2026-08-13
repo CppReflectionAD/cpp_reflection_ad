@@ -49,9 +49,39 @@ int main() {
   // (no exp call, no x*0); verified as code quality in `make run-bench`.
   check("d/dy prunes exp", ad::forward_derivative<^^two_arg, 1>(0.5, 2.0), 0.5);
 
+  std::printf("higher-order (differentiate the DAG recursively):\n");
+  { 
+    double x = 1.7;
+    check("poly''(x)",  ad::partial_derivative<^^poly, 0, 0>(x), 2.0);
+    check("poly'''(x)", ad::partial_derivative<^^poly, 0, 0, 0>(x), 0.0);
+    // sin(x^2)'' = 2cos(x^2) - 4x^2 sin(x^2)
+    check("trig''(x)",  ad::partial_derivative<^^trig, 0, 0>(x),
+          2*std::cos(x*x) - 4*x*x*std::sin(x*x));
+  }
+  { 
+    double x = 0.5, y = 2.0;                            // two_arg = xy + e^x
+    check("d2/dxdy",    ad::partial_derivative<^^two_arg, 0, 1>(x, y), 1.0);
+    check("d2/dx2",     ad::partial_derivative<^^two_arg, 0, 0>(x, y), std::exp(x));
+    check("d2/dy2",     ad::partial_derivative<^^two_arg, 1, 1>(x, y), 0.0); 
+  }
+  // Higher order over a DAG with a shared subexpression (a = x*y feeds both
+  // parents): f = (xy) sin(xy).
+  { 
+    double x = 0.7, y = 1.9, p = x*y;
+    check("shared d2/dx2", ad::partial_derivative<^^shared, 0, 0>(x, y),
+          y*y*(2*std::cos(p) - p*std::sin(p)));
+    check("shared d2/dxdy", ad::partial_derivative<^^shared, 0, 1>(x, y),
+          std::sin(p) + 3*p*std::cos(p) - p*p*std::sin(p));
+    check("mixed commutes", ad::partial_derivative<^^shared, 0, 1>(x, y),
+          ad::partial_derivative<^^shared, 1, 0>(x, y)); 
+  }
+
   // Derivatives are usable in constant expressions (poly is pure arithmetic).
   static_assert(ad::forward_derivative<^^poly, 0, double>(4.0) == 2*4.0 + 2);
   static_assert(ad::gradient_reverse<^^poly, double>(4.0)[0]  == 2*4.0 + 2);
+  static_assert(ad::partial_derivative<^^poly, 0, 0>(4.0) == 2.0);
+  static_assert(ad::partial_derivative<^^poly, 0, 0, 0>(4.0) == 0.0);
+  static_assert(ad::partial_derivative<^^two_arg, 0, 1>(0.5, 2.0) == 1.0);
 
   std::printf(failures ? "\n%d FAILED\n" : "\nALL CHECKS PASSED\n", failures);
   return failures ? 1 : 0;
