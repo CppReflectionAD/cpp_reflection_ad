@@ -40,7 +40,6 @@
 #include <cmath>
 #include <cstddef>
 #include <numbers>
-#include <optional>
 #include <string_view>
 #include <utility>
 
@@ -48,6 +47,7 @@ namespace ad {
 using std::meta::info;
 namespace m = std::meta;
 
+using namespace std::numbers;
 constexpr double two_over_root_pi = 2. * std::numbers::inv_sqrtpi_v<double>;
 
 // ---------------------------------------------------------------------------
