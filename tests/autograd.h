@@ -349,11 +349,12 @@ consteval std::size_t emit_node(std::vector<Node> &out, OpKind op,
 }
 
 // A compile-time map from a constant scalar value to the slot of its (unique)
-// Const node, so each distinct constant the rules synthesize appears once.
+// Const node.
 using ConstPool = std::vector<std::pair<double, std::size_t> >;
 
 // Return the slot of the Const node holding `value`, creating it (and recording
-// it in `pool`) on first request.
+// it in `pool`) on first request. `emit_node` caches based on operands, but `ConstPool`
+// caches based on the leaf value.
 consteval std::size_t ensure_const_node(std::vector<Node> &out,
                                         ConstPool &pool, double value) {
   for (const auto &[v, slot] : pool)
@@ -369,24 +370,24 @@ consteval std::size_t ensure_const_node(std::vector<Node> &out,
 consteval std::vector<Node> differentiate(const std::vector<Node> &src,
                                           std::size_t wrt) {
   const std::size_t M = src.size();
-  std::vector<std::size_t> tang(M, 0);   // src slot -> tangent slot (when varied)
-  std::vector<bool> varied(M, 0);        // is this node's tangent structurally nonzero?
   std::vector<Node> out;
+  std::vector<std::size_t> tang(M, 0);   // tang[i] returns the slot in `out` that corresponds to the tangent of the ith node in `src`.
+  std::vector<bool> varied(M, 0);        // varied[i] marks whether the tangent of ith node in 'src' is non-zero.
 
-  // Pass 1: identity-copy every primal node except the Output (recreated last).
-  // Copying in order keeps each node at its original slot, so primal operand
-  // references (n.a / n.b) and self indices stay valid with no remap.
+  // Copy every primal node except the Output (which is at the end of src).
+  // Copying in order keeps each node at its original slot, so `src` Node operands are not invalidated.
+  // We assume these will be reused in the calculate for the derivative, and if not they will be pruned
+  // later.
   for (const Node &n : src)
     if (n.op != OpKind::Output)
       emit_raw(out, n.op, n.a, n.b, n.leaf);
 
   ConstPool constPool;
 
-  // Pass 2: emit each node's tangent, in topological order. `va`/`vb` say whether
-  // operand a/b has a nonzero tangent; a rule that would multiply a zero tangent
-  // is simply not emitted (that branch of the sum/product rule drops out).
+  // Create a tangent node for each `src` node in order.
   for (const Node &n : src) {
     const std::size_t i = n.self;
+    // `va`/`vb` correspond to whether operand a/b has a nonzero tangent
     const bool va = op_has_a(n.op) && varied[n.a];
     const bool vb = op_has_b(n.op) && varied[n.b];
     switch (n.op) {
@@ -416,6 +417,7 @@ consteval std::vector<Node> differentiate(const std::vector<Node> &src,
       case OpKind::Mul:                     // d(ab) = da*b + a*db
         varied[i] = va || vb;
         if (va && vb) {
+          // product rule
           std::size_t l = emit_node(out, OpKind::Mul, tang[n.a], n.b);
           std::size_t r = emit_node(out, OpKind::Mul, n.a, tang[n.b]);
           tang[i] = emit_node(out, OpKind::Add, l, r);
@@ -425,18 +427,19 @@ consteval std::vector<Node> differentiate(const std::vector<Node> &src,
       case OpKind::Div:                     // d(a/b) = (da*b - a*db) / (b*b)
         varied[i] = va || vb;
         if (va && vb) {
+          // quotient rule
           std::size_t l  = emit_node(out, OpKind::Mul, tang[n.a], n.b);
           std::size_t r  = emit_node(out, OpKind::Mul, n.a, tang[n.b]);
-          std::size_t nu = emit_node(out, OpKind::Sub, l, r);
-          std::size_t de = emit_node(out, OpKind::Mul, n.b, n.b);
-          tang[i] = emit_node(out, OpKind::Div, nu, de);
+          std::size_t numerator = emit_node(out, OpKind::Sub, l, r);
+          std::size_t denominator = emit_node(out, OpKind::Mul, n.b, n.b);
+          tang[i] = emit_node(out, OpKind::Div, numerator, denominator);
         } else if (va) {
           tang[i] = emit_node(out, OpKind::Div, tang[n.a], n.b);
         } else if (vb) {                    // -a*db / (b*b)
-          std::size_t nu = emit_node(out, OpKind::Mul, n.a, tang[n.b]);
-          std::size_t de = emit_node(out, OpKind::Mul, n.b, n.b);
-          std::size_t q  = emit_node(out, OpKind::Div, nu, de);
-          tang[i] = emit_node(out, OpKind::Neg, q, 0);
+          std::size_t numerator = emit_node(out, OpKind::Mul, n.a, tang[n.b]);
+          std::size_t denominator = emit_node(out, OpKind::Mul, n.b, n.b);
+          std::size_t quotient  = emit_node(out, OpKind::Div, numerator, denominator);
+          tang[i] = emit_node(out, OpKind::Neg, quotient, 0);
         }
         break;
       case OpKind::Neg:
@@ -458,8 +461,9 @@ consteval std::vector<Node> differentiate(const std::vector<Node> &src,
           tang[i] = emit_node(out, OpKind::Neg, p, 0);
         }
         break;
-      case OpKind::Exp:                     // exp(a) * da; slot i is the copied exp(a)
+      case OpKind::Exp:                     // exp(a) * da
         varied[i] = va;
+        // slot i is `exp(a)`
         if (va) tang[i] = emit_node(out, OpKind::Mul, i, tang[n.a]);
         break;
       case OpKind::Log:                     // da / a
@@ -470,18 +474,19 @@ consteval std::vector<Node> differentiate(const std::vector<Node> &src,
         varied[i] = va;
         if (va) {
           std::size_t two = ensure_const_node(out, constPool, 2.0);
-          std::size_t de  = emit_node(out, OpKind::Mul, two, i);
-          tang[i] = emit_node(out, OpKind::Div, tang[n.a], de);
+          // slot i is `sqrt(a)`
+          std::size_t two_sqrt_a  = emit_node(out, OpKind::Mul, two, i);
+          tang[i] = emit_node(out, OpKind::Div, tang[n.a], two_sqrt_a);
         }
         break;
       case OpKind::Erfc:                    // -2/sqrt(pi) * exp(-a*a) * da
         varied[i] = va;
         if (va) {
           std::size_t k   = ensure_const_node(out, constPool, -two_over_root_pi);
-          std::size_t aa  = emit_node(out, OpKind::Mul, n.a, n.a);
-          std::size_t naa = emit_node(out, OpKind::Neg, aa, 0);
-          std::size_t e   = emit_node(out, OpKind::Exp, naa, 0);
-          std::size_t ke  = emit_node(out, OpKind::Mul, k, e);
+          std::size_t a_squared  = emit_node(out, OpKind::Mul, n.a, n.a);
+          std::size_t minus_a_squared = emit_node(out, OpKind::Neg, a_squared, 0);
+          std::size_t exp_minus_a_squared   = emit_node(out, OpKind::Exp, minus_a_squared, 0);
+          std::size_t ke  = emit_node(out, OpKind::Mul, k, exp_minus_a_squared);
           tang[i] = emit_node(out, OpKind::Mul, ke, tang[n.a]);
         }
         break;
@@ -491,19 +496,17 @@ consteval std::vector<Node> differentiate(const std::vector<Node> &src,
     }
   }
 
-  // New root: the tangent of the original return value, or a literal 0 when the
-  // derivative is identically zero (e.g. differentiating past a polynomial's
-  // degree, or w.r.t. a variable the result does not depend on).
-  const std::size_t oldRoot = M - 1;        // src.back() is the Output node
-  std::size_t rootTang = varied[oldRoot]
-      ? tang[oldRoot]
+  // Create a new output node.
+  const std::size_t srcOutputIndex = M - 1;  
+  std::size_t srcOutputDerivative = varied[srcOutputIndex]
+      ? tang[srcOutputIndex]
       : ensure_const_node(out, constPool, 0.0);
-  emit_raw(out, OpKind::Output, rootTang, 0);
+  emit_raw(out, OpKind::Output, srcOutputDerivative, 0);
   return out;
 }
 
-// Dead-code elimination for the final DAG: mark only nodes reachable from the
-// Output as needed, so the evaluator skips the primal copies no derivative reads.
+// Mark only nodes reachable from the Output as needed, so the evaluator 
+// skips nodes that are not needed.
 consteval void prune_reachable(std::vector<Node> &ns) {
   const std::size_t N = ns.size();
   std::vector<char> need(N, 0);
@@ -541,10 +544,12 @@ constexpr void eval_primal_node(T *val, const T *in) {
   }
 }
 
-// Evaluate the `nodes` for our DAG for each argument in `Args...`.
-// Here we use forward AD, evaluating each node in turn.
-template <const std::span<const Node>& nodes, typename... Args>
+// Evaluate the DAG built by `Builder::build()` for each argument in `Args...`.
+// Here we use forward AD, evaluating each node in turn. 
+// todo: Pass in the nodes directly rather than the builder (there is a limitation in the compiler).
+template <typename Builder, typename... Args>
 constexpr double eval_graph(Args... args) {
+  static constexpr auto nodes = std::define_static_array(Builder::build());
   constexpr std::size_t N = nodes.size();
   const double in[] = { static_cast<double>(args)... };
   double val[N];
@@ -568,11 +573,18 @@ consteval std::vector<Node> build_partial_nodes() {
   return ns;
 }
 
+namespace detail {
+// Builder type wrapping build_partial_nodes.
+template <info Fn, std::size_t... Wrts>
+struct partial_builder {
+  static consteval std::vector<Node> build() { return build_partial_nodes<Fn, Wrts...>(); }
+};
+}  // namespace detail
+
 // Partial derivative of `Fn` with respect to each index in `Wrts...`, evaluated at `Arg...`.
 template <info Fn, std::size_t... Wrts, typename... Args>
 constexpr double partial_derivative(Args... args) {
-  static constexpr auto nodes = std::define_static_array(build_partial_nodes<Fn, Wrts...>());
-  return detail::eval_graph<nodes, double>(args...);
+  return detail::eval_graph<detail::partial_builder<Fn, Wrts...>>(args...);
 }
 
 // Forward-mode directional derivative of `Fn` w.r.t. input index `Wrt`,
