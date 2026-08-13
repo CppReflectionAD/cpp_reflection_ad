@@ -16,10 +16,8 @@
 //   - gradient_reverse<^^f>(args...)         — full gradient in ONE reverse pass
 //       (primal sweep + adjoint sweep over the reversed DAG with accumulation);
 //       the efficient path for scalar-output, many-input functions.
-//   - nth_derivative<^^f, Wrt, Order>(args...) — Order-th derivative w.r.t. Wrt.
-//   - mixed_partial<^^f, Wrt...>(args...)    — mixed partial ∂^k f/∂x_i∂x_j…
-//       Both build the derivative DAG by symbolic differentiation (see below)
-//       applied recursively, then splice it as inlined arithmetic.
+//   - partial_derivative<^^f, Wrt...>(args...) - Calculate the partial_derivative of `f`, with respect to each index in `Wrt...`
+//        e.g. partial_derivative<^^f, 0, 0, 1>(args...) will differentiate `f` twice w.r.t the 0th argument, and once w.r.t. the first.
 //
 // Activity analysis (mark_activity) runs on the DAG before codegen: it marks
 // which values are "varied" (depend on a differentiated input) and which are
@@ -328,16 +326,7 @@ consteval std::vector<Node> build_marked_nodes_reversed() {
 }
 
 // ---------------------------------------------------------------------------
-// Higher-order derivatives by symbolic DAG differentiation.
-//
-// differentiate(dag, wrt) builds a NEW primal DAG whose value is d(dag)/d(x_wrt),
-// applying the same forward-mode rules as forward_derivative but *emitting IR
-// nodes* rather than computing values. Because the result is itself an ordinary
-// function DAG, the nth derivative is simply differentiate applied n times; the
-// shared primal evaluator (eval_built) then splices the final DAG as inlined
-// arithmetic. Mixed partials fall out by differentiating w.r.t. a different input
-// at each step (differentiation commutes for smooth functions).
-//
+// Higher-order derivatives by recursive DAG differentiation.
 // ---------------------------------------------------------------------------
 namespace detail {
 
@@ -531,7 +520,7 @@ consteval void prune_reachable(std::vector<Node> &ns) {
 
 // Given a Node `n`, calculate the primal value of `n` and store in `val`, with the assumption that the
 // primal values of the operands of `n` have been calculated already and stored in `val`, or that we need
-// the input node `in`.
+// the input node `in` to do the calculation.
 template <Node n, typename T>
 constexpr void eval_primal_node(T *val, const T *in) {
   if constexpr (n.nself) {
@@ -552,32 +541,23 @@ constexpr void eval_primal_node(T *val, const T *in) {
   }
 }
 
-// Evaluate a plain primal DAG (as produced by the builders below) as inlined
-// arithmetic, returning its Output value.
-template <typename Build, typename T, typename... Args>
-constexpr T eval_built(Args... args) {
-  constexpr auto nodes = std::define_static_array(Build::build());
+// Evaluate the `nodes` for our DAG for each argument in `Args...`.
+// Here we use forward AD, evaluating each node in turn.
+template <const std::span<const Node>& nodes, typename... Args>
+constexpr double eval_graph(Args... args) {
   constexpr std::size_t N = nodes.size();
-  const T in[] = { static_cast<T>(args)... };
-  T val[N];
+  const double in[] = { static_cast<double>(args)... };
+  double val[N];
   template for (constexpr auto n : nodes)
-    eval_primal_node<n, T>(val, in);
+    eval_primal_node<n, double>(val, in);
   return val[N - 1];
 }
 
 }  // namespace detail
 
-// DAG for the Order-th derivative of Fn w.r.t. a single input (index Wrt).
-template <info Fn, std::size_t Wrt, std::size_t Order>
-consteval std::vector<Node> build_nth_nodes() {
-  std::vector<Node> ns = build_nodes<Fn>();
-  for (std::size_t k = 0; k < Order; ++k)
-    ns = detail::differentiate(ns, Wrt);
-  detail::prune_reachable(ns);
-  return ns;
-}
-
-// DAG for a mixed partial: differentiate once per index listed in Wrts.
+// Create nodes for a DAG corresponding to the partial derivative of `Fn`, differentiated with
+// respect to each argument in `Wrts...`. Creates a DAG for the original `Fn`, and then recursively
+// creates subsequent DAGs for each derivative.
 template <info Fn, std::size_t... Wrts>
 consteval std::vector<Node> build_partial_nodes() {
   std::vector<Node> ns = build_nodes<Fn>();
@@ -588,37 +568,18 @@ consteval std::vector<Node> build_partial_nodes() {
   return ns;
 }
 
-namespace detail {
-// Builder types wrapping the DAG constructors (see eval_built: a type, not a
-// consteval function pointer, is what can be passed as a template argument).
-template <info Fn, std::size_t Wrt, std::size_t Order>
-struct nth_builder {
-  static consteval std::vector<Node> build() { return build_nth_nodes<Fn, Wrt, Order>(); }
-};
-template <info Fn, std::size_t... Wrts>
-struct partial_builder {
-  static consteval std::vector<Node> build() { return build_partial_nodes<Fn, Wrts...>(); }
-};
-}  // namespace detail
-
-// d^Order f / d(x_Wrt)^Order, evaluated at args.
-template <info Fn, std::size_t Wrt, std::size_t Order, typename T = double, typename... Args>
-constexpr T nth_derivative(Args... args) {
-  return detail::eval_built<detail::nth_builder<Fn, Wrt, Order>, T>(args...);
-}
-
-// Mixed partial derivative ∂^k f / ∂x_{Wrts...}, evaluated at args -- e.g.
-// mixed_partial<^^f, 0, 1>(x, y) is ∂²f/∂x∂y.
-template <info Fn, std::size_t... Wrts, typename T = double, typename... Args>
-constexpr T mixed_partial(Args... args) {
-  return detail::eval_built<detail::partial_builder<Fn, Wrts...>, T>(args...);
+// Partial derivative of `Fn` with respect to each index in `Wrts...`, evaluated at `Arg...`.
+template <info Fn, std::size_t... Wrts, typename... Args>
+constexpr double partial_derivative(Args... args) {
+  static constexpr auto nodes = std::define_static_array(build_partial_nodes<Fn, Wrts...>());
+  return detail::eval_graph<nodes, double>(args...);
 }
 
 // Forward-mode directional derivative of `Fn` w.r.t. input index `Wrt`,
 // evaluated at `args`. Compiles to inlined arithmetic (zero-cost).
 template <info Fn, std::size_t Wrt, typename T = double, typename... Args>
 constexpr T forward_derivative(Args... args) {
-  constexpr auto nodes = std::define_static_array(build_marked_nodes<Fn, (1ull << Wrt)>());
+  static constexpr auto nodes = std::define_static_array(build_marked_nodes<Fn, (1ull << Wrt)>());
   constexpr std::size_t N = nodes.size();
 
   const T in[] = { static_cast<T>(args)... };
@@ -685,8 +646,8 @@ constexpr std::array<T, sizeof...(Args)> gradient_of(Args... args) {
 // path for scalar-output, many-input functions (the "autograd" case).
 template <info Fn, typename T = double, typename... Args>
 constexpr std::array<T, sizeof...(Args)> gradient_reverse(Args... args) {
-  constexpr auto nodes = std::define_static_array(build_marked_nodes<Fn, ~0ull>());
-  constexpr auto rnodes = std::define_static_array(build_marked_nodes_reversed<Fn, ~0ull>());
+  static constexpr auto nodes = std::define_static_array(build_marked_nodes<Fn, ~0ull>());
+  static constexpr auto rnodes = std::define_static_array(build_marked_nodes_reversed<Fn, ~0ull>());
   constexpr std::size_t N = nodes.size();
   constexpr std::size_t P = sizeof...(Args);
 
