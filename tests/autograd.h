@@ -16,6 +16,10 @@
 //   - gradient_reverse<^^f>(args...)         — full gradient in ONE reverse pass
 //       (primal sweep + adjoint sweep over the reversed DAG with accumulation);
 //       the efficient path for scalar-output, many-input functions.
+//   - nth_derivative<^^f, Wrt, Order>(args...) — Order-th derivative w.r.t. Wrt.
+//   - mixed_partial<^^f, Wrt...>(args...)    — mixed partial ∂^k f/∂x_i∂x_j…
+//       Both build the derivative DAG by symbolic differentiation (see below)
+//       applied recursively, then splice it as inlined arithmetic.
 //
 // Activity analysis (mark_activity) runs on the DAG before codegen: it marks
 // which values are "varied" (depend on a differentiated input) and which are
@@ -38,12 +42,12 @@
 #include <cmath>
 #include <cstddef>
 #include <numbers>
+#include <optional>
 #include <string_view>
 #include <utility>
 
 namespace ad {
 using std::meta::info;
-using namespace std::numbers;
 namespace m = std::meta;
 
 constexpr double two_over_root_pi = 2. * std::numbers::inv_sqrtpi_v<double>;
@@ -250,7 +254,8 @@ consteval std::vector<Node> build_nodes() {
 // Ops whose derivative rule reads the primal value of an operand / of itself.
 consteval bool deriv_reads_operand_vals(OpKind op) {  // reads val[a] (and val[b])
   return op == OpKind::Mul || op == OpKind::Div ||
-         op == OpKind::Sin || op == OpKind::Cos || op == OpKind::Log || op == OpKind::Erfc;
+         op == OpKind::Sin || op == OpKind::Cos || op == OpKind::Log ||
+         op == OpKind::Erfc;
 }
 consteval bool deriv_reads_self_val(OpKind op) {       // reads val[self]
   return op == OpKind::Exp || op == OpKind::Sqrt;
@@ -322,11 +327,298 @@ consteval std::vector<Node> build_marked_nodes_reversed() {
   return rev;
 }
 
+// ---------------------------------------------------------------------------
+// Higher-order derivatives by symbolic DAG differentiation.
+//
+// differentiate(dag, wrt) builds a NEW primal DAG whose value is d(dag)/d(x_wrt),
+// applying the same forward-mode rules as forward_derivative but *emitting IR
+// nodes* rather than computing values. Because the result is itself an ordinary
+// function DAG, the nth derivative is simply differentiate applied n times; the
+// shared primal evaluator (eval_built) then splices the final DAG as inlined
+// arithmetic. Mixed partials fall out by differentiating w.r.t. a different input
+// at each step (differentiation commutes for smooth functions).
+//
+// ---------------------------------------------------------------------------
+namespace detail {
+
+// Raw append: always pushes a new node and returns its slot.
+consteval std::size_t emit_raw(std::vector<Node> &out, OpKind op,
+                               std::size_t a, std::size_t b, info leaf = ^^int) {
+  std::size_t s = out.size();
+  out.push_back(Node{op, s, a, b, leaf});
+  return s;
+}
+
+// If we have an existing node in the DAG with the same operation and operands, we
+// can reuse it instead of bloating the DAG with duplicate nodes.
+consteval std::size_t emit_node(std::vector<Node> &out, OpKind op,
+                                std::size_t a, std::size_t b, info leaf = ^^int) {
+  for (const Node &n : out)
+    if (n.op == op && n.a == a && n.b == b)
+      return n.self;
+  return emit_raw(out, op, a, b, leaf);
+}
+
+// A compile-time map from a constant scalar value to the slot of its (unique)
+// Const node, so each distinct constant the rules synthesize appears once.
+using ConstPool = std::vector<std::pair<double, std::size_t> >;
+
+// Return the slot of the Const node holding `value`, creating it (and recording
+// it in `pool`) on first request.
+consteval std::size_t ensure_const_node(std::vector<Node> &out,
+                                        ConstPool &pool, double value) {
+  for (const auto &[v, slot] : pool)
+    if (v == value)
+      return slot;
+  std::size_t slot =
+      emit_raw(out, OpKind::Const, 0, 0, m::reflect_constant(value));
+  pool.push_back({value, slot});
+  return slot;
+}
+
+// Build the derivative DAG of `src` w.r.t. input index `wrt`.
+consteval std::vector<Node> differentiate(const std::vector<Node> &src,
+                                          std::size_t wrt) {
+  const std::size_t M = src.size();
+  std::vector<std::size_t> tang(M, 0);   // src slot -> tangent slot (when varied)
+  std::vector<bool> varied(M, 0);        // is this node's tangent structurally nonzero?
+  std::vector<Node> out;
+
+  // Pass 1: identity-copy every primal node except the Output (recreated last).
+  // Copying in order keeps each node at its original slot, so primal operand
+  // references (n.a / n.b) and self indices stay valid with no remap.
+  for (const Node &n : src)
+    if (n.op != OpKind::Output)
+      emit_raw(out, n.op, n.a, n.b, n.leaf);
+
+  ConstPool constPool;
+
+  // Pass 2: emit each node's tangent, in topological order. `va`/`vb` say whether
+  // operand a/b has a nonzero tangent; a rule that would multiply a zero tangent
+  // is simply not emitted (that branch of the sum/product rule drops out).
+  for (const Node &n : src) {
+    const std::size_t i = n.self;
+    const bool va = op_has_a(n.op) && varied[n.a];
+    const bool vb = op_has_b(n.op) && varied[n.b];
+    switch (n.op) {
+      case OpKind::Input:
+        varied[i] = (i == wrt);
+        if (varied[i]) tang[i] = ensure_const_node(out, constPool, 1.0);
+        break;
+      case OpKind::Const:
+        varied[i] = false;
+        break;
+      case OpKind::Output:                  // forwards the return value's tangent
+        varied[i] = va;
+        if (va) tang[i] = tang[n.a];
+        break;
+      case OpKind::Add:
+        varied[i] = va || vb;
+        if (va && vb) tang[i] = emit_node(out, OpKind::Add, tang[n.a], tang[n.b]);
+        else if (va)  tang[i] = tang[n.a];
+        else if (vb)  tang[i] = tang[n.b];
+        break;
+      case OpKind::Sub:
+        varied[i] = va || vb;
+        if (va && vb) tang[i] = emit_node(out, OpKind::Sub, tang[n.a], tang[n.b]);
+        else if (va)  tang[i] = tang[n.a];
+        else if (vb)  tang[i] = emit_node(out, OpKind::Neg, tang[n.b], 0);
+        break;
+      case OpKind::Mul:                     // d(ab) = da*b + a*db
+        varied[i] = va || vb;
+        if (va && vb) {
+          std::size_t l = emit_node(out, OpKind::Mul, tang[n.a], n.b);
+          std::size_t r = emit_node(out, OpKind::Mul, n.a, tang[n.b]);
+          tang[i] = emit_node(out, OpKind::Add, l, r);
+        } else if (va) tang[i] = emit_node(out, OpKind::Mul, tang[n.a], n.b);
+        else if (vb)   tang[i] = emit_node(out, OpKind::Mul, n.a, tang[n.b]);
+        break;
+      case OpKind::Div:                     // d(a/b) = (da*b - a*db) / (b*b)
+        varied[i] = va || vb;
+        if (va && vb) {
+          std::size_t l  = emit_node(out, OpKind::Mul, tang[n.a], n.b);
+          std::size_t r  = emit_node(out, OpKind::Mul, n.a, tang[n.b]);
+          std::size_t nu = emit_node(out, OpKind::Sub, l, r);
+          std::size_t de = emit_node(out, OpKind::Mul, n.b, n.b);
+          tang[i] = emit_node(out, OpKind::Div, nu, de);
+        } else if (va) {
+          tang[i] = emit_node(out, OpKind::Div, tang[n.a], n.b);
+        } else if (vb) {                    // -a*db / (b*b)
+          std::size_t nu = emit_node(out, OpKind::Mul, n.a, tang[n.b]);
+          std::size_t de = emit_node(out, OpKind::Mul, n.b, n.b);
+          std::size_t q  = emit_node(out, OpKind::Div, nu, de);
+          tang[i] = emit_node(out, OpKind::Neg, q, 0);
+        }
+        break;
+      case OpKind::Neg:
+        varied[i] = va;
+        if (va) tang[i] = emit_node(out, OpKind::Neg, tang[n.a], 0);
+        break;
+      case OpKind::Sin:                     // cos(a) * da
+        varied[i] = va;
+        if (va) {
+          std::size_t c = emit_node(out, OpKind::Cos, n.a, 0);
+          tang[i] = emit_node(out, OpKind::Mul, c, tang[n.a]);
+        }
+        break;
+      case OpKind::Cos:                     // -sin(a) * da
+        varied[i] = va;
+        if (va) {
+          std::size_t s = emit_node(out, OpKind::Sin, n.a, 0);
+          std::size_t p = emit_node(out, OpKind::Mul, s, tang[n.a]);
+          tang[i] = emit_node(out, OpKind::Neg, p, 0);
+        }
+        break;
+      case OpKind::Exp:                     // exp(a) * da; slot i is the copied exp(a)
+        varied[i] = va;
+        if (va) tang[i] = emit_node(out, OpKind::Mul, i, tang[n.a]);
+        break;
+      case OpKind::Log:                     // da / a
+        varied[i] = va;
+        if (va) tang[i] = emit_node(out, OpKind::Div, tang[n.a], n.a);
+        break;
+      case OpKind::Sqrt:                    // da / (2*sqrt(a)) = da / (2 * self)
+        varied[i] = va;
+        if (va) {
+          std::size_t two = ensure_const_node(out, constPool, 2.0);
+          std::size_t de  = emit_node(out, OpKind::Mul, two, i);
+          tang[i] = emit_node(out, OpKind::Div, tang[n.a], de);
+        }
+        break;
+      case OpKind::Erfc:                    // -2/sqrt(pi) * exp(-a*a) * da
+        varied[i] = va;
+        if (va) {
+          std::size_t k   = ensure_const_node(out, constPool, -two_over_root_pi);
+          std::size_t aa  = emit_node(out, OpKind::Mul, n.a, n.a);
+          std::size_t naa = emit_node(out, OpKind::Neg, aa, 0);
+          std::size_t e   = emit_node(out, OpKind::Exp, naa, 0);
+          std::size_t ke  = emit_node(out, OpKind::Mul, k, e);
+          tang[i] = emit_node(out, OpKind::Mul, ke, tang[n.a]);
+        }
+        break;
+      default:
+        throw "Unhandled";
+        break;
+    }
+  }
+
+  // New root: the tangent of the original return value, or a literal 0 when the
+  // derivative is identically zero (e.g. differentiating past a polynomial's
+  // degree, or w.r.t. a variable the result does not depend on).
+  const std::size_t oldRoot = M - 1;        // src.back() is the Output node
+  std::size_t rootTang = varied[oldRoot]
+      ? tang[oldRoot]
+      : ensure_const_node(out, constPool, 0.0);
+  emit_raw(out, OpKind::Output, rootTang, 0);
+  return out;
+}
+
+// Dead-code elimination for the final DAG: mark only nodes reachable from the
+// Output as needed, so the evaluator skips the primal copies no derivative reads.
+consteval void prune_reachable(std::vector<Node> &ns) {
+  const std::size_t N = ns.size();
+  std::vector<char> need(N, 0);
+  need[N - 1] = 1;
+  for (std::size_t k = N; k-- > 0;) {
+    if (!need[k]) continue;
+    const Node &n = ns[k];
+    if (op_has_a(n.op)) need[n.a] = 1;
+    if (op_has_b(n.op)) need[n.b] = 1;
+  }
+  for (Node &n : ns)
+    n.nself = need[n.self];
+}
+
+// Given a Node `n`, calculate the primal value of `n` and store in `val`, with the assumption that the
+// primal values of the operands of `n` have been calculated already and stored in `val`, or that we need
+// the input node `in`.
+template <Node n, typename T>
+constexpr void eval_primal_node(T *val, const T *in) {
+  if constexpr (n.nself) {
+    if constexpr (n.op == OpKind::Input)       val[n.self] = in[n.self];
+    else if constexpr (n.op == OpKind::Const)  val[n.self] = static_cast<T>([: n.leaf :]);
+    else if constexpr (n.op == OpKind::Output) val[n.self] = val[n.a];
+    else if constexpr (n.op == OpKind::Add)    val[n.self] = val[n.a] + val[n.b];
+    else if constexpr (n.op == OpKind::Sub)    val[n.self] = val[n.a] - val[n.b];
+    else if constexpr (n.op == OpKind::Mul)    val[n.self] = val[n.a] * val[n.b];
+    else if constexpr (n.op == OpKind::Div)    val[n.self] = val[n.a] / val[n.b];
+    else if constexpr (n.op == OpKind::Neg)    val[n.self] = -val[n.a];
+    else if constexpr (n.op == OpKind::Sin)    val[n.self] = std::sin(val[n.a]);
+    else if constexpr (n.op == OpKind::Cos)    val[n.self] = std::cos(val[n.a]);
+    else if constexpr (n.op == OpKind::Exp)    val[n.self] = std::exp(val[n.a]);
+    else if constexpr (n.op == OpKind::Log)    val[n.self] = std::log(val[n.a]);
+    else if constexpr (n.op == OpKind::Sqrt)   val[n.self] = std::sqrt(val[n.a]);
+    else if constexpr (n.op == OpKind::Erfc)   val[n.self] = std::erfc(val[n.a]);
+  }
+}
+
+// Evaluate a plain primal DAG (as produced by the builders below) as inlined
+// arithmetic, returning its Output value.
+template <typename Build, typename T, typename... Args>
+constexpr T eval_built(Args... args) {
+  constexpr auto nodes = std::define_static_array(Build::build());
+  constexpr std::size_t N = nodes.size();
+  const T in[] = { static_cast<T>(args)... };
+  T val[N];
+  template for (constexpr auto n : nodes)
+    eval_primal_node<n, T>(val, in);
+  return val[N - 1];
+}
+
+}  // namespace detail
+
+// DAG for the Order-th derivative of Fn w.r.t. a single input (index Wrt).
+template <info Fn, std::size_t Wrt, std::size_t Order>
+consteval std::vector<Node> build_nth_nodes() {
+  std::vector<Node> ns = build_nodes<Fn>();
+  for (std::size_t k = 0; k < Order; ++k)
+    ns = detail::differentiate(ns, Wrt);
+  detail::prune_reachable(ns);
+  return ns;
+}
+
+// DAG for a mixed partial: differentiate once per index listed in Wrts.
+template <info Fn, std::size_t... Wrts>
+consteval std::vector<Node> build_partial_nodes() {
+  std::vector<Node> ns = build_nodes<Fn>();
+  const std::size_t list[] = { Wrts... };
+  for (std::size_t w : list)
+    ns = detail::differentiate(ns, w);
+  detail::prune_reachable(ns);
+  return ns;
+}
+
+namespace detail {
+// Builder types wrapping the DAG constructors (see eval_built: a type, not a
+// consteval function pointer, is what can be passed as a template argument).
+template <info Fn, std::size_t Wrt, std::size_t Order>
+struct nth_builder {
+  static consteval std::vector<Node> build() { return build_nth_nodes<Fn, Wrt, Order>(); }
+};
+template <info Fn, std::size_t... Wrts>
+struct partial_builder {
+  static consteval std::vector<Node> build() { return build_partial_nodes<Fn, Wrts...>(); }
+};
+}  // namespace detail
+
+// d^Order f / d(x_Wrt)^Order, evaluated at args.
+template <info Fn, std::size_t Wrt, std::size_t Order, typename T = double, typename... Args>
+constexpr T nth_derivative(Args... args) {
+  return detail::eval_built<detail::nth_builder<Fn, Wrt, Order>, T>(args...);
+}
+
+// Mixed partial derivative ∂^k f / ∂x_{Wrts...}, evaluated at args -- e.g.
+// mixed_partial<^^f, 0, 1>(x, y) is ∂²f/∂x∂y.
+template <info Fn, std::size_t... Wrts, typename T = double, typename... Args>
+constexpr T mixed_partial(Args... args) {
+  return detail::eval_built<detail::partial_builder<Fn, Wrts...>, T>(args...);
+}
+
 // Forward-mode directional derivative of `Fn` w.r.t. input index `Wrt`,
 // evaluated at `args`. Compiles to inlined arithmetic (zero-cost).
 template <info Fn, std::size_t Wrt, typename T = double, typename... Args>
 constexpr T forward_derivative(Args... args) {
-  static constexpr auto nodes = std::define_static_array(build_marked_nodes<Fn, (1ull << Wrt)>());
+  constexpr auto nodes = std::define_static_array(build_marked_nodes<Fn, (1ull << Wrt)>());
   constexpr std::size_t N = nodes.size();
 
   const T in[] = { static_cast<T>(args)... };
@@ -335,22 +627,7 @@ constexpr T forward_derivative(Args... args) {
 
   template for (constexpr auto n : nodes) {
     // Primal (only where the value is actually read by a derivative).
-    if constexpr (n.nself) {
-      if constexpr (n.op == OpKind::Input)       val[n.self] = in[n.self];
-      else if constexpr (n.op == OpKind::Const)  val[n.self] = static_cast<T>([: n.leaf :]);
-      else if constexpr (n.op == OpKind::Output) val[n.self] = val[n.a];
-      else if constexpr (n.op == OpKind::Add)    val[n.self] = val[n.a] + val[n.b];
-      else if constexpr (n.op == OpKind::Sub)    val[n.self] = val[n.a] - val[n.b];
-      else if constexpr (n.op == OpKind::Mul)    val[n.self] = val[n.a] * val[n.b];
-      else if constexpr (n.op == OpKind::Div)    val[n.self] = val[n.a] / val[n.b];
-      else if constexpr (n.op == OpKind::Neg)    val[n.self] = -val[n.a];
-      else if constexpr (n.op == OpKind::Sin)    val[n.self] = std::sin(val[n.a]);
-      else if constexpr (n.op == OpKind::Cos)    val[n.self] = std::cos(val[n.a]);
-      else if constexpr (n.op == OpKind::Exp)    val[n.self] = std::exp(val[n.a]);
-      else if constexpr (n.op == OpKind::Log)    val[n.self] = std::log(val[n.a]);
-      else if constexpr (n.op == OpKind::Sqrt)   val[n.self] = std::sqrt(val[n.a]);
-      else if constexpr (n.op == OpKind::Erfc)   val[n.self] = std::erfc(val[n.a]);
-    }
+    detail::eval_primal_node<n, T>(val, in);
 
     // Tangent (activity-gated: a non-varied operand contributes a zero term,
     // which is dropped instead of emitted as `... * 0`).
@@ -408,8 +685,8 @@ constexpr std::array<T, sizeof...(Args)> gradient_of(Args... args) {
 // path for scalar-output, many-input functions (the "autograd" case).
 template <info Fn, typename T = double, typename... Args>
 constexpr std::array<T, sizeof...(Args)> gradient_reverse(Args... args) {
-  static constexpr auto nodes = std::define_static_array(build_marked_nodes<Fn, ~0ull>());
-  static constexpr auto rnodes = std::define_static_array(build_marked_nodes_reversed<Fn, ~0ull>());
+  constexpr auto nodes = std::define_static_array(build_marked_nodes<Fn, ~0ull>());
+  constexpr auto rnodes = std::define_static_array(build_marked_nodes_reversed<Fn, ~0ull>());
   constexpr std::size_t N = nodes.size();
   constexpr std::size_t P = sizeof...(Args);
 
@@ -418,24 +695,8 @@ constexpr std::array<T, sizeof...(Args)> gradient_reverse(Args... args) {
   T adj[N] = {};   // adjoints, accumulated; zero-initialized
 
   // Forward (primal) sweep: compute the values the adjoint rules will read.
-  template for (constexpr auto n : nodes) {
-    if constexpr (n.nself) {
-      if constexpr (n.op == OpKind::Input)       val[n.self] = in[n.self];
-      else if constexpr (n.op == OpKind::Const)  val[n.self] = static_cast<T>([: n.leaf :]);
-      else if constexpr (n.op == OpKind::Output) val[n.self] = val[n.a];
-      else if constexpr (n.op == OpKind::Add)    val[n.self] = val[n.a] + val[n.b];
-      else if constexpr (n.op == OpKind::Sub)    val[n.self] = val[n.a] - val[n.b];
-      else if constexpr (n.op == OpKind::Mul)    val[n.self] = val[n.a] * val[n.b];
-      else if constexpr (n.op == OpKind::Div)    val[n.self] = val[n.a] / val[n.b];
-      else if constexpr (n.op == OpKind::Neg)    val[n.self] = -val[n.a];
-      else if constexpr (n.op == OpKind::Sin)    val[n.self] = std::sin(val[n.a]);
-      else if constexpr (n.op == OpKind::Cos)    val[n.self] = std::cos(val[n.a]);
-      else if constexpr (n.op == OpKind::Exp)    val[n.self] = std::exp(val[n.a]);
-      else if constexpr (n.op == OpKind::Log)    val[n.self] = std::log(val[n.a]);
-      else if constexpr (n.op == OpKind::Sqrt)   val[n.self] = std::sqrt(val[n.a]);
-      else if constexpr (n.op == OpKind::Erfc)   val[n.self] = std::erfc(val[n.a]);
-    }
-  }
+  template for (constexpr auto n : nodes)
+    detail::eval_primal_node<n, T>(val, in);
 
   // Seed the output adjoint, then sweep the DAG in reverse, pushing each node's
   // adjoint to its operands via the local VJP (accumulating with +=).
