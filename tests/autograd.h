@@ -544,25 +544,11 @@ constexpr void eval_primal_node(T *val, const T *in) {
   }
 }
 
-// Evaluate the DAG built by `Builder::build()` for each argument in `Args...`.
-// Here we use forward AD, evaluating each node in turn. 
-// todo: Pass in the nodes directly rather than the builder (there is a limitation in the compiler).
-template <typename Builder, typename... Args>
-constexpr double eval_graph(Args... args) {
-  static constexpr auto nodes = std::define_static_array(Builder::build());
-  constexpr std::size_t N = nodes.size();
-  const double in[] = { static_cast<double>(args)... };
-  double val[N];
-  template for (constexpr auto n : nodes)
-    eval_primal_node<n, double>(val, in);
-  return val[N - 1];
-}
-
 }  // namespace detail
 
 // Create nodes for a DAG corresponding to the partial derivative of `Fn`, differentiated with
 // respect to each argument in `Wrts...`. Creates a DAG for the original `Fn`, and then recursively
-// creates subsequent DAGs for each derivative.
+// creates subsequent DAGs for each derivative using forward AD.
 template <info Fn, std::size_t... Wrts>
 consteval std::vector<Node> build_partial_nodes() {
   std::vector<Node> ns = build_nodes<Fn>();
@@ -573,18 +559,16 @@ consteval std::vector<Node> build_partial_nodes() {
   return ns;
 }
 
-namespace detail {
-// Builder type wrapping build_partial_nodes.
-template <info Fn, std::size_t... Wrts>
-struct partial_builder {
-  static consteval std::vector<Node> build() { return build_partial_nodes<Fn, Wrts...>(); }
-};
-}  // namespace detail
-
 // Partial derivative of `Fn` with respect to each index in `Wrts...`, evaluated at `Arg...`.
 template <info Fn, std::size_t... Wrts, typename... Args>
 constexpr double partial_derivative(Args... args) {
-  return detail::eval_graph<detail::partial_builder<Fn, Wrts...>>(args...);
+  static constexpr auto nodes = std::define_static_array(build_partial_nodes<Fn, Wrts...>());
+  constexpr std::size_t N = nodes.size();
+  const double in[] = { static_cast<double>(args)... };
+  double val[N];
+  template for (constexpr auto n : nodes)
+    detail::eval_primal_node<n, double>(val, in);
+  return val[N - 1];
 }
 
 // Forward-mode directional derivative of `Fn` w.r.t. input index `Wrt`,
