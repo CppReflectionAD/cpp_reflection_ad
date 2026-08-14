@@ -109,12 +109,13 @@ consteval std::size_t inline_call(Ctx &c, info call);
 // because parameters_of yields ReflectionKind::Parameter while a decl_ref's
 // declaration_of yields ReflectionKind::Declaration — different kinds that never
 // compare equal. Last-wins so a local shadowing an outer name resolves to the
-// most recent binding.
+// most recent binding. An unresolved name (e.g. a global) has no slot; erroring
+// beats returning a sentinel that would index the node array out of bounds.
 consteval std::size_t findSlot(const Ctx &c, std::string_view name) {
   for (std::size_t i = c.envDecl.size(); i-- > 0;)
     if (m::identifier_of(c.envDecl[i]) == name)
       return c.envSlot[i];
-  return static_cast<std::size_t>(-1);
+  throw "reflection AD: name is not a parameter or local of the reflected body";
 }
 
 consteval OpKind binOp(m::operators op) {
@@ -142,7 +143,7 @@ consteval OpKind callOp(std::string_view name) {
   if (name == "transpose") return OpKind::Transpose;
   if (name == "sum")       return OpKind::Sum;
   if (name == "relu")      return OpKind::Relu;
-  return OpKind::Sin;  // unsupported call (never reached: guarded by known_callop)
+  throw "reflection AD: unsupported call";  // consteval throw => compile error
 }
 
 // A call is a primitive op (has a built-in VJP) iff callOp recognizes its name.
@@ -232,8 +233,12 @@ consteval std::size_t lower(Ctx &c, info e) {
 // Lower the statements of a straight-line body into `c`, resolving names against
 // the current environment; returns the slot of the (single) return value. Shared
 // by build_nodes (top-level function) and inline_call (inlined callee).
+// Anything outside that shape (control flow, assignment, a second return, no
+// return at all) is rejected: skipping it would silently build a DAG that does
+// not match the source, i.e. a wrong derivative with no diagnostic.
 consteval std::size_t lower_body(Ctx &c, info body) {
   std::size_t root = 0;
+  bool sawReturn = false;
   for (info s : m::statements_of(body)) {
     if (m::is_declaration_statement(s)) {
       info v = m::declared_variable_of(s);
@@ -241,9 +246,17 @@ consteval std::size_t lower_body(Ctx &c, info body) {
       c.envDecl.push_back(v);
       c.envSlot.push_back(slot);
     } else if (m::is_return_statement(s)) {
+      if (sawReturn)
+        throw "reflection AD: multiple return statements (straight-line bodies only)";
       root = lower(c, m::return_value_of(s));
+      sawReturn = true;
+    } else {
+      throw "reflection AD: unsupported statement; straight-line bodies only "
+            "(`T v = expr;` declarations and one `return expr;`)";
     }
   }
+  if (!sawReturn)
+    throw "reflection AD: body has no return statement";
   return root;
 }
 
