@@ -172,10 +172,15 @@ consteval std::size_t lower(Ctx &c, info e) {
 
   if (m::is_unary_operator(e)) {
     std::size_t a = lower(c, m::operands_of(e).front());
-    std::size_t s = c.nodes.size();
-    // v1 supports unary minus; other unary ops fall through as negate.
-    c.nodes.push_back(Node{OpKind::Neg, s, a, 0});
-    return s;
+    m::operators op = m::expression_operator_of(e);
+    if (op == m::operators::op_plus)
+      return a;  // unary plus is a no-op
+    if (op == m::operators::op_minus) {
+      std::size_t s = c.nodes.size();
+      c.nodes.push_back(Node{OpKind::Neg, s, a, 0});
+      return s;
+    }
+    throw "Unsupported unary operator"; 
   }
 
   if (m::is_binary_operator(e)) {

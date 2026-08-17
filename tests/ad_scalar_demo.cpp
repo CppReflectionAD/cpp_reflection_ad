@@ -14,8 +14,8 @@ constexpr double trig(double x)    { return std::sin(x * x); }        // f' = 2x
 constexpr double two_arg(double x, double y) { return x * y + std::exp(x); }  // ∇=[y+e^x, x]
 // multi-assignment with a shared intermediate (a DAG, not a tree):
 constexpr double shared(double x, double y) {
-  double a = x * y;                  // used twice
-  double b = std::sin(a);
+  double a = -x * -y;                // a is used twice. Test - unary operator too.
+  double b = +std::sin(a);           // test + unary operator here too
   return a * b;                      // f = (xy) sin(xy)
 }
 
