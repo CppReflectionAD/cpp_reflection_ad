@@ -15,7 +15,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           # Use 'true' for top-level submodules or 'recursive' for nested submodules
-          submodules: true 
+          submodules: true
 
       - name: Install Build Dependencies
         run: |
@@ -29,8 +29,7 @@ jobs:
 
       - name: Test AD
         run: |
-          python3 run_tests.py --compiler gcc --tests 'ad_scalar_demo.cpp' --run-executables
-          python3 run_tests.py --compiler gcc --tests  black_scholes_demo.cpp --run-executables
+          python3 run_tests.py --compiler gcc --run-executables
 
       - name: Test Reflection
         run: |
