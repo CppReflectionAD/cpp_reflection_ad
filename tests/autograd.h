@@ -329,20 +329,20 @@ consteval std::vector<Node> build_marked_nodes_reversed() {
 
 // Forward-mode directional derivative of `Fn` w.r.t. input index `Wrt`,
 // evaluated at `args`. Compiles to inlined arithmetic (zero-cost).
-template <info Fn, std::size_t Wrt, typename T = double, typename... Args>
-constexpr T forward_derivative(Args... args) {
+template <info Fn, std::size_t Wrt, typename... Args>
+constexpr double forward_derivative(Args... args) {
   static constexpr auto nodes = std::define_static_array(build_marked_nodes<Fn, (1ull << Wrt)>());
   constexpr std::size_t N = nodes.size();
 
-  const T in[] = { static_cast<T>(args)... };
-  T val[N];
-  T tang[N];
+  const double in[] = { static_cast<double>(args)... };
+  double val[N];
+  double tang[N];
 
   template for (constexpr auto n : nodes) {
     // Primal (only where the value is actually read by a derivative).
     if constexpr (n.nself) {
       if constexpr (n.op == OpKind::Input)       val[n.self] = in[n.self];
-      else if constexpr (n.op == OpKind::Const)  val[n.self] = static_cast<T>([: n.leaf :]);
+      else if constexpr (n.op == OpKind::Const)  val[n.self] = static_cast<double>([: n.leaf :]);
       else if constexpr (n.op == OpKind::Output) val[n.self] = val[n.a];
       else if constexpr (n.op == OpKind::Add)    val[n.self] = val[n.a] + val[n.b];
       else if constexpr (n.op == OpKind::Sub)    val[n.self] = val[n.a] - val[n.b];
@@ -359,15 +359,15 @@ constexpr T forward_derivative(Args... args) {
 
     // Tangent (activity-gated: a non-varied operand contributes a zero term,
     // which is dropped instead of emitted as `... * 0`).
-    if constexpr (n.op == OpKind::Input)       tang[n.self] = (n.self == Wrt) ? T{1} : T{0};
-    else if constexpr (!n.vself)               tang[n.self] = T{0};  // not varied
+    if constexpr (n.op == OpKind::Input)       tang[n.self] = (n.self == Wrt) ? 1.0 : 0.0;
+    else if constexpr (!n.vself)               tang[n.self] = 0.0;  // not varied
     else if constexpr (n.op == OpKind::Output) tang[n.self] = tang[n.a];
     else if constexpr (n.op == OpKind::Neg)    tang[n.self] = -tang[n.a];
     else if constexpr (n.op == OpKind::Sin)    tang[n.self] = std::cos(val[n.a]) * tang[n.a];
     else if constexpr (n.op == OpKind::Cos)    tang[n.self] = -std::sin(val[n.a]) * tang[n.a];
     else if constexpr (n.op == OpKind::Exp)    tang[n.self] = val[n.self] * tang[n.a];
     else if constexpr (n.op == OpKind::Log)    tang[n.self] = tang[n.a] / val[n.a];
-    else if constexpr (n.op == OpKind::Sqrt)   tang[n.self] = tang[n.a] / (T{2} * val[n.self]);
+    else if constexpr (n.op == OpKind::Sqrt)   tang[n.self] = tang[n.a] / (2.0 * val[n.self]);
     else if constexpr (n.op == OpKind::Erfc)   tang[n.self] = tang[n.a] * -1 * two_over_root_pi * (std::exp(-1 * (val[n.a] * val[n.a]))) ;
     else if constexpr (n.op == OpKind::Add) {
       if constexpr (n.va && n.vb) tang[n.self] = tang[n.a] + tang[n.b];
@@ -387,7 +387,7 @@ constexpr T forward_derivative(Args... args) {
       else if constexpr (n.va)    tang[n.self] = tang[n.a] / val[n.b];
       else                        tang[n.self] = -val[n.a] * tang[n.b] / (val[n.b] * val[n.b]);
     } else {
-      tang[n.self] = T{0};  // Const and any unhandled op
+      tang[n.self] = 0.0;  // Const and any unhandled op
     }
   }
 
@@ -395,38 +395,38 @@ constexpr T forward_derivative(Args... args) {
 }
 
 namespace detail {
-template <info Fn, typename T, typename... Args, std::size_t... I>
-constexpr std::array<T, sizeof...(I)> grad_impl(std::index_sequence<I...>,
+template <info Fn, typename... Args, std::size_t... I>
+constexpr std::array<double, sizeof...(I)> grad_impl(std::index_sequence<I...>,
                                                 Args... args) {
-  return { forward_derivative<Fn, I, T>(args...)... };
+  return { forward_derivative<Fn, I>(args...)... };
 }
 }  // namespace detail
 
 // Full gradient via forward mode: one forward pass per input (P passes).
-template <info Fn, typename T = double, typename... Args>
-constexpr std::array<T, sizeof...(Args)> gradient_of(Args... args) {
-  return detail::grad_impl<Fn, T>(std::index_sequence_for<Args...>{}, args...);
+template <info Fn, typename... Args>
+constexpr std::array<double, sizeof...(Args)> gradient_of(Args... args) {
+  return detail::grad_impl<Fn, double>(std::index_sequence_for<Args...>{}, args...);
 }
 
 // Full gradient via reverse mode: one primal sweep + one adjoint sweep over the
 // reversed DAG, computing every partial in a single pass. This is the efficient
 // path for scalar-output, many-input functions (the "autograd" case).
-template <info Fn, typename T = double, typename... Args>
-constexpr std::array<T, sizeof...(Args)> gradient_reverse(Args... args) {
+template <info Fn, typename... Args>
+constexpr std::array<double, sizeof...(Args)> gradient_reverse(Args... args) {
   static constexpr auto nodes = std::define_static_array(build_marked_nodes<Fn, ~0ull>());
   static constexpr auto rnodes = std::define_static_array(build_marked_nodes_reversed<Fn, ~0ull>());
   constexpr std::size_t N = nodes.size();
   constexpr std::size_t P = sizeof...(Args);
 
-  const T in[] = { static_cast<T>(args)... };
-  T val[N];
-  T adj[N] = {};   // adjoints, accumulated; zero-initialized
+  const double in[] = { static_cast<double>(args)... };
+  double val[N];
+  double adj[N] = {};   // adjoints, accumulated; zero-initialized
 
   // Forward (primal) sweep: compute the values the adjoint rules will read.
   template for (constexpr auto n : nodes) {
     if constexpr (n.nself) {
       if constexpr (n.op == OpKind::Input)       val[n.self] = in[n.self];
-      else if constexpr (n.op == OpKind::Const)  val[n.self] = static_cast<T>([: n.leaf :]);
+      else if constexpr (n.op == OpKind::Const)  val[n.self] = static_cast<double>([: n.leaf :]);
       else if constexpr (n.op == OpKind::Output) val[n.self] = val[n.a];
       else if constexpr (n.op == OpKind::Add)    val[n.self] = val[n.a] + val[n.b];
       else if constexpr (n.op == OpKind::Sub)    val[n.self] = val[n.a] - val[n.b];
@@ -444,7 +444,7 @@ constexpr std::array<T, sizeof...(Args)> gradient_reverse(Args... args) {
 
   // Seed the output adjoint, then sweep the DAG in reverse, pushing each node's
   // adjoint to its operands via the local VJP (accumulating with +=).
-  adj[N - 1] = T{1};
+  adj[N - 1] = 1.0;
   template for (constexpr auto n : rnodes) {
     // Push this node's adjoint to each operand, but only to *varied* operands
     // (a non-varied operand leads to no differentiated input, so the update is
@@ -474,7 +474,7 @@ constexpr std::array<T, sizeof...(Args)> gradient_reverse(Args... args) {
     } else if constexpr (n.op == OpKind::Log) {
       if constexpr (n.va) adj[n.a] += adj[n.self] / val[n.a];
     } else if constexpr (n.op == OpKind::Sqrt) {
-      if constexpr (n.va) adj[n.a] += adj[n.self] / (T{2} * val[n.self]);
+      if constexpr (n.va) adj[n.a] += adj[n.self] / (2.0 * val[n.self]);
     } else if constexpr (n.op == OpKind::Erfc) {
       if constexpr (n.va) adj[n.a] += adj[n.self] * -1 * two_over_root_pi * (std::exp(-1 * (val[n.a] * val[n.a]))) ;
     }
@@ -482,7 +482,7 @@ constexpr std::array<T, sizeof...(Args)> gradient_reverse(Args... args) {
   }
 
   // Input k's accumulated adjoint is the k-th partial derivative.
-  std::array<T, P> g{};
+  std::array<double, P> g{};
   for (std::size_t i = 0; i < P; ++i)
     g[i] = adj[i];
   return g;
