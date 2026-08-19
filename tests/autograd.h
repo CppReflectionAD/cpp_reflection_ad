@@ -526,29 +526,6 @@ consteval void prune_reachable(std::vector<Node> &ns) {
     n.nself = need[n.self];
 }
 
-// Given a Node `n`, calculate the primal value of `n` and store in `val`, with the assumption that the
-// primal values of the operands of `n` have been calculated already and stored in `val`, or that we need
-// the input node `in` to do the calculation.
-template <Node n, typename T>
-constexpr void eval_primal_node(T *val, const T *in) {
-  if constexpr (n.nself) {
-    if constexpr (n.op == OpKind::Input)       val[n.self] = in[n.self];
-    else if constexpr (n.op == OpKind::Const)  val[n.self] = static_cast<T>([: n.leaf :]);
-    else if constexpr (n.op == OpKind::Output) val[n.self] = val[n.a];
-    else if constexpr (n.op == OpKind::Add)    val[n.self] = val[n.a] + val[n.b];
-    else if constexpr (n.op == OpKind::Sub)    val[n.self] = val[n.a] - val[n.b];
-    else if constexpr (n.op == OpKind::Mul)    val[n.self] = val[n.a] * val[n.b];
-    else if constexpr (n.op == OpKind::Div)    val[n.self] = val[n.a] / val[n.b];
-    else if constexpr (n.op == OpKind::Neg)    val[n.self] = -val[n.a];
-    else if constexpr (n.op == OpKind::Sin)    val[n.self] = std::sin(val[n.a]);
-    else if constexpr (n.op == OpKind::Cos)    val[n.self] = std::cos(val[n.a]);
-    else if constexpr (n.op == OpKind::Exp)    val[n.self] = std::exp(val[n.a]);
-    else if constexpr (n.op == OpKind::Log)    val[n.self] = std::log(val[n.a]);
-    else if constexpr (n.op == OpKind::Sqrt)   val[n.self] = std::sqrt(val[n.a]);
-    else if constexpr (n.op == OpKind::Erfc)   val[n.self] = std::erfc(val[n.a]);
-  }
-}
-
 }  // namespace detail
 
 // Create nodes for a DAG corresponding to the partial derivative of `Fn`, differentiated with
@@ -571,8 +548,24 @@ constexpr double partial_derivative(Args... args) {
   constexpr std::size_t N = nodes.size();
   const double in[] = { static_cast<double>(args)... };
   double val[N];
-  template for (constexpr auto n : nodes)
-    detail::eval_primal_node<n, double>(val, in);
+  template for (constexpr auto n : nodes) {
+    if constexpr (n.nself) {
+      if constexpr (n.op == OpKind::Input)       val[n.self] = in[n.self];
+      else if constexpr (n.op == OpKind::Const)  val[n.self] = static_cast<double>([: n.leaf :]);
+      else if constexpr (n.op == OpKind::Output) val[n.self] = val[n.a];
+      else if constexpr (n.op == OpKind::Add)    val[n.self] = val[n.a] + val[n.b];
+      else if constexpr (n.op == OpKind::Sub)    val[n.self] = val[n.a] - val[n.b];
+      else if constexpr (n.op == OpKind::Mul)    val[n.self] = val[n.a] * val[n.b];
+      else if constexpr (n.op == OpKind::Div)    val[n.self] = val[n.a] / val[n.b];
+      else if constexpr (n.op == OpKind::Neg)    val[n.self] = -val[n.a];
+      else if constexpr (n.op == OpKind::Sin)    val[n.self] = std::sin(val[n.a]);
+      else if constexpr (n.op == OpKind::Cos)    val[n.self] = std::cos(val[n.a]);
+      else if constexpr (n.op == OpKind::Exp)    val[n.self] = std::exp(val[n.a]);
+      else if constexpr (n.op == OpKind::Log)    val[n.self] = std::log(val[n.a]);
+      else if constexpr (n.op == OpKind::Sqrt)   val[n.self] = std::sqrt(val[n.a]);
+      else if constexpr (n.op == OpKind::Erfc)   val[n.self] = std::erfc(val[n.a]);
+    }
+  }
   return val[N - 1];
 }
 
@@ -589,7 +582,22 @@ constexpr T forward_derivative(Args... args) {
 
   template for (constexpr auto n : nodes) {
     // Primal (only where the value is actually read by a derivative).
-    detail::eval_primal_node<n, T>(val, in);
+    if constexpr (n.nself) {
+      if constexpr (n.op == OpKind::Input)       val[n.self] = in[n.self];
+      else if constexpr (n.op == OpKind::Const)  val[n.self] = static_cast<T>([: n.leaf :]);
+      else if constexpr (n.op == OpKind::Output) val[n.self] = val[n.a];
+      else if constexpr (n.op == OpKind::Add)    val[n.self] = val[n.a] + val[n.b];
+      else if constexpr (n.op == OpKind::Sub)    val[n.self] = val[n.a] - val[n.b];
+      else if constexpr (n.op == OpKind::Mul)    val[n.self] = val[n.a] * val[n.b];
+      else if constexpr (n.op == OpKind::Div)    val[n.self] = val[n.a] / val[n.b];
+      else if constexpr (n.op == OpKind::Neg)    val[n.self] = -val[n.a];
+      else if constexpr (n.op == OpKind::Sin)    val[n.self] = std::sin(val[n.a]);
+      else if constexpr (n.op == OpKind::Cos)    val[n.self] = std::cos(val[n.a]);
+      else if constexpr (n.op == OpKind::Exp)    val[n.self] = std::exp(val[n.a]);
+      else if constexpr (n.op == OpKind::Log)    val[n.self] = std::log(val[n.a]);
+      else if constexpr (n.op == OpKind::Sqrt)   val[n.self] = std::sqrt(val[n.a]);
+      else if constexpr (n.op == OpKind::Erfc)   val[n.self] = std::erfc(val[n.a]);
+    }
 
     // Tangent (activity-gated: a non-varied operand contributes a zero term,
     // which is dropped instead of emitted as `... * 0`).
@@ -657,8 +665,24 @@ constexpr std::array<T, sizeof...(Args)> gradient_reverse(Args... args) {
   T adj[N] = {};   // adjoints, accumulated; zero-initialized
 
   // Forward (primal) sweep: compute the values the adjoint rules will read.
-  template for (constexpr auto n : nodes)
-    detail::eval_primal_node<n, T>(val, in);
+  template for (constexpr auto n : nodes) {
+    if constexpr (n.nself) {
+      if constexpr (n.op == OpKind::Input)       val[n.self] = in[n.self];
+      else if constexpr (n.op == OpKind::Const)  val[n.self] = static_cast<T>([: n.leaf :]);
+      else if constexpr (n.op == OpKind::Output) val[n.self] = val[n.a];
+      else if constexpr (n.op == OpKind::Add)    val[n.self] = val[n.a] + val[n.b];
+      else if constexpr (n.op == OpKind::Sub)    val[n.self] = val[n.a] - val[n.b];
+      else if constexpr (n.op == OpKind::Mul)    val[n.self] = val[n.a] * val[n.b];
+      else if constexpr (n.op == OpKind::Div)    val[n.self] = val[n.a] / val[n.b];
+      else if constexpr (n.op == OpKind::Neg)    val[n.self] = -val[n.a];
+      else if constexpr (n.op == OpKind::Sin)    val[n.self] = std::sin(val[n.a]);
+      else if constexpr (n.op == OpKind::Cos)    val[n.self] = std::cos(val[n.a]);
+      else if constexpr (n.op == OpKind::Exp)    val[n.self] = std::exp(val[n.a]);
+      else if constexpr (n.op == OpKind::Log)    val[n.self] = std::log(val[n.a]);
+      else if constexpr (n.op == OpKind::Sqrt)   val[n.self] = std::sqrt(val[n.a]);
+      else if constexpr (n.op == OpKind::Erfc)   val[n.self] = std::erfc(val[n.a]);
+    }
+  }
 
   // Seed the output adjoint, then sweep the DAG in reverse, pushing each node's
   // adjoint to its operands via the local VJP (accumulating with +=).
