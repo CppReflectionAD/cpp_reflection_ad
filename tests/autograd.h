@@ -61,6 +61,27 @@ enum class OpKind {
   Matmul, Transpose, Sum, Relu,
 };
 
+// A call is a *primitive* (has a built-in VJP) iff its callee is registered
+// here; anything else is a user helper and gets inlined. The key is the callee
+// reflection, not its name, so a same-named function in another namespace -- or
+// a different overload -- is a different key and does not collide. Register a
+// vocabulary with:
+//   template <> struct ad::primitive<^^nn::relu> {
+//     static constexpr ad::OpKind op = ad::OpKind::Relu;
+//   };
+template <info F> struct primitive;   // declared, never defined
+
+// `^^f` is ill-formed when `f` names an overload set, so a specific overload is
+// selected by signature:
+//   template <> struct ad::primitive<ad::overload_of(^^nn, "sum", ^^Tensor(const Tensor &))>
+consteval info overload_of(info scope, std::string_view name, info fnType) {
+  for (info mem : m::members_of(scope))
+    if (m::has_identifier(mem) && m::identifier_of(mem) == name &&
+        m::type_of(mem) == fnType)
+      return mem;
+  throw "reflection AD: no overload with that signature in this scope";
+}
+
 struct Node {
   OpKind op = OpKind::Input;
   std::size_t self = 0;      // this node's SSA slot (== its index)
@@ -126,35 +147,6 @@ consteval OpKind binOp(m::operators op) {
   return OpKind::Add;  // unsupported binary op (v1)
 }
 
-consteval OpKind callOp(std::string_view name) {
-  // named arithmetic (used when operands are class types, e.g. tensors, where
-  // `a + b` would be an operator-call; named ops keep the reflected AST simple)
-  if (name == "add") return OpKind::Add;
-  if (name == "sub") return OpKind::Sub;
-  if (name == "mul") return OpKind::Mul;
-  if (name == "div") return OpKind::Div;
-  if (name == "sin")  return OpKind::Sin;
-  if (name == "cos")  return OpKind::Cos;
-  if (name == "exp")  return OpKind::Exp;
-  if (name == "log")  return OpKind::Log;
-  if (name == "sqrt") return OpKind::Sqrt;
-  if (name == "erfc") return OpKind::Erfc;
-  if (name == "matmul")    return OpKind::Matmul;
-  if (name == "transpose") return OpKind::Transpose;
-  if (name == "sum")       return OpKind::Sum;
-  if (name == "relu")      return OpKind::Relu;
-  throw "reflection AD: unsupported call";  // consteval throw => compile error
-}
-
-// A call is a primitive op (has a built-in VJP) iff callOp recognizes its name.
-// Any other call is a user-defined helper and gets inlined (see inline_call).
-consteval bool known_callop(std::string_view name) {
-  return name == "sin" || name == "cos" || name == "exp" || name == "log" ||
-         name == "sqrt" || name == "erfc" || name == "add" || name == "sub" ||
-         name == "mul" || name == "div" || name == "matmul" ||
-         name == "transpose" || name == "sum" || name == "relu";
-}
-
 // Peel "transparent" wrapper nodes so we reach the real subexpression:
 //   - implicit casts (lvalue-to-rvalue, NoOp, conversions), and
 //   - single-argument copy/move constructions, which wrap e.g. `return v;` for
@@ -170,6 +162,60 @@ consteval info stripCasts(info e) {
       break;
   }
   return e;
+}
+
+// The callee of the single call in a one-line probe function's body.
+consteval info probe_callee(info fn) {
+  for (info s : m::statements_of(m::body_of(fn)))
+    if (m::is_return_statement(s))
+      return m::callee_of(stripCasts(m::return_value_of(s)));
+  throw "reflection AD: probe function has no call to reflect";
+}
+
+// `^^std::sin` is ill-formed -- it names an overload set, not a function -- so
+// the canonical reflection of each std overload we differentiate is recovered
+// from our own call to it. Matching a user call against these is exact: a
+// user-defined `sin` is a different reflection and is inlined instead. One
+// instantiation per real floating-point overload; an integral argument selects
+// <cmath>'s integral template, which is not covered.
+template <class T> inline T p_sin (T x) { return std::sin(x); }
+template <class T> inline T p_cos (T x) { return std::cos(x); }
+template <class T> inline T p_exp (T x) { return std::exp(x); }
+template <class T> inline T p_log (T x) { return std::log(x); }
+template <class T> inline T p_sqrt(T x) { return std::sqrt(x); }
+template <class T> inline T p_erfc(T x) { return std::erfc(x); }
+
+struct Prim { bool found; OpKind op; };
+
+// Does `callee` match the float / double / long double instantiations of a
+// probe template?
+consteval bool is_std_fn(info callee, info pf, info pd, info pl) {
+  return callee == probe_callee(pf) || callee == probe_callee(pd) ||
+         callee == probe_callee(pl);
+}
+
+// Is `callee` a primitive? Checks the built-in std math set, then the
+// user-extensible ad::primitive registry.
+consteval Prim find_primitive(info callee) {
+  if (is_std_fn(callee, ^^p_sin<float>,  ^^p_sin<double>,  ^^p_sin<long double>))
+    return {true, OpKind::Sin};
+  if (is_std_fn(callee, ^^p_cos<float>,  ^^p_cos<double>,  ^^p_cos<long double>))
+    return {true, OpKind::Cos};
+  if (is_std_fn(callee, ^^p_exp<float>,  ^^p_exp<double>,  ^^p_exp<long double>))
+    return {true, OpKind::Exp};
+  if (is_std_fn(callee, ^^p_log<float>,  ^^p_log<double>,  ^^p_log<long double>))
+    return {true, OpKind::Log};
+  if (is_std_fn(callee, ^^p_sqrt<float>, ^^p_sqrt<double>, ^^p_sqrt<long double>))
+    return {true, OpKind::Sqrt};
+  if (is_std_fn(callee, ^^p_erfc<float>, ^^p_erfc<double>, ^^p_erfc<long double>))
+    return {true, OpKind::Erfc};
+
+  info spec = m::substitute(^^primitive, {m::reflect_constant(callee)});
+  if (m::is_complete_type(spec))
+    for (info mem : m::members_of(spec))
+      if (m::has_identifier(mem) && m::identifier_of(mem) == "op")
+        return {true, m::extract<OpKind>(mem)};
+  return {false, OpKind::Input};
 }
 
 // Lower an expression to SSA nodes, returning its result slot.
@@ -207,10 +253,10 @@ consteval std::size_t lower(Ctx &c, info e) {
   if (m::is_function_call(e)) {
     // operands_of(call) = [callee, arg0, arg1, ...].
     auto ops = m::operands_of(e);
-    std::string_view name = m::identifier_of(m::callee_of(e));
-    if (!known_callop(name))              // user helper -> inline its body
+    Prim p = find_primitive(m::callee_of(e));
+    if (!p.found)                         // user helper -> inline its body
       return inline_call(c, e);
-    OpKind op = callOp(name);
+    OpKind op = p.op;
     if (op_has_b(op)) {                    // binary call, e.g. matmul(a, b)
       std::size_t a = lower(c, ops[1]);
       std::size_t b = lower(c, ops[2]);
