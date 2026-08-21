@@ -19,6 +19,16 @@ constexpr double shared(double x, double y) {
   return a * b;                      // f = (xy) sin(xy)
 }
 
+// A user namespace that happens to reuse primitive names. Primitives are
+// matched by callee identity, not by name, so these are ordinary helpers and
+// get inlined -- they must NOT be mistaken for the built-in sin/sum ops.
+namespace myns {
+constexpr double sum(double a, double b) { return a + b; }  // 2 args, unlike primitive Sum (1 arg)
+constexpr double sin(double x)           { return x * x; }  // shadows std::sin's name
+}  // namespace myns
+constexpr double collide_sum(double x, double y) { return myns::sum(x * x, y); }  // d/dx = 2x
+constexpr double collide_sin(double x)           { return myns::sin(x); }        // f' = 2x
+
 static int failures = 0;
 static void check(const char *name, double got, double want) {
   bool ok = std::abs(got - want) < 1e-6 * (1.0 + std::abs(want));
@@ -48,6 +58,10 @@ int main() {
   // Activity analysis: d/dy of (x*y + exp(x)) is just x — the exp term is pruned
   // (no exp call, no x*0); verified as code quality in `make run-bench`.
   check("d/dy prunes exp", ad::forward_derivative<^^two_arg, 1>(0.5, 2.0), 0.5);
+
+  std::printf("primitive/namespace collisions (inlined, not mistaken for a primitive):\n");
+  check("myns::sum != Sum",  ad::forward_derivative<^^collide_sum, 0>(3.0, 1.0), 2*3.0);
+  check("myns::sin != std::sin", ad::forward_derivative<^^collide_sin, 0>(4.0), 2*4.0);
 
   // Derivatives are usable in constant expressions (poly is pure arithmetic).
   static_assert(ad::forward_derivative<^^poly, 0, double>(4.0) == 2*4.0 + 2);
