@@ -75,7 +75,7 @@ template <info F> struct primitive;   // declared, never defined
 // selected by signature:
 //   template <> struct ad::primitive<ad::overload_of(^^nn, "sum", ^^Tensor(const Tensor &))>
 consteval info overload_of(info scope, std::string_view name, info fnType) {
-  for (info mem : m::members_of(scope))
+  for (info mem : m::members_of(scope, m::access_context::current()))
     if (m::has_identifier(mem) && m::identifier_of(mem) == name &&
         m::type_of(mem) == fnType)
       return mem;
@@ -212,7 +212,7 @@ consteval Prim find_primitive(info callee) {
 
   info spec = m::substitute(^^primitive, {m::reflect_constant(callee)});
   if (m::is_complete_type(spec))
-    for (info mem : m::members_of(spec))
+    for (info mem : m::members_of(spec, m::access_context::current()))
       if (m::has_identifier(mem) && m::identifier_of(mem) == "op")
         return {true, m::extract<OpKind>(mem)};
   return {false, OpKind::Input};
