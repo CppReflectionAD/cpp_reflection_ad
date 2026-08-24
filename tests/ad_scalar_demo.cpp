@@ -56,37 +56,55 @@ int main() {
     EXPECT_NEAR_ABS(result, 0.5, 1e-8);
   }
 
-  std::printf("higher-order (differentiate the DAG recursively):\n");
-  { 
+  // higher-order (differentiate the DAG recursively)
+  {
     double x = 1.7;
-    check("poly'(x)",  ad::partial_derivative<^^poly, 0>(x), 2*x + 2.0);
-    check("poly''(x)",  ad::partial_derivative<^^poly, 0, 0>(x), 2.0);
-    check("poly'''(x)", ad::partial_derivative<^^poly, 0, 0, 0>(x), 0.0);
+
+    double const der1 = ad::partial_derivative<^^poly, 0>(x);
+    EXPECT_NEAR_ABS(der1, 2 * x + 2.0, 1e-8);
+
+    double const der2 = ad::partial_derivative<^^poly, 0, 0>(x);
+    EXPECT_NEAR_ABS(der2, 2.0, 1e-8);
+
+    double const der3 = ad::partial_derivative<^^poly, 0, 0, 0>(x);
+    EXPECT_NEAR_ABS(der3, 0.0, 1e-8);
+
     // sin(x^2)'' = 2cos(x^2) - 4x^2 sin(x^2)
-    check("trig''(x)",  ad::partial_derivative<^^trig, 0, 0>(x),
-          2*std::cos(x*x) - 4*x*x*std::sin(x*x));
+    double const trig_der2 = ad::partial_derivative<^^trig, 0, 0>(x);
+    EXPECT_NEAR_ABS(trig_der2,
+                    2 * std::cos(x * x) - 4 * x * x * std::sin(x * x), 1e-8);
   }
-  { 
-    double x = 0.5, y = 2.0;                            // two_arg = xy + e^x
-    check("d2/dxdy",    ad::partial_derivative<^^two_arg, 0, 1>(x, y), 1.0);
-    check("d2/dx2",     ad::partial_derivative<^^two_arg, 0, 0>(x, y), std::exp(x));
-    check("d2/dy2",     ad::partial_derivative<^^two_arg, 1, 1>(x, y), 0.0); 
+
+  {
+    double x = 0.5, y = 2.0; // two_arg = xy + e^x
+    double const der01 = ad::partial_derivative<^^two_arg, 0, 1>(x, y);
+    EXPECT_NEAR_ABS(der01, 1.0, 1e-8);
+    double const der00 = ad::partial_derivative<^^two_arg, 0, 0>(x, y);
+    EXPECT_NEAR_ABS(der00, std::exp(x), 1e-8);
+    double const der11 = ad::partial_derivative<^^two_arg, 1, 1>(x, y);
+    EXPECT_NEAR_ABS(der11, 0.0, 1e-8);
   }
+
   // Higher order over a DAG with a shared subexpression (a = x*y feeds both
   // parents): f = (xy) sin(xy).
-  { 
-    double x = 0.7, y = 1.9, p = x*y;
-    check("shared d2/dx2", ad::partial_derivative<^^shared, 0, 0>(x, y),
-          y*y*(2*std::cos(p) - p*std::sin(p)));
-    check("shared d2/dxdy", ad::partial_derivative<^^shared, 0, 1>(x, y),
-          std::sin(p) + 3*p*std::cos(p) - p*p*std::sin(p));
-    check("mixed commutes", ad::partial_derivative<^^shared, 0, 1>(x, y),
-          ad::partial_derivative<^^shared, 1, 0>(x, y)); 
+  {
+    double x = 0.7, y = 1.9, p = x * y;
+    double const der00 = ad::partial_derivative<^^shared, 0, 0>(x, y);
+    EXPECT_NEAR_ABS(der00, y * y * (2 * std::cos(p) - p * std::sin(p)), 1e-8);
+    double const der01 = ad::partial_derivative<^^shared, 0, 1>(x, y);
+    EXPECT_NEAR_ABS(
+        der01, std::sin(p) + 3 * p * std::cos(p) - p * p * std::sin(p), 1e-8);
+    double const der10 = ad::partial_derivative<^^shared, 1, 0>(x, y);
+    EXPECT_NEAR_ABS(
+        der10, std::sin(p) + 3 * p * std::cos(p) - p * p * std::sin(p), 1e-8);
+    EXPECT_NEAR_ABS(der01, der10, 1e-8); // mixed partials commute
+    double const der11 = ad::partial_derivative<^^shared, 1, 1>(x, y);
+    EXPECT_NEAR_ABS(der11, x * x * (2 * std::cos(p) - p * std::sin(p)), 1e-8);
   }
 
   // Derivatives are usable in constant expressions (poly is pure arithmetic).
-  static_assert(ad::forward_derivative<^^poly, 0, double>(4.0) == 2*4.0 + 2);
-  static_assert(ad::gradient_reverse<^^poly, double>(4.0)[0]  == 2*4.0 + 2);
+  static_assert(ad::forward_derivative<^^poly, 0, double>(4.0) == 2 * 4.0 + 2);
+  static_assert(ad::gradient_reverse<^^poly, double>(4.0)[0] == 2 * 4.0 + 2);
   static_assert(ad::partial_derivative<^^poly, 0, 0>(4.0) == 2.0);
   static_assert(ad::partial_derivative<^^poly, 0, 0, 0>(4.0) == 0.0);
   static_assert(ad::partial_derivative<^^two_arg, 0, 1>(0.5, 2.0) == 1.0);
