@@ -7,17 +7,7 @@
 #include <tuple>
 #include <type_traits>
 
-static int _result = 0;
-
-#define INCREASE                                                               \
-  do {                                                                         \
-    _result++;                                                                 \
-    constexpr int limit = 10;                                                  \
-    if (_result == limit) {                                                    \
-      std::cout << "maximum number of errors exceeded" << std::endl;           \
-      throw std::runtime_error("maximum number of errors exceeded");           \
-    }                                                                          \
-  } while (0)
+namespace detail {
 
 // Picks the float type with the fewest mantissa bits (lowest precision).
 template <class T, class U>
@@ -60,6 +50,20 @@ inline auto expect_near_rel(D1 val1, D2 val2, Tol tol)
   return std::make_tuple(rel_diff < t, rel_diff);
 }
 
+} // namespace detail
+
+static int _result = 0;
+
+#define INCREASE                                                               \
+  do {                                                                         \
+    _result++;                                                                 \
+    constexpr int limit = 10;                                                  \
+    if (_result == limit) {                                                    \
+      std::cout << "maximum number of errors exceeded" << std::endl;           \
+      throw std::runtime_error("maximum number of errors exceeded");           \
+    }                                                                          \
+  } while (0)
+
 #define TEST_END return _result
 #define TEST_FUNC(F)                                                           \
   do {                                                                         \
@@ -76,7 +80,7 @@ inline auto expect_near_rel(D1 val1, D2 val2, Tol tol)
 
 #define EXPECT_NEAR_ABS(VAL1, VAL2, TOL)                                       \
   do {                                                                         \
-    auto [is_near, tol] = expect_near_abs(VAL1, VAL2, TOL);                    \
+    auto [is_near, tol] = detail::expect_near_abs(VAL1, VAL2, TOL);            \
     if (!is_near) {                                                            \
       std::cout.precision(std::numeric_limits<double>::max_digits10);          \
       std::cout << __FILE__ << ":" << __LINE__ << " Failure" << std::endl;     \
@@ -90,7 +94,7 @@ inline auto expect_near_rel(D1 val1, D2 val2, Tol tol)
 
 #define EXPECT_NEAR_REL(VAL1, VAL2, TOL)                                       \
   do {                                                                         \
-    auto [is_near, tol] = expect_near_rel(VAL1, VAL2, TOL);                    \
+    auto [is_near, tol] = detail::expect_near_rel(VAL1, VAL2, TOL);            \
     if (!is_near) {                                                            \
       std::cout.precision(std::numeric_limits<double>::max_digits10);          \
       std::cout << __FILE__ << ":" << __LINE__ << " Failure" << std::endl;     \
