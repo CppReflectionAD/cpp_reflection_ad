@@ -21,8 +21,8 @@ static int _result = 0;
 
 // Picks the float type with the fewest mantissa bits (lowest precision).
 template <class T, class U>
-using lower_precision_t =
-    std::conditional_t<(std::numeric_limits<T>::digits <= std::numeric_limits<U>::digits), T, U>;
+using lower_precision_t = std::conditional_t<
+    (std::numeric_limits<T>::digits <= std::numeric_limits<U>::digits), T, U>;
 
 template <class D1, class D2, class Tol>
 inline auto expect_near_abs(D1 val1, D2 val2, Tol tol)
@@ -30,28 +30,34 @@ inline auto expect_near_abs(D1 val1, D2 val2, Tol tol)
   using L = lower_precision_t<lower_precision_t<D1, D2>, Tol>;
   const L v1 = static_cast<L>(val1);
   const L v2 = static_cast<L>(val2);
-  const L t  = static_cast<L>(tol);
+  const L t = static_cast<L>(tol);
   const L abs_diff = std::abs(v1 - v2);
   return std::make_tuple(abs_diff < std::abs(t), abs_diff);
 }
 
-template <class D>
-inline auto expect_near_rel(D val1, D val2, D tol) -> std::tuple<bool, double> {
+template <class D1, class D2, class Tol>
+inline auto expect_near_rel(D1 val1, D2 val2, Tol tol)
+    -> std::tuple<bool, lower_precision_t<lower_precision_t<D1, D2>, Tol>> {
+
+  using L = lower_precision_t<lower_precision_t<D1, D2>, Tol>;
+  const L v1 = static_cast<L>(val1);
+  const L v2 = static_cast<L>(val2);
+  const L t = static_cast<L>(tol);
 
   // should take care of the val1=val2=0 case
-  if (val1 == val2) {
+  if (v1 == v2) {
     return std::make_tuple(true, 0.);
   }
 
-  D average = (val1 + val2) * 0.5;
+  L average = (v1 + v2) * 0.5;
 
   if (average == 0.) {
-    average = std::max(std::abs(val1), std::abs(val2));
+    average = std::max(std::abs(v1), std::abs(v2));
   }
 
-  D rel_diff = (val1 - val2) / average;
+  L rel_diff = (v1 - v2) / average;
 
-  return std::make_tuple(rel_diff < tol, rel_diff);
+  return std::make_tuple(rel_diff < t, rel_diff);
 }
 
 #define TEST_END return _result
