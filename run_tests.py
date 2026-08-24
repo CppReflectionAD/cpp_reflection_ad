@@ -33,7 +33,12 @@ DEFAULT_CLANG_ROOT = os.environ.get("CLANG_P2996_ROOT", str(BUILD_ROOT / "clang-
 # LLVM_BINARY_DIR (see build_clang_runtimes).
 DEFAULT_CLANG_RUNTIMES_DIR = str(BUILD_ROOT / "libcxx")
 DEFAULT_GCC_TOOLCHAIN = os.environ.get(
-    "REFLECT_GCC_TOOLCHAIN", ("/opt/rh/gcc-toolset-13/root/usr" if os.path.exists("/opt/rh/gcc-toolset-13/root/usr") else "/usr")
+    "REFLECT_GCC_TOOLCHAIN",
+    (
+        "/opt/rh/gcc-toolset-13/root/usr"
+        if os.path.exists("/opt/rh/gcc-toolset-13/root/usr")
+        else "/usr"
+    ),
 )
 
 if sys.platform == "darwin":
@@ -229,6 +234,12 @@ def parse_args() -> argparse.Namespace:
         "--no-gcc-sync",
         action="store_true",
         help="Disable macOS GCC patch sync from --gcc-sync-from before build.",
+    )
+    parser.add_argument(
+        "--clang-build-type",
+        default="Release",
+        choices=("Release", "RelWithDebInfo", "Debug"),
+        help="CMake build type for the clang-p2996 build. Default: Release.",
     )
     parser.add_argument(
         "--clang-executable",
@@ -517,6 +528,8 @@ def build_clang(spec: CompilerSpec, args: argparse.Namespace) -> None:
         log(f"[clang] already configured ({spec.build_dir}); skipping cmake")
     else:
         log("[clang] configuring clang (cmake)...")
+        # Use ccache if available to speed up incremental rebuilds.
+        ccache = shutil.which("ccache")
         configure = [
             "cmake",
             "-S",
@@ -525,16 +538,24 @@ def build_clang(spec: CompilerSpec, args: argparse.Namespace) -> None:
             str(spec.build_dir),
             "-G",
             "Ninja",
-            "-DLLVM_ENABLE_PROJECTS=clang;clang-tools-extra",
-            "-DCMAKE_BUILD_TYPE=RelWithDebInfo",
+            # Only build the compiler; clang-tools-extra (clang-tidy, clangd, …)
+            # is large and not needed for running reflection tests.
+            "-DLLVM_ENABLE_PROJECTS=clang",
+            f"-DCMAKE_BUILD_TYPE={args.clang_build_type}",
             f"-DCMAKE_C_COMPILER={args.host_cc}",
             f"-DCMAKE_CXX_COMPILER={args.host_cxx}",
             f"-DPython3_EXECUTABLE={args.python_executable}",
             f"-DLLVM_TARGETS_TO_BUILD={detect_llvm_target()}",
             f"-DLLVM_PARALLEL_COMPILE_JOBS={args.jobs}",
+            # Build a single shared LLVM library; dramatically reduces link time
+            # compared to linking clang against many individual static archives.
+            "-DLLVM_BUILD_LLVM_DYLIB=ON",
+            "-DLLVM_LINK_LLVM_DYLIB=ON",
             # Linking clang is memory-hungry; serialize link steps.
             "-DLLVM_PARALLEL_LINK_JOBS=1",
         ]
+        if ccache:
+            configure.append("-DLLVM_CCACHE_BUILD=ON")
         require_success(
             run_command_streamed(configure, cwd=ROOT, verbose=args.verbose),
             "clang configure",
