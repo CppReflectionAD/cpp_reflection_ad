@@ -1,58 +1,64 @@
 // ad_scalar_demo.cpp — scalar AD on reflected functions: forward mode, reverse
 // mode, and activity analysis. Pick an ordinary function; its derivative is
-// generated at compile time and spliced as inlined arithmetic (no DSL, no tape).
+// generated at compile time and spliced as inlined arithmetic (no DSL, no
+// tape).
 //
 // Build/run: `make run-scalar`.
 
+#include "test_simple_include.hpp"
+
 #include "autograd.h"
+
+#include "functions/1-poly.h"
+#include "functions/2-trig.h"
+#include "functions/3-two_arg.h"
+#include "functions/4-shared_intemediate.h"
+
 #include <cmath>
 #include <cstdio>
 
-// Ordinary functions, differentiated by reflection without modification.
-constexpr double poly(double x)    { return x * x + 2.0 * x; }        // f' = 2x+2
-constexpr double trig(double x)    { return std::sin(x * x); }        // f' = 2x cos(x^2)
-constexpr double two_arg(double x, double y) { return x * y + std::exp(x); }  // ∇=[y+e^x, x]
-// multi-assignment with a shared intermediate (a DAG, not a tree):
-constexpr double shared(double x, double y) {
-  double a = -x * -y;                // a is used twice. Test - unary operator too.
-  double b = +std::sin(a);           // test + unary operator here too
-  return a * b;                      // f = (xy) sin(xy)
-}
-
-static int failures = 0;
-static void check(const char *name, double got, double want) {
-  bool ok = std::abs(got - want) < 1e-6 * (1.0 + std::abs(want));
-  std::printf("  %-22s %+.6f (want %+.6f) %s\n", name, got, want, ok ? "ok" : "FAIL");
-  failures += !ok;
-}
-
 int main() {
-  std::printf("=== scalar AD on reflected functions ===\n");
+  // forward mode (one directional derivative)
+  {
+    auto const result = ad::forward_derivative<^^poly, 0>(3.0);
+    EXPECT_NEAR_ABS(result, 2. * 3.0 + 2., 1e-8);
+  }
 
-  std::printf("forward mode  (one directional derivative):\n");
-  check("poly'(3)",   ad::forward_derivative<^^poly, 0>(3.0), 2*3.0 + 2);
-  { double x = 1.3;
-    check("trig'(1.3)", ad::forward_derivative<^^trig, 0>(x), 2*x*std::cos(x*x)); }
+  {
+    double const x = 1.3;
+    auto const result = ad::forward_derivative<^^trig, 0>(x);
+    EXPECT_NEAR_ABS(result, 2 * x * std::cos(x * x), 1e-8);
+  }
 
-  std::printf("reverse mode  (whole gradient in one pass):\n");
-  { double x = 0.7, y = 1.9, p = x*y;
-    auto g = ad::gradient_reverse<^^shared>(x, y);   // shared 'a' handled once
-    check("d/dx (xy)sin(xy)", g[0], y*std::sin(p) + p*std::cos(p)*y);
-    check("d/dy (xy)sin(xy)", g[1], x*std::sin(p) + p*std::cos(p)*x); }
-  { double x = 0.5, y = 2.0;                          // reverse == forward gradient
+  // reverse mode (whole gradient in one pass)
+  {
+    double x = 0.7, y = 1.9, p = x * y;
+    auto g = ad::gradient_reverse<^^shared>(x, y); // shared 'a' handled once
+
+    EXPECT_NEAR_ABS(g[0], y * std::sin(p) + p * std::cos(p) * y, 1e-8);
+    EXPECT_NEAR_ABS(g[1], x * std::sin(p) + p * std::cos(p) * x, 1e-8);
+  }
+
+  // reverse == forward gradient
+  {
+    double x = 0.5, y = 2.0;
     auto gr = ad::gradient_reverse<^^two_arg>(x, y);
     auto gf = ad::gradient_of<^^two_arg>(x, y);
-    check("rev==fwd d/dx", gr[0], gf[0]);
-    check("rev==fwd d/dy", gr[1], gf[1]); }
 
-  // Activity analysis: d/dy of (x*y + exp(x)) is just x — the exp term is pruned
-  // (no exp call, no x*0); verified as code quality in `make run-bench`.
-  check("d/dy prunes exp", ad::forward_derivative<^^two_arg, 1>(0.5, 2.0), 0.5);
+    EXPECT_NEAR_ABS(gr[0], gf[0], 1e-8);
+    EXPECT_NEAR_ABS(gr[1], gf[1], 1e-8);
+  }
+
+  // Activity analysis: d/dy of (x*y + exp(x)) is just x — the exp term is
+  // pruned (no exp call, no x*0); verified as code quality in `make run-bench`.
+  {
+    auto const result = ad::forward_derivative<^^two_arg, 1>(0.5, 2.0);
+    EXPECT_NEAR_ABS(result, 0.5, 1e-8);
+  }
 
   // Derivatives are usable in constant expressions (poly is pure arithmetic).
-  static_assert(ad::forward_derivative<^^poly, 0, double>(4.0) == 2*4.0 + 2);
-  static_assert(ad::gradient_reverse<^^poly, double>(4.0)[0]  == 2*4.0 + 2);
+  static_assert(ad::forward_derivative<^^poly, 0, double>(4.0) == 2 * 4.0 + 2);
+  static_assert(ad::gradient_reverse<^^poly, double>(4.0)[0] == 2 * 4.0 + 2);
 
-  std::printf(failures ? "\n%d FAILED\n" : "\nALL CHECKS PASSED\n", failures);
-  return failures ? 1 : 0;
+  TEST_END;
 }
