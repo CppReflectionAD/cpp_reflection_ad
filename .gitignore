@@ -1,3 +1,4 @@
 # Test-harness build tree (compiled test binaries + local compiler/runtime builds)
 build/
 **/.DS_Store
+.project

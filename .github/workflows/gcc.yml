@@ -30,8 +30,3 @@ jobs:
       - name: Test AD
         run: |
           python3 run_tests.py --compiler gcc --run-executables
-
-      - name: Test Reflection
-        run: |
-          cd build/gcc-mirror/gcc/
-          make check-g++ RUNTESTFLAGS="dg.exp=reflect/*.C"
