@@ -3,8 +3,6 @@
 
 #include <cmath>
 
-inline auto two_arg(double x, double y) -> double {
-  return x * y + std::exp(x);
-}
+inline double two_arg(double x, double y) { return x * y + std::exp(x); }
 
 #endif
