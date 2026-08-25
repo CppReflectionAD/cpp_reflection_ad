@@ -20,7 +20,8 @@
 int main() {
   // forward mode (one directional derivative)
   {
-    auto const result = ad::forward_derivative<^^poly, 0>(3.0);
+    double const x = 3.0;
+    auto const result = ad::forward_derivative<^^poly, 0>(x);
     EXPECT_NEAR_ABS(result, 2. * 3.0 + 2., 1e-8);
   }
 
@@ -32,7 +33,7 @@ int main() {
 
   // reverse mode (whole gradient in one pass)
   {
-    double x = 0.7, y = 1.9, p = x * y;
+    double const x = 0.7, y = 1.9, p = x * y;
     auto g = ad::gradient_reverse<^^shared>(x, y); // shared 'a' handled once
 
     EXPECT_NEAR_ABS(g[0], y * std::sin(p) + p * std::cos(p) * y, 1e-8);
@@ -41,7 +42,7 @@ int main() {
 
   // reverse == forward gradient
   {
-    double x = 0.5, y = 2.0;
+    double const x = 0.5, y = 2.0;
     auto gr = ad::gradient_reverse<^^two_arg>(x, y);
     auto gf = ad::gradient_of<^^two_arg>(x, y);
 
@@ -52,14 +53,14 @@ int main() {
   // Activity analysis: d/dy of (x*y + exp(x)) is just x — the exp term is
   // pruned (no exp call, no x*0); verified as code quality in `make run-bench`.
   {
-    auto const result = ad::forward_derivative<^^two_arg, 1>(0.5, 2.0);
+    double const x = 0.5, y = 2.0;
+    auto const result = ad::forward_derivative<^^two_arg, 1>(x, y);
     EXPECT_NEAR_ABS(result, 0.5, 1e-8);
   }
 
   // higher-order (differentiate the DAG recursively)
   {
-    double x = 1.7;
-
+    double const x = 1.7;
     double const der1 = ad::partial_derivative<^^poly, 0>(x);
     EXPECT_NEAR_ABS(der1, 2 * x + 2.0, 1e-8);
 
@@ -76,7 +77,7 @@ int main() {
   }
 
   {
-    double x = 0.5, y = 2.0; // two_arg = xy + e^x
+    double const x = 0.5, y = 2.0; // two_arg = xy + e^x
     double const der01 = ad::partial_derivative<^^two_arg, 0, 1>(x, y);
     EXPECT_NEAR_ABS(der01, 1.0, 1e-8);
     double const der00 = ad::partial_derivative<^^two_arg, 0, 0>(x, y);
@@ -88,7 +89,7 @@ int main() {
   // Higher order over a DAG with a shared subexpression (a = x*y feeds both
   // parents): f = (xy) sin(xy).
   {
-    double x = 0.7, y = 1.9, p = x * y;
+    double const x = 0.7, y = 1.9, p = x * y;
     double const der00 = ad::partial_derivative<^^shared, 0, 0>(x, y);
     EXPECT_NEAR_ABS(der00, y * y * (2 * std::cos(p) - p * std::sin(p)), 1e-8);
     double const der01 = ad::partial_derivative<^^shared, 0, 1>(x, y);
