@@ -54,15 +54,14 @@ inline auto expect_near_rel(D1 val1, D2 val2, Tol tol)
 
 static int _result = 0;
 
-#define INCREASE                                                               \
-  do {                                                                         \
-    _result++;                                                                 \
-    constexpr int limit = 10;                                                  \
-    if (_result == limit) {                                                    \
-      std::cout << "maximum number of errors exceeded" << std::endl;           \
-      throw std::runtime_error("maximum number of errors exceeded");           \
-    }                                                                          \
-  } while (0)
+inline void increase_error_count() {
+  constexpr int limit = 10;
+  _result++;
+  if (_result == limit) {
+    std::cout << "maximum number of errors exceeded" << std::endl;
+    throw std::runtime_error("maximum number of errors exceeded");
+  }
+}
 
 #define TEST_END return _result
 #define TEST_FUNC(F)                                                           \
@@ -74,7 +73,7 @@ static int _result = 0;
       std::cout << #F << " failed" << std::endl;                               \
     }                                                                          \
     if (_result_temp) {                                                        \
-      INCREASE;                                                                \
+      increase_error_count();                                                  \
     }                                                                          \
   } while (0)
 
@@ -88,7 +87,7 @@ static int _result = 0;
                 << ", where" << std::endl;                                     \
       std::cout << "val1 evaluates to " << VAL1 << std::endl;                  \
       std::cout << "val2 evaluates to " << VAL2 << std::endl;                  \
-      INCREASE;                                                                \
+      increase_error_count();                                                  \
     }                                                                          \
   } while (0)
 
@@ -102,7 +101,7 @@ static int _result = 0;
                 << ", where" << std::endl;                                     \
       std::cout << "val1 evaluates to " << VAL1 << std::endl;                  \
       std::cout << "val2 evaluates to " << VAL2 << std::endl;                  \
-      INCREASE;                                                                \
+      increase_error_count();                                                  \
     }                                                                          \
   } while (0)
 
@@ -120,7 +119,7 @@ static int _result = 0;
       std::cout.precision(std::numeric_limits<double>::max_digits10);          \
       std::cout << __FILE__ << ":" << __LINE__ << " Failure" << std::endl;     \
       std::cout << "Expected " << VAL1 << " < " << VAL2 << std::endl;          \
-      INCREASE;                                                                \
+      increase_error_count();                                                  \
     }                                                                          \
   } while (0)
 
@@ -130,7 +129,7 @@ static int _result = 0;
       std::cout.precision(std::numeric_limits<double>::max_digits10);          \
       std::cout << __FILE__ << ":" << __LINE__ << " Failure" << std::endl;     \
       std::cout << "Expected " << #VAL1 << " == " << #VAL2 << std::endl;       \
-      INCREASE;                                                                \
+      increase_error_count();                                                  \
     }                                                                          \
   } while (0)
 
@@ -143,7 +142,7 @@ static int _result = 0;
       std::cout.precision(std::numeric_limits<double>::max_digits10);          \
       std::cout << __FILE__ << ":" << __LINE__ << " Failure" << std::endl;     \
       std::cout << "Expected " << #VAL1 << " != " << #VAL2 << std::endl;       \
-      INCREASE;                                                                \
+      increase_error_count();                                                  \
     }                                                                          \
   } while (0)
 
