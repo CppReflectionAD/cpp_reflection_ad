@@ -3,6 +3,6 @@
 
 #include <cmath>
 
-inline auto trig(double x) -> double_t { return std::sin(x * x); }
+inline double trig(double x) { return std::sin(x * x); }
 
 #endif
