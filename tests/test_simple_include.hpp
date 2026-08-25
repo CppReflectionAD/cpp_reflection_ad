@@ -45,14 +45,12 @@ inline auto expect_near_rel(D1 val1, D2 val2, Tol tol)
     average = std::max(std::abs(v1), std::abs(v2));
   }
 
-  L rel_diff = (v1 - v2) / average;
+  L rel_diff = std::abs(v1 - v2) / average;
 
   return std::make_tuple(rel_diff < t, rel_diff);
 }
 
-} // namespace detail_test
-
-static int _result = 0;
+static inline int _result = 0;
 
 inline void increase_error_count() {
   constexpr int limit = 10;
@@ -63,7 +61,9 @@ inline void increase_error_count() {
   }
 }
 
-#define TEST_END return _result
+} // namespace detail_test
+
+#define TEST_END return detail_test::_result
 #define TEST_FUNC(F)                                                           \
   do {                                                                         \
     auto _result_temp = F;                                                     \
@@ -73,7 +73,7 @@ inline void increase_error_count() {
       std::cout << #F << " failed" << std::endl;                               \
     }                                                                          \
     if (_result_temp) {                                                        \
-      increase_error_count();                                                  \
+      detail_test::increase_error_count();                                     \
     }                                                                          \
   } while (0)
 
@@ -87,7 +87,7 @@ inline void increase_error_count() {
                 << ", where" << std::endl;                                     \
       std::cout << "val1 evaluates to " << VAL1 << std::endl;                  \
       std::cout << "val2 evaluates to " << VAL2 << std::endl;                  \
-      increase_error_count();                                                  \
+      detail_test::increase_error_count();                                     \
     }                                                                          \
   } while (0)
 
@@ -101,7 +101,7 @@ inline void increase_error_count() {
                 << ", where" << std::endl;                                     \
       std::cout << "val1 evaluates to " << VAL1 << std::endl;                  \
       std::cout << "val2 evaluates to " << VAL2 << std::endl;                  \
-      increase_error_count();                                                  \
+      detail_test::increase_error_count();                                     \
     }                                                                          \
   } while (0)
 
@@ -119,7 +119,7 @@ inline void increase_error_count() {
       std::cout.precision(std::numeric_limits<double>::max_digits10);          \
       std::cout << __FILE__ << ":" << __LINE__ << " Failure" << std::endl;     \
       std::cout << "Expected " << VAL1 << " < " << VAL2 << std::endl;          \
-      increase_error_count();                                                  \
+      detail_test::increase_error_count();                                     \
     }                                                                          \
   } while (0)
 
@@ -129,7 +129,7 @@ inline void increase_error_count() {
       std::cout.precision(std::numeric_limits<double>::max_digits10);          \
       std::cout << __FILE__ << ":" << __LINE__ << " Failure" << std::endl;     \
       std::cout << "Expected " << #VAL1 << " == " << #VAL2 << std::endl;       \
-      increase_error_count();                                                  \
+      detail_test::increase_error_count();                                     \
     }                                                                          \
   } while (0)
 
@@ -142,7 +142,7 @@ inline void increase_error_count() {
       std::cout.precision(std::numeric_limits<double>::max_digits10);          \
       std::cout << __FILE__ << ":" << __LINE__ << " Failure" << std::endl;     \
       std::cout << "Expected " << #VAL1 << " != " << #VAL2 << std::endl;       \
-      increase_error_count();                                                  \
+      detail_test::increase_error_count();                                     \
     }                                                                          \
   } while (0)
 
