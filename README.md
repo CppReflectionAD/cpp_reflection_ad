@@ -48,3 +48,11 @@ python3 run_tests.py --compiler clang --clang-root /path/to/clang-p2996 --run-ex
 ```
 
 Each demo prints its own `ALL CHECKS PASSED` / `ALL MATCH` on success.
+
+## Timing Benchmarks
+
+To perform timing benchmarks, build with Release option and run a benchmark setting iterations, for example:
+
+```bash
+ITERATIONS=1000000 ./build/tests/black_scholes_timing
+```
