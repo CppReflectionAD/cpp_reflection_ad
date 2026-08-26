@@ -15,7 +15,16 @@
 #include "functions/4-shared_intemediate.h"
 
 #include <cmath>
-#include <cstdio>
+
+// A user namespace that happens to reuse primitive names. Primitives are
+// matched by callee identity, not by name, so these are ordinary helpers and
+// get inlined -- they must NOT be mistaken for the built-in sin/sum ops.
+namespace myns {
+constexpr double sum(double a, double b) { return a + b; }  // 2 args, unlike primitive Sum (1 arg)
+constexpr double sin(double x)           { return x * x; }  // shadows std::sin's name
+}  // namespace myns
+constexpr double collide_sum(double x, double y) { return myns::sum(x * x, y); }  // d/dx = 2x
+constexpr double collide_sin(double x)           { return myns::sin(x); }        // f' = 2x
 
 int main() {
   // forward mode (one directional derivative)
@@ -101,6 +110,19 @@ int main() {
     EXPECT_NEAR_ABS(der01, der10, 1e-8); // mixed partials commute
     double const der11 = ad::partial_derivative<^^shared, 1, 1>(x, y);
     EXPECT_NEAR_ABS(der11, x * x * (2 * std::cos(p) - p * std::sin(p)), 1e-8);
+  }
+
+  // primitive/namespace collisions (inlined, not mistaken for a primitive)
+  {
+    // myns::sum != primitive Sum
+    double const collide_sum_der =
+        ad::forward_derivative<^^collide_sum, 0>(3.0, 1.0);
+    EXPECT_NEAR_ABS(collide_sum_der, 2 * 3.0, 1e-8);
+
+    // myns::sin != std::sin
+    double const collide_sin_der =
+        ad::forward_derivative<^^collide_sin, 0>(4.0);
+    EXPECT_NEAR_ABS(collide_sin_der, 2 * 4.0, 1e-8);
   }
 
   // Derivatives are usable in constant expressions (poly is pure arithmetic).

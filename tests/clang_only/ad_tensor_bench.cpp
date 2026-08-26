@@ -15,6 +15,7 @@
 
 #include "autograd_tensor.h"
 #include "tensor.h"
+#include "tensor_rules.h"
 #include <array>
 #include <chrono>
 #include <cmath>
