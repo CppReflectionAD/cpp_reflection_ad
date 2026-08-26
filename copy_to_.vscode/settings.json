@@ -1,0 +1,4 @@
+{
+    "cmakeExplorer.debugConfig": "lldb",
+    "lldb.displayFormat": "auto"
+}
