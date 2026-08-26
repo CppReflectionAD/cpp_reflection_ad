@@ -1,3 +1,5 @@
-# Test-harness build tree (compiled test binaries + local compiler/runtime builds)
+.project
+.cache
+.vscode
 build/
 **/.DS_Store

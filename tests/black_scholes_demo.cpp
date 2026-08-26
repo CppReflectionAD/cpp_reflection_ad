@@ -1,59 +1,80 @@
+#include "test_simple_include.hpp"
+
 #include "autograd.h"
-#include "black_scholes.h"
-
-#include <cmath>
-#include <cstdio>
-#include <random>
-
-// // Ordinary functions, differentiated by reflection without modification.
-// constexpr double poly(double x) { return x * x + 2.0 * x; } // f' = 2x+2
-// constexpr double trig(double x) { return std::sin(x * x); } // f' = 2x
-// cos(x^2) constexpr double two_arg(double x, double y) {
-//   return x * y + std::exp(x);
-// } // ∇=[y+e^x, x]
-// // multi-assignment with a shared intermediate (a DAG, not a tree):
-// constexpr double shared(double x, double y) {
-//   double a = x * y; // used twice
-//   double b = std::sin(a);
-//   return a * b; // f = (xy) sin(xy)
-// }
-
-static int failures = 0;
-static void check(const char *name, double got, double want) {
-  bool ok = std::abs(got - want) < 1e-6 * (1.0 + std::abs(want));
-  std::printf("  %-22s %+.6f (want %+.6f) %s\n", name, got, want,
-              ok ? "ok" : "FAIL");
-  failures += !ok;
-}
+#include "functions/5-black_scholes.h"
 
 int main() {
+  double S = 104.25;
+  double K = 98.5;
+  double v = 0.22;
+  double T = 1.20;
 
-  //   std::mt19937 generator(123);
-  //   std::uniform_real_distribution<double> stock_distr(90, 110.0),
-  //       vol_distr(0.05, 0.3), time_distr(0.5, 1.5);
+  // forward mode: double vs float (quantized), results compared side-by-side
+  // float has ~7 significant decimal digits, so 1e-4 relative tolerance is safe
 
-  //   double S = stock_distr(generator);
-  //   double K = stock_distr(generator);
-  //   double v = vol_distr(generator);
-  //   double T = time_distr(generator);
+  // d/dS
+  {
+    auto const result_d = ad::forward_derivative<^^call_price, 0>(S, K, v, T);
+    static_assert(std::is_same_v<decltype(result_d), const double>,
+                  "forward_derivative<0> must return double");
+    EXPECT_NEAR_ABS(result_d, 0.63904872167822369, 1e-8);
 
-  double S = 104.25910643160562;
-  double K = 98.569418500578678;
-  double v = 0.22272121285943147;
-  double T = 1.2191503088807956;
+    auto const result_f =
+        ad::forward_derivative<^^call_price, 0, float>(S, K, v, T);
+    static_assert(std::is_same_v<decltype(result_f), const float>,
+                  "quantized forward_derivative<0, float> must return float");
+    EXPECT_NEAR_ABS(result_f, 0.63904857635498047, 1e-4);
 
-  std::printf("forward mode  (one directional derivative):\n");
-  check("call_price'(0)", ad::forward_derivative<^^call_price, 0>(S, K, v, T),
-        0.63726496508722587043);
+    EXPECT_NEAR_REL(result_d, result_f, 1e-4);
+  }
 
-  check("call_price'(1)", ad::forward_derivative<^^call_price, 1>(S, K, v, T),
-        -0.54190720509687984535);
+  // d/dK
+  {
+    auto const result_d = ad::forward_derivative<^^call_price, 1>(S, K, v, T);
+    static_assert(std::is_same_v<decltype(result_d), const double>,
+                  "forward_derivative<1> must return double");
+    EXPECT_NEAR_ABS(result_d, -0.54574545575331679, 1e-8);
 
-  check("call_price'(2)", ad::forward_derivative<^^call_price, 2>(S, K, v, T),
-        43.179329512582194174);
+    auto const result_f =
+        ad::forward_derivative<^^call_price, 1, float>(S, K, v, T);
+    static_assert(std::is_same_v<decltype(result_f), const float>,
+                  "quantized forward_derivative<1, float> must return float");
+    EXPECT_NEAR_ABS(result_f, -0.54574549198150635, 1e-4);
 
-  check("call_price'(3)", ad::forward_derivative<^^call_price, 3>(S, K, v, T),
-        3.9441209871520704033);
+    EXPECT_NEAR_REL(result_d, result_f, 1e-4);
+  }
 
-  return failures ? 1 : 0;
+  // d/dv
+  {
+    auto const result_d = ad::forward_derivative<^^call_price, 2>(S, K, v, T);
+    static_assert(std::is_same_v<decltype(result_d), const double>,
+                  "forward_derivative<2> must return double");
+    EXPECT_NEAR_ABS(result_d, 42.763099555399286, 1e-8);
+
+    auto const result_f =
+        ad::forward_derivative<^^call_price, 2, float>(S, K, v, T);
+    static_assert(std::is_same_v<decltype(result_f), const float>,
+                  "quantized forward_derivative<2, float> must return float");
+    EXPECT_NEAR_ABS(result_f, 42.763103485107422, 1e-4);
+
+    EXPECT_NEAR_REL(result_d, result_f, 1e-4);
+  }
+
+  // d/dT
+  {
+    auto const result_d = ad::forward_derivative<^^call_price, 3>(S, K, v, T);
+    static_assert(std::is_same_v<decltype(result_d), const double>,
+                  "forward_derivative<3> must return double");
+    EXPECT_NEAR_ABS(result_d, 3.919950792578268, 1e-8);
+
+    auto const result_f =
+        ad::forward_derivative<^^call_price, 3, float>(S, K, v, T);
+    static_assert(std::is_same_v<decltype(result_f), const float>,
+                  "quantized forward_derivative<3, float> must return float");
+    EXPECT_NEAR_ABS(result_f, 3.9199509620666504, 1e-4);
+
+    EXPECT_NEAR_REL(result_d, result_f, 1e-4);
+  }
+
+  TEST_END;
 }
