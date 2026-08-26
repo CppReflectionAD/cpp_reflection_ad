@@ -9,8 +9,8 @@
 //
 // Special cases: negative → NaN, +∞ → +∞, 0 → 0.
 
-#ifndef CX_SQRT_HPP
-#define CX_SQRT_HPP
+#ifndef CX_STD_CX_SQRT_HPP
+#define CX_STD_CX_SQRT_HPP
 
 #include <limits>
 #include <type_traits>
@@ -47,4 +47,4 @@ constexpr double sqrt(T x) {
 
 } // namespace cx
 
-#endif // CX_SQRT_HPP
+#endif // CX_STD_CX_SQRT_HPP

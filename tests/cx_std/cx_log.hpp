@@ -13,8 +13,8 @@
 //
 // Special cases: NaN → NaN, x<0 → NaN, 0 → -∞, +∞ → +∞, 1 → 0.
 
-#ifndef CX_LOG_HPP
-#define CX_LOG_HPP
+#ifndef CX_STD_CX_LOG_HPP
+#define CX_STD_CX_LOG_HPP
 
 #include "cx_sqrt.hpp"
 
@@ -69,4 +69,4 @@ constexpr double log(T x) {
 
 } // namespace cx
 
-#endif // CX_LOG_HPP
+#endif // CX_STD_CX_LOG_HPP

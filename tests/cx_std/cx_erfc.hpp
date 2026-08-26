@@ -16,8 +16,8 @@
 //
 // Special cases: NaN → NaN, +∞ → 0, -∞ → 2, 0 → 1.
 
-#ifndef CX_ERFC_HPP
-#define CX_ERFC_HPP
+#ifndef CX_STD_CX_ERFC_HPP
+#define CX_STD_CX_ERFC_HPP
 
 #include "cx_exp.hpp"
 
@@ -99,4 +99,4 @@ constexpr double erfc(T x) {
 
 } // namespace cx
 
-#endif // CX_ERFC_HPP
+#endif // CX_STD_CX_ERFC_HPP

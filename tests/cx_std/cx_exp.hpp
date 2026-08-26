@@ -16,8 +16,8 @@
 // range used after the reciprocal trick (direct path only sees x in (-1, +∞)).
 // For large positive x the series is evaluated directly and is accurate.
 
-#ifndef CX_EXP_HPP
-#define CX_EXP_HPP
+#ifndef CX_STD_CX_EXP_HPP
+#define CX_STD_CX_EXP_HPP
 
 #include <cstddef>
 #include <limits>
@@ -65,4 +65,4 @@ constexpr double exp(T x) {
 
 } // namespace cx
 
-#endif // CX_EXP_HPP
+#endif // CX_STD_CX_EXP_HPP

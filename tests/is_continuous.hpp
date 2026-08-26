@@ -27,10 +27,10 @@
 // but the interval over-approximation doesn't).
 
 #include "autograd.h" // for ad::Node, ad::OpKind, ad::build_nodes<>
-#include "cx_erfc.hpp"
-#include "cx_exp.hpp"
-#include "cx_log.hpp"
-#include "cx_sqrt.hpp"
+#include "cx_std/cx_erfc.hpp"
+#include "cx_std/cx_exp.hpp"
+#include "cx_std/cx_log.hpp"
+#include "cx_std/cx_sqrt.hpp"
 
 #include <algorithm>
 #include <array>
