@@ -15,18 +15,6 @@
 #include "functions/4-shared_intemediate.h"
 
 #include <cmath>
-#include <cstdio>
-
-// Ordinary functions, differentiated by reflection without modification.
-constexpr double poly(double x)    { return x * x + 2.0 * x; }        // f' = 2x+2
-constexpr double trig(double x)    { return std::sin(x * x); }        // f' = 2x cos(x^2)
-constexpr double two_arg(double x, double y) { return x * y + std::exp(x); }  // ∇=[y+e^x, x]
-// multi-assignment with a shared intermediate (a DAG, not a tree):
-constexpr double shared(double x, double y) {
-  double a = -x * -y;                // a is used twice. Test - unary operator too.
-  double b = +std::sin(a);           // test + unary operator here too
-  return a * b;                      // f = (xy) sin(xy)
-}
 
 // A user namespace that happens to reuse primitive names. Primitives are
 // matched by callee identity, not by name, so these are ordinary helpers and
@@ -37,13 +25,6 @@ constexpr double sin(double x)           { return x * x; }  // shadows std::sin'
 }  // namespace myns
 constexpr double collide_sum(double x, double y) { return myns::sum(x * x, y); }  // d/dx = 2x
 constexpr double collide_sin(double x)           { return myns::sin(x); }        // f' = 2x
-
-static int failures = 0;
-static void check(const char *name, double got, double want) {
-  bool ok = std::abs(got - want) < 1e-6 * (1.0 + std::abs(want));
-  std::printf("  %-22s %+.6f (want %+.6f) %s\n", name, got, want, ok ? "ok" : "FAIL");
-  failures += !ok;
-}
 
 int main() {
   // forward mode (one directional derivative)
@@ -131,9 +112,18 @@ int main() {
     EXPECT_NEAR_ABS(der11, x * x * (2 * std::cos(p) - p * std::sin(p)), 1e-8);
   }
 
-  std::printf("primitive/namespace collisions (inlined, not mistaken for a primitive):\n");
-  check("myns::sum != Sum",  ad::forward_derivative<^^collide_sum, 0>(3.0, 1.0), 2*3.0);
-  check("myns::sin != std::sin", ad::forward_derivative<^^collide_sin, 0>(4.0), 2*4.0);
+  // primitive/namespace collisions (inlined, not mistaken for a primitive)
+  {
+    // myns::sum != primitive Sum
+    double const collide_sum_der =
+        ad::forward_derivative<^^collide_sum, 0>(3.0, 1.0);
+    EXPECT_NEAR_ABS(collide_sum_der, 2 * 3.0, 1e-8);
+
+    // myns::sin != std::sin
+    double const collide_sin_der =
+        ad::forward_derivative<^^collide_sin, 0>(4.0);
+    EXPECT_NEAR_ABS(collide_sin_der, 2 * 4.0, 1e-8);
+  }
 
   // Derivatives are usable in constant expressions (poly is pure arithmetic).
   static_assert(ad::forward_derivative<^^poly, 0, double>(4.0) == 2 * 4.0 + 2);
