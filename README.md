@@ -49,6 +49,24 @@ python3 run_tests.py --compiler clang --clang-root /path/to/clang-p2996 --run-ex
 
 Each demo prints its own `ALL CHECKS PASSED` / `ALL MATCH` on success.
 
+## How to Debug with VSCode
+
+1. Install these extensions (or verify they are already installed):
+    - `vadimcn.vscode-lldb`
+    - `ms-vscode.cmake-tools`
+2. Copy or adapt the files from `copy_to_.vscode` into your workspace `.vscode` folder.
+3. Build the compiler artifacts before selecting kits:
+    - `python3 run_tests.py --compiler clang --build-compilers`
+    - `python3 run_tests.py --compiler gcc --build-compilers`
+4. In VS Code CMake Tools, select one of these kits:
+    - `Clang reflection`
+    - `GCC reflection (macOS)`
+    - `GCC reflection (Linux)`
+
+Use the kit that matches your host OS: macOS -> `GCC reflection (macOS)`, Linux -> `GCC reflection (Linux)`.
+
+You should now be able to build and debug the tests in VSCode.
+
 ## Timing Benchmarks
 
 To perform timing benchmarks, build with Release option and run a benchmark setting iterations, for example:
