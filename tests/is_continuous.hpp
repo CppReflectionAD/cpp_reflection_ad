@@ -168,7 +168,7 @@ struct ContinuityResult {
 template <info Fn, std::size_t P>
 consteval ContinuityResult
 check_continuity(const std::array<Interval, P> &input_bounds) {
-  constexpr auto nodes = std::define_static_array(build_nodes<Fn>());
+  static constexpr auto nodes = std::define_static_array(build_nodes<Fn>());
   constexpr std::size_t N = nodes.size();
 
   Interval ranges[N];
