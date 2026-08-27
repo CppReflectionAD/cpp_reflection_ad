@@ -10,14 +10,6 @@ name: Build Toolchains (Cache)
 
 on:
   workflow_dispatch:
-  push:
-    branches: [ "main", "ci" ]
-    paths:
-      - ".gitmodules"
-      - "run_tests.py"
-      - ".github/workflows/toolchain-cache.yml"
-      - "clang-p2996"
-      - "gcc-darwin-reflect"
       - "gcc-mirror"
 
 permissions:
