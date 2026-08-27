@@ -72,5 +72,5 @@ You should now be able to build and debug the tests in VSCode.
 To perform timing benchmarks, build with Release option and run a benchmark setting iterations, for example:
 
 ```bash
-ITERATIONS=1000000 ./build/tests/black_scholes_timing
+ITERATIONS=1000000 ./build/cmake/tests/black_scholes_timing
 ```
