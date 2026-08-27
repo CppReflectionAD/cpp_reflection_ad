@@ -8,6 +8,7 @@
 
 #include "autograd_tensor.h"
 #include "tensor.h"
+#include "tensor_rules.h"
 #include <cmath>
 #include <cstdio>
 

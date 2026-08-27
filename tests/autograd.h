@@ -28,8 +28,10 @@
 //
 // Scope: straight-line bodies (parameters, `T v = expr;` locals, one
 // `return expr;`), scalar T, ops + - * / unary-minus and unary calls
-// sin/cos/exp/log/sqrt. The core is rule-driven so more ops / tensors are
-// additive.
+// sin/cos/exp/log/sqrt/erfc. The core is rule-driven so more ops / tensors are
+// additive. Calls to user-defined helpers are inlined (the callee's body is
+// reflected into the same DAG), so ordinary functions compose; the callee must
+// itself be straight-line and non-recursive (free functions only).
 
 #ifndef REFLECT_DEMO_AUTOGRAD_H
 #define REFLECT_DEMO_AUTOGRAD_H
@@ -60,6 +62,27 @@ enum class OpKind {
   // Tensor ops (recognised as named calls; VJPs live in the tensor engine).
   Matmul, Transpose, Sum, Relu,
 };
+
+// A call is a *primitive* (has a built-in VJP) iff its callee is registered
+// here; anything else is a user helper and gets inlined. The key is the callee
+// reflection, not its name, so a same-named function in another namespace -- or
+// a different overload -- is a different key and does not collide. Register a
+// vocabulary with:
+//   template <> struct ad::primitive<^^nn::relu> {
+//     static constexpr ad::OpKind op = ad::OpKind::Relu;
+//   };
+template <info F> struct primitive;   // declared, never defined
+
+// `^^f` is ill-formed when `f` names an overload set, so a specific overload is
+// selected by signature:
+//   template <> struct ad::primitive<ad::overload_of(^^nn, "sum", ^^Tensor(const Tensor &))>
+consteval info overload_of(info scope, std::string_view name, info fnType) {
+  for (info mem : m::members_of(scope, m::access_context::current()))
+    if (m::has_identifier(mem) && m::identifier_of(mem) == name &&
+        m::type_of(mem) == fnType)
+      return mem;
+  throw "reflection AD: no overload with that signature in this scope";
+}
 
 struct Node {
   OpKind op = OpKind::Input;
@@ -95,19 +118,27 @@ struct Ctx {
   std::vector<Node> nodes;
   std::vector<info> envDecl;      // decl -> slot environment
   std::vector<std::size_t> envSlot;
+  std::vector<info> callStack;    // callees currently being inlined (cycle guard)
 };
+
+// Forward decls: lower / lower_body / inline_call are mutually recursive (a call
+// site inlines its callee's body, which may contain further calls).
+consteval std::size_t lower(Ctx &c, info e);
+consteval std::size_t lower_body(Ctx &c, info body);
+consteval std::size_t inline_call(Ctx &c, info call);
 
 // Resolve a referenced variable to its SSA slot by identifier name. We match by
 // name (unique within a straight-line body) rather than reflection identity
 // because parameters_of yields ReflectionKind::Parameter while a decl_ref's
 // declaration_of yields ReflectionKind::Declaration — different kinds that never
 // compare equal. Last-wins so a local shadowing an outer name resolves to the
-// most recent binding.
+// most recent binding. An unresolved name (e.g. a global) has no slot; erroring
+// beats returning a sentinel that would index the node array out of bounds.
 consteval std::size_t findSlot(const Ctx &c, std::string_view name) {
   for (std::size_t i = c.envDecl.size(); i-- > 0;)
     if (m::identifier_of(c.envDecl[i]) == name)
       return c.envSlot[i];
-  return static_cast<std::size_t>(-1);
+  throw "reflection AD: name is not a parameter or local of the reflected body";
 }
 
 consteval OpKind binOp(m::operators op) {
@@ -116,26 +147,6 @@ consteval OpKind binOp(m::operators op) {
   if (op == m::operators::op_star)  return OpKind::Mul;
   if (op == m::operators::op_slash) return OpKind::Div;
   return OpKind::Add;  // unsupported binary op (v1)
-}
-
-consteval OpKind callOp(std::string_view name) {
-  // named arithmetic (used when operands are class types, e.g. tensors, where
-  // `a + b` would be an operator-call; named ops keep the reflected AST simple)
-  if (name == "add") return OpKind::Add;
-  if (name == "sub") return OpKind::Sub;
-  if (name == "mul") return OpKind::Mul;
-  if (name == "div") return OpKind::Div;
-  if (name == "sin")  return OpKind::Sin;
-  if (name == "cos")  return OpKind::Cos;
-  if (name == "exp")  return OpKind::Exp;
-  if (name == "log")  return OpKind::Log;
-  if (name == "sqrt") return OpKind::Sqrt;
-  if (name == "erfc") return OpKind::Erfc;
-  if (name == "matmul")    return OpKind::Matmul;
-  if (name == "transpose") return OpKind::Transpose;
-  if (name == "sum")       return OpKind::Sum;
-  if (name == "relu")      return OpKind::Relu;
-  return OpKind::Sin;  // unsupported call
 }
 
 // Peel "transparent" wrapper nodes so we reach the real subexpression:
@@ -153,6 +164,60 @@ consteval info stripCasts(info e) {
       break;
   }
   return e;
+}
+
+// The callee of the single call in a one-line probe function's body.
+consteval info probe_callee(info fn) {
+  for (info s : m::statements_of(m::body_of(fn)))
+    if (m::is_return_statement(s))
+      return m::callee_of(stripCasts(m::return_value_of(s)));
+  throw "reflection AD: probe function has no call to reflect";
+}
+
+// `^^std::sin` is ill-formed -- it names an overload set, not a function -- so
+// the canonical reflection of each std overload we differentiate is recovered
+// from our own call to it. Matching a user call against these is exact: a
+// user-defined `sin` is a different reflection and is inlined instead. One
+// instantiation per real floating-point overload; an integral argument selects
+// <cmath>'s integral template, which is not covered.
+template <class T> inline T p_sin (T x) { return std::sin(x); }
+template <class T> inline T p_cos (T x) { return std::cos(x); }
+template <class T> inline T p_exp (T x) { return std::exp(x); }
+template <class T> inline T p_log (T x) { return std::log(x); }
+template <class T> inline T p_sqrt(T x) { return std::sqrt(x); }
+template <class T> inline T p_erfc(T x) { return std::erfc(x); }
+
+struct Prim { bool found; OpKind op; };
+
+// Does `callee` match the float / double / long double instantiations of a
+// probe template?
+consteval bool is_std_fn(info callee, info pf, info pd, info pl) {
+  return callee == probe_callee(pf) || callee == probe_callee(pd) ||
+         callee == probe_callee(pl);
+}
+
+// Is `callee` a primitive? Checks the built-in std math set, then the
+// user-extensible ad::primitive registry.
+consteval Prim find_primitive(info callee) {
+  if (is_std_fn(callee, ^^p_sin<float>,  ^^p_sin<double>,  ^^p_sin<long double>))
+    return {true, OpKind::Sin};
+  if (is_std_fn(callee, ^^p_cos<float>,  ^^p_cos<double>,  ^^p_cos<long double>))
+    return {true, OpKind::Cos};
+  if (is_std_fn(callee, ^^p_exp<float>,  ^^p_exp<double>,  ^^p_exp<long double>))
+    return {true, OpKind::Exp};
+  if (is_std_fn(callee, ^^p_log<float>,  ^^p_log<double>,  ^^p_log<long double>))
+    return {true, OpKind::Log};
+  if (is_std_fn(callee, ^^p_sqrt<float>, ^^p_sqrt<double>, ^^p_sqrt<long double>))
+    return {true, OpKind::Sqrt};
+  if (is_std_fn(callee, ^^p_erfc<float>, ^^p_erfc<double>, ^^p_erfc<long double>))
+    return {true, OpKind::Erfc};
+
+  info spec = m::substitute(^^primitive, {m::reflect_constant(callee)});
+  if (m::is_complete_type(spec))
+    for (info mem : m::members_of(spec, m::access_context::current()))
+      if (m::has_identifier(mem) && m::identifier_of(mem) == "op")
+        return {true, m::extract<OpKind>(mem)};
+  return {false, OpKind::Input};
 }
 
 // Lower an expression to SSA nodes, returning its result slot.
@@ -195,7 +260,10 @@ consteval std::size_t lower(Ctx &c, info e) {
   if (m::is_function_call(e)) {
     // operands_of(call) = [callee, arg0, arg1, ...].
     auto ops = m::operands_of(e);
-    OpKind op = callOp(m::identifier_of(m::callee_of(e)));
+    Prim p = find_primitive(m::callee_of(e));
+    if (!p.found)                         // user helper -> inline its body
+      return inline_call(c, e);
+    OpKind op = p.op;
     if (op_has_b(op)) {                    // binary call, e.g. matmul(a, b)
       std::size_t a = lower(c, ops[1]);
       std::size_t b = lower(c, ops[2]);
@@ -215,6 +283,81 @@ consteval std::size_t lower(Ctx &c, info e) {
   return s;
 }
 
+// Lower the statements of a straight-line body into `c`, resolving names against
+// the current environment; returns the slot of the (single) return value. Shared
+// by build_nodes (top-level function) and inline_call (inlined callee).
+// Anything outside that shape (control flow, assignment, a second return, no
+// return at all) is rejected: skipping it would silently build a DAG that does
+// not match the source, i.e. a wrong derivative with no diagnostic.
+consteval std::size_t lower_body(Ctx &c, info body) {
+  std::size_t root = 0;
+  bool sawReturn = false;
+  for (info s : m::statements_of(body)) {
+    if (m::is_declaration_statement(s)) {
+      info v = m::declared_variable_of(s);
+      std::size_t slot = lower(c, m::initializer_of(v));
+      c.envDecl.push_back(v);
+      c.envSlot.push_back(slot);
+    } else if (m::is_return_statement(s)) {
+      if (sawReturn)
+        throw "reflection AD: multiple return statements (straight-line bodies only)";
+      root = lower(c, m::return_value_of(s));
+      sawReturn = true;
+    } else {
+      throw "reflection AD: unsupported statement; straight-line bodies only "
+            "(`T v = expr;` declarations and one `return expr;`)";
+    }
+  }
+  if (!sawReturn)
+    throw "reflection AD: body has no return statement";
+  return root;
+}
+
+// Inline a call to a user-defined helper: lower its arguments in the caller
+// scope, bind the callee's parameters to those argument slots, and lower the
+// callee's body into the SAME DAG. The result is the callee's return slot, so
+// the whole helper expands to primitive nodes with no new IR kinds -- activity
+// analysis and codegen are unaffected, and arguments are evaluated once (a param
+// used N times reuses its one slot).
+consteval std::size_t inline_call(Ctx &c, info call) {
+  auto ops = m::operands_of(call);          // [callee, arg0, arg1, ...]
+  info callee = m::callee_of(call);
+
+  // Cycle guard: recursive helpers are out of scope (would not terminate here).
+  for (info f : c.callStack)
+    if (f == callee)
+      throw "reflection AD: cannot inline a recursive function call";
+
+  // A helper with no reflectable body (declaration only) cannot be inlined; a
+  // silent constant would give a wrong derivative, so reject it explicitly.
+  info body = m::body_of(callee);
+  if (m::statements_of(body).empty())
+    throw "reflection AD: cannot inline a call whose callee has no visible body";
+
+  // (a) lower argument expressions in the CALLER scope -> slots.
+  std::vector<std::size_t> argSlots;
+  for (std::size_t i = 1; i < ops.size(); ++i)
+    argSlots.push_back(lower(c, ops[i]));
+
+  // (b) open a lexical scope; bind callee parameters to the argument slots.
+  std::size_t mark = c.envDecl.size();
+  auto params = m::parameters_of(callee);
+  for (std::size_t i = 0; i < params.size(); ++i) {
+    c.envDecl.push_back(params[i]);
+    c.envSlot.push_back(argSlots[i]);
+  }
+
+  // (c) lower the callee body into the same DAG (nested calls inline via lower).
+  c.callStack.push_back(callee);
+  std::size_t ret = lower_body(c, body);
+  c.callStack.pop_back();
+
+  // (d) close the scope: drop callee params + locals, restoring the caller env.
+  c.envDecl.resize(mark);
+  c.envSlot.resize(mark);
+  return ret;
+}
+
 }  // namespace detail
 
 // Build the SSA node list for a reflected function. The last node is the root
@@ -229,17 +372,7 @@ consteval std::vector<Node> build_nodes() {
     c.envSlot.push_back(s);
   }
 
-  std::size_t root = 0;
-  for (info s : m::statements_of(m::body_of(Fn))) {
-    if (m::is_declaration_statement(s)) {
-      info v = m::declared_variable_of(s);
-      std::size_t slot = detail::lower(c, m::initializer_of(v));
-      c.envDecl.push_back(v);
-      c.envSlot.push_back(slot);
-    } else if (m::is_return_statement(s)) {
-      root = detail::lower(c, m::return_value_of(s));
-    }
-  }
+  std::size_t root = detail::lower_body(c, m::body_of(Fn));
 
   std::size_t s = c.nodes.size();
   c.nodes.push_back(Node{OpKind::Output, s, root, 0});
