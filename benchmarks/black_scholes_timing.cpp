@@ -18,6 +18,11 @@ int main() {
     iters = std::stoul(env_p);
   }
 
+  if (iters == 0) {
+    std::cerr << "ITERATIONS must be a positive integer" << std::endl;
+    return 1;
+  }
+
   // Accumulators: [price, dS, dK, dv, dT]
   std::array<double, 5> fwd_avg{};
   std::array<double, 5> rev_avg{};
