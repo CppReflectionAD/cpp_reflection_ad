@@ -3,3 +3,4 @@ project(reflection_ad CXX)
 
 enable_testing()
 add_subdirectory(tests)
+add_subdirectory(benchmarks)
