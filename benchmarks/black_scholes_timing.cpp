@@ -13,7 +13,7 @@ int main() {
   std::uniform_real_distribution<double> vol_distr(0.05, 0.3);
   std::uniform_real_distribution<double> time_distr(0.5, 1.5);
 
-  std::size_t iters = 1;
+  std::size_t iters = 10000;
   if (auto *env_p = std::getenv("ITERATIONS")) {
     iters = std::stoul(env_p);
   }
