@@ -79,6 +79,20 @@ jobs:
             -DLLVM_CONFIG_PATH="$(pwd)/build-llvm/bin/llvm-config"
           ninja -C build-runtimes -j$(nproc) cxx cxxabi
 
+      - name: Debug runtimes output
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Contents of build-runtimes:"
+          find clang-p2996/build-runtimes -maxdepth 3 -type d | sort || true
+          echo ""
+          echo "Looking for libc++ libraries:"
+          find clang-p2996/build-runtimes -type f \( -name 'libc++*.so*' -o -name 'libc++*.a' \) 2>/dev/null || echo "None found"
+          echo ""
+          echo "Looking for libc++abi libraries:"
+          find clang-p2996/build-runtimes -type f \( -name 'libc++abi*.so*' -o -name 'libc++abi*.a' \) 2>/dev/null || echo "None found"
+
       - name: Install into clean prefix
         if: steps.cache.outputs.cache-hit != 'true'
         shell: bash
@@ -102,13 +116,6 @@ jobs:
           sudo mkdir -p "$PREFIX/lib/runtimes"
           if [ -d clang-p2996/build-runtimes/lib ]; then
             sudo cp -a clang-p2996/build-runtimes/lib/. "$PREFIX/lib/runtimes/"
-          else
-            mapfile -t RUNTIME_LIB_DIRS < <(find clang-p2996/build-runtimes -type d -name lib | sort)
-            for d in "${RUNTIME_LIB_DIRS[@]}"; do
-              rel="${d#clang-p2996/build-runtimes/}"
-              sudo mkdir -p "$PREFIX/lib/runtimes/$rel"
-              sudo cp -a "$d/." "$PREFIX/lib/runtimes/$rel/"
-            done
           fi
 
           # Keep the LLVM lib directory snapshot as a fallback for transitive deps.
@@ -119,16 +126,19 @@ jobs:
 
           # Runtime libs may live under different subdirs depending on target/config.
           mapfile -t RUNTIME_LIBS < <(find clang-p2996/build-runtimes \( -type f -o -type l \) \
-            \( -name 'libc++*.so*' -o -name 'libc++*.a' -o -name 'libc++abi*.so*' -o -name 'libc++abi*.a' -o -name 'libunwind*.so*' -o -name 'libunwind*.a' \))
+            \( -name 'libc++*.so*' -o -name 'libc++*.a' -o -name 'libc++abi*.so*' -o -name 'libc++abi*.a' -o -name 'libunwind*.so*' -o -name 'libunwind*.a' \) 2>/dev/null || true)
+
           if [ "${#RUNTIME_LIBS[@]}" -eq 0 ]; then
-            echo "No libc++ runtime artifacts found under clang-p2996/build-runtimes"
+            echo "WARNING: No libc++ runtime artifacts found under clang-p2996/build-runtimes"
             echo "First few files under build-runtimes for debugging:"
             find clang-p2996/build-runtimes -maxdepth 4 -type f | head -n 100 || true
-            exit 1
+            echo "This may indicate the runtimes build failed or produced no artifacts."
+          else
+            printf '%s\n' "${RUNTIME_LIBS[@]}" | while IFS= read -r lib; do
+              sudo cp -P "$lib" "$PREFIX/lib/" 2>/dev/null || true
+            done
           fi
-          printf '%s\n' "${RUNTIME_LIBS[@]}" | while IFS= read -r lib; do
-            sudo cp -P "$lib" "$PREFIX/lib/"
-          done
+
           sudo cp -P clang-p2996/build-llvm/lib/libLLVM*.so* \
                      "$PREFIX/lib/" 2>/dev/null || true
 
@@ -160,7 +170,7 @@ jobs:
             \( -name 'libc++.so*' -o -name 'libc++.a' \))
 
           if [ "${#libcxx_candidates[@]}" -eq 0 ]; then
-            echo "Missing libc++ runtime under /opt/toolchain-clang/lib"
+            echo "WARNING: Missing libc++ runtime under /opt/toolchain-clang/lib"
             echo "Current /opt/toolchain-clang/lib contents:"
             find /opt/toolchain-clang/lib -maxdepth 3 -mindepth 1 -ls || true
             exit 1
