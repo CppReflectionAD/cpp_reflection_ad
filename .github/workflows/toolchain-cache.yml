@@ -10,7 +10,6 @@ name: Build Toolchains (Cache)
 
 on:
   workflow_dispatch:
-      - "gcc-mirror"
 
 permissions:
   contents: read

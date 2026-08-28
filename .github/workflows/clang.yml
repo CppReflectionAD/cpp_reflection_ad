@@ -2,7 +2,7 @@ name: Test Clang
 
 on:
   push:
-    branches: [ "main", "ci" ]
+    branches: [ "main" ]
   pull_request:
   workflow_dispatch:
 
