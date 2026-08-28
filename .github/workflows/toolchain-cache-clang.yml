@@ -98,9 +98,10 @@ jobs:
           sudo cp -r clang-p2996/build-llvm/include/c++ "$PREFIX/include/"
 
           sudo mkdir -p "$PREFIX/lib"
-          sudo cp -P clang-p2996/build-runtimes/lib/*/libc++*.so* \
-                     clang-p2996/build-runtimes/lib/*/libc++*.a  \
-                     "$PREFIX/lib/" 2>/dev/null || true
+          # Runtime libs may live under different subdirs depending on target/config.
+          find clang-p2996/build-runtimes -type f \
+            \( -name 'libc++*.so*' -o -name 'libc++*.a' -o -name 'libunwind*.so*' -o -name 'libunwind*.a' \) \
+            -exec sudo cp -P {} "$PREFIX/lib/" \;
           sudo cp -P clang-p2996/build-llvm/lib/libLLVM*.so* \
                      "$PREFIX/lib/" 2>/dev/null || true
 
@@ -128,6 +129,10 @@ jobs:
       - name: Verify cached prefix
         run: |
           ls -lh /opt/toolchain-clang/bin/
-          ls -lh /opt/toolchain-clang/lib/libc++.so*
+          ls -lh /opt/toolchain-clang/lib/libc++* || true
+          if [ ! -e /opt/toolchain-clang/lib/libc++.so ] && [ ! -e /opt/toolchain-clang/lib/libc++.a ]; then
+            echo "Missing libc++ runtime in /opt/toolchain-clang/lib"
+            exit 1
+          fi
           ls -lh /opt/toolchain-clang/lib/clang/*/include/stddef.h
           /opt/toolchain-clang/bin/clang++ --version
