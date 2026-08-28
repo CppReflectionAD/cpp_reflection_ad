@@ -3,7 +3,14 @@ name: Test GCC (Prebuilt Cache)
 
 on:
   push:
-    branches: [ "main", "ci" ]
+    branches: [ "main" ]
+    paths-ignore:
+      - "gcc-mirror"
+      - ".github/workflows/toolchain-cache-gcc.yml"
+  workflow_run:
+    workflows: [ "Build GCC Toolchain (Cache)" ]
+    types: [ completed ]
+    branches: [ "main" ]
   pull_request:
   workflow_dispatch:
 
@@ -12,6 +19,8 @@ permissions:
 
 jobs:
   test:
+    if: ${{ github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
 
     steps:

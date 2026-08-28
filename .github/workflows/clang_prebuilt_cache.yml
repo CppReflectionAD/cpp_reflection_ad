@@ -3,7 +3,14 @@ name: Test Clang (Prebuilt Cache)
 
 on:
   push:
-    branches: [ "main", "ci" ]
+    branches: [ "main" ]
+    paths-ignore:
+      - "clang-p2996"
+      - ".github/workflows/toolchain-cache-clang.yml"
+  workflow_run:
+    workflows: [ "Build Clang Toolchain (Cache)" ]
+    types: [ completed ]
+    branches: [ "main" ]
   pull_request:
   workflow_dispatch:
 
@@ -12,6 +19,8 @@ permissions:
 
 jobs:
   test:
+    if: ${{ github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -24,7 +33,7 @@ jobs:
         run: |
           set -euo pipefail
           CLANG_SHA="$(git rev-parse HEAD:clang-p2996)"
-          BUILD_INPUT_HASH="$(sha256sum run_tests.py .gitmodules .github/workflows/toolchain-cache.yml | sha256sum | cut -d' ' -f1)"
+          BUILD_INPUT_HASH="$(sha256sum .github/workflows/toolchain-cache-clang.yml | sha256sum | cut -d' ' -f1)"
           CACHE_KEY="clang-${{ runner.os }}-${{ runner.arch }}-${CLANG_SHA:0:12}-${BUILD_INPUT_HASH:0:12}"
           echo "cache_key=${CACHE_KEY}" >> "$GITHUB_OUTPUT"
 
