@@ -79,7 +79,7 @@ jobs:
             -DLLVM_CONFIG_PATH="$(pwd)/build-llvm/bin/llvm-config"
           ninja -C build-runtimes -j$(nproc) cxx cxxabi
 
-      - name: Install into clean prefix and strip
+      - name: Install into clean prefix
         if: steps.cache.outputs.cache-hit != 'true'
         shell: bash
         run: |
@@ -98,10 +98,26 @@ jobs:
           sudo cp -r clang-p2996/build-llvm/include/c++ "$PREFIX/include/"
 
           sudo mkdir -p "$PREFIX/lib"
+          # Keep full runtime lib layout for robustness across LLVM layout changes.
+          sudo mkdir -p "$PREFIX/lib/runtimes"
+          sudo cp -a clang-p2996/build-runtimes/lib/. "$PREFIX/lib/runtimes/"
+
+          # Keep the LLVM lib directory snapshot as a fallback for transitive deps.
+          sudo mkdir -p "$PREFIX/lib/llvm"
+          sudo cp -a clang-p2996/build-llvm/lib/. "$PREFIX/lib/llvm/"
+
           # Runtime libs may live under different subdirs depending on target/config.
-          find clang-p2996/build-runtimes -type f \
-            \( -name 'libc++*.so*' -o -name 'libc++*.a' -o -name 'libunwind*.so*' -o -name 'libunwind*.a' \) \
-            -exec sudo cp -P {} "$PREFIX/lib/" \;
+          mapfile -t RUNTIME_LIBS < <(find clang-p2996/build-runtimes \( -type f -o -type l \) \
+            \( -name 'libc++*.so*' -o -name 'libc++*.a' -o -name 'libc++abi*.so*' -o -name 'libc++abi*.a' -o -name 'libunwind*.so*' -o -name 'libunwind*.a' \))
+          if [ "${#RUNTIME_LIBS[@]}" -eq 0 ]; then
+            echo "No libc++ runtime artifacts found under clang-p2996/build-runtimes"
+            echo "First few files under build-runtimes for debugging:"
+            find clang-p2996/build-runtimes -maxdepth 4 -type f | head -n 100 || true
+            exit 1
+          fi
+          printf '%s\n' "${RUNTIME_LIBS[@]}" | while IFS= read -r lib; do
+            sudo cp -P "$lib" "$PREFIX/lib/"
+          done
           sudo cp -P clang-p2996/build-llvm/lib/libLLVM*.so* \
                      "$PREFIX/lib/" 2>/dev/null || true
 
@@ -121,18 +137,46 @@ jobs:
 
           sudo cp clang-p2996/libcxx/include/meta "$PREFIX/include/c++/v1/meta"
 
-          sudo find "$PREFIX" -type f \( -name "*.so*" -o -perm /111 \) \
-            -exec sh -c 'file "$1" | grep -q ELF && strip --strip-unneeded "$1"' _ {} \; 2>/dev/null || true
-
           echo "Installed size: $(du -sh $PREFIX | cut -f1)"
 
       - name: Verify cached prefix
         run: |
+          set -euo pipefail
           ls -lh /opt/toolchain-clang/bin/
-          ls -lh /opt/toolchain-clang/lib/libc++* || true
-          if [ ! -e /opt/toolchain-clang/lib/libc++.so ] && [ ! -e /opt/toolchain-clang/lib/libc++.a ]; then
-            echo "Missing libc++ runtime in /opt/toolchain-clang/lib"
+          ls -lh /opt/toolchain-clang/lib/libc++* 2>/dev/null || true
+
+          mapfile -t libcxx_candidates < <(find /opt/toolchain-clang/lib \( -type f -o -type l \) \
+            \( -name 'libc++.so*' -o -name 'libc++.a' \))
+
+          if [ "${#libcxx_candidates[@]}" -eq 0 ]; then
+            echo "Missing libc++ runtime under /opt/toolchain-clang/lib"
+            echo "Current /opt/toolchain-clang/lib contents:"
+            find /opt/toolchain-clang/lib -maxdepth 3 -mindepth 1 -ls || true
             exit 1
           fi
+
+          if [ ! -e /opt/toolchain-clang/lib/libc++.so ] && [ ! -e /opt/toolchain-clang/lib/libc++.a ]; then
+            preferred=""
+            for c in "${libcxx_candidates[@]}"; do
+              case "$c" in
+                *.so|*.so.*)
+                  preferred="$c"
+                  break
+                  ;;
+              esac
+            done
+            if [ -z "$preferred" ]; then
+              preferred="${libcxx_candidates[0]}"
+            fi
+            if [ "$(dirname "$preferred")" != "/opt/toolchain-clang/lib" ]; then
+              sudo ln -sf "$preferred" /opt/toolchain-clang/lib/"$(basename "$preferred")"
+            fi
+            if [[ "$preferred" == *.so || "$preferred" == *.so.* ]]; then
+              sudo ln -sf "$(basename "$preferred")" /opt/toolchain-clang/lib/libc++.so
+            else
+              sudo ln -sf "$(basename "$preferred")" /opt/toolchain-clang/lib/libc++.a
+            fi
+          fi
+
           ls -lh /opt/toolchain-clang/lib/clang/*/include/stddef.h
           /opt/toolchain-clang/bin/clang++ --version
