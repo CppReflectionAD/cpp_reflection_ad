@@ -104,6 +104,10 @@ jobs:
           sudo cp -P clang-p2996/build-llvm/lib/libLLVM*.so* \
                      "$PREFIX/lib/" 2>/dev/null || true
 
+          # Clang builtin headers (e.g. stddef.h) live under lib/clang/*/include.
+          # Without this, libc++'s include_next <stddef.h> can fail.
+          sudo cp -r clang-p2996/build-llvm/lib/clang "$PREFIX/lib/"
+
           sudo cp clang-p2996/libcxx/include/meta "$PREFIX/include/c++/v1/meta"
 
           sudo find "$PREFIX" -type f \( -name "*.so*" -o -perm /111 \) \
@@ -114,4 +118,5 @@ jobs:
       - name: Verify cached prefix
         run: |
           ls -lh /opt/toolchain-clang/bin/
+          ls -lh /opt/toolchain-clang/lib/clang/*/include/stddef.h
           /opt/toolchain-clang/bin/clang++ --version
