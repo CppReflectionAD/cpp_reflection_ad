@@ -104,6 +104,16 @@ jobs:
           sudo cp -P clang-p2996/build-llvm/lib/libLLVM*.so* \
                      "$PREFIX/lib/" 2>/dev/null || true
 
+          # Ensure unversioned linker names exist (e.g. -lc++ -> libc++.so).
+          for lib in libc++ libc++abi libunwind; do
+            if [ ! -e "$PREFIX/lib/${lib}.so" ]; then
+              candidate="$(ls -1 "$PREFIX/lib/${lib}.so."* 2>/dev/null | head -n 1 || true)"
+              if [ -n "$candidate" ]; then
+                sudo ln -sf "$(basename "$candidate")" "$PREFIX/lib/${lib}.so"
+              fi
+            fi
+          done
+
           # Clang builtin headers (e.g. stddef.h) live under lib/clang/*/include.
           # Without this, libc++'s include_next <stddef.h> can fail.
           sudo cp -r clang-p2996/build-llvm/lib/clang "$PREFIX/lib/"
@@ -118,5 +128,6 @@ jobs:
       - name: Verify cached prefix
         run: |
           ls -lh /opt/toolchain-clang/bin/
+          ls -lh /opt/toolchain-clang/lib/libc++.so*
           ls -lh /opt/toolchain-clang/lib/clang/*/include/stddef.h
           /opt/toolchain-clang/bin/clang++ --version
