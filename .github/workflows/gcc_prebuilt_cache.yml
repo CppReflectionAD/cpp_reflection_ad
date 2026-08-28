@@ -33,7 +33,7 @@ jobs:
         run: |
           set -euo pipefail
           GCC_MIRROR_SHA="$(git rev-parse HEAD:gcc-mirror)"
-          BUILD_INPUT_HASH="$(sha256sum run_tests.py .gitmodules .github/workflows/toolchain-cache.yml | sha256sum | cut -d' ' -f1)"
+          BUILD_INPUT_HASH="$(sha256sum .github/workflows/toolchain-cache-gcc.yml | sha256sum | cut -d' ' -f1)"
           CACHE_KEY="gcc-${{ runner.os }}-${{ runner.arch }}-${GCC_MIRROR_SHA:0:12}-${BUILD_INPUT_HASH:0:12}"
           echo "cache_key=${CACHE_KEY}" >> "$GITHUB_OUTPUT"
 
