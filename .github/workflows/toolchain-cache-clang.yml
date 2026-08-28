@@ -18,8 +18,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-        with:
-          submodules: true
+
+      - name: Init clang-p2996 submodule only
+        run: |
+          git submodule sync -- clang-p2996
+          git submodule update --init --depth 1 clang-p2996
 
       - name: Compute cache key
         id: key

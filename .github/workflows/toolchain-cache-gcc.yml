@@ -18,8 +18,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-        with:
-          submodules: true
+
+      - name: Init gcc-mirror submodule only
+        run: |
+          git submodule sync -- gcc-mirror
+          git submodule update --init --depth 1 gcc-mirror
 
       - name: Compute cache key
         id: key
