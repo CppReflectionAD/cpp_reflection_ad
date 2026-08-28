@@ -93,6 +93,18 @@ jobs:
           echo "Looking for libc++abi libraries:"
           find clang-p2996/build-runtimes -type f \( -name 'libc++abi*.so*' -o -name 'libc++abi*.a' \) 2>/dev/null || echo "None found"
 
+      - name: Inspect runtimes structure
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          echo "=== Full directory tree ==="
+          find clang-p2996/build-runtimes -type d | head -50
+          echo ""
+          echo "=== All .so and .a files ==="
+          find clang-p2996/build-runtimes -type f \( -name "*.so*" -o -name "*.a" \) | sort
+          echo ""
+          echo "=== Disk usage ==="
+          du -sh clang-p2996/build-runtimes/*/
+
       - name: Install into clean prefix
         if: steps.cache.outputs.cache-hit != 'true'
         shell: bash
