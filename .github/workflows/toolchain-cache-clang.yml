@@ -1,0 +1,114 @@
+name: Build Clang Toolchain (Cache)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "clang-p2996"
+      - ".github/workflows/toolchain-cache-clang.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  clang:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Compute cache key
+        id: key
+        shell: bash
+        run: |
+          set -euo pipefail
+          CLANG_SHA="$(git rev-parse HEAD:clang-p2996)"
+          BUILD_INPUT_HASH="$(sha256sum .github/workflows/toolchain-cache-clang.yml | sha256sum | cut -d' ' -f1)"
+          CACHE_KEY="clang-${{ runner.os }}-${{ runner.arch }}-${CLANG_SHA:0:12}-${BUILD_INPUT_HASH:0:12}"
+          echo "cache_key=${CACHE_KEY}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore clang toolchain from cache
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: /opt/toolchain-clang
+          key: ${{ steps.key.outputs.cache_key }}
+
+      - name: Install clang build dependencies
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build clang lld \
+            python3 zlib1g-dev git
+
+      - name: Build clang (Release)
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          cd clang-p2996
+
+          cmake -G Ninja -S llvm -B build-llvm \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLLVM_ENABLE_ASSERTIONS=OFF \
+            -DLLVM_ENABLE_PROJECTS="clang" \
+            -DLLVM_TARGETS_TO_BUILD="$(python3 -c "import platform; print('X86' if 'x86' in platform.machine() else 'AArch64')")" \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DLLVM_PARALLEL_LINK_JOBS=1
+          ninja -C build-llvm -j$(nproc) clang
+
+      - name: Build libc++ runtimes (Release)
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          cd clang-p2996
+
+          cmake -G Ninja -S runtimes -B build-runtimes \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLLVM_ENABLE_RUNTIMES="libcxx;libcxxabi;libunwind" \
+            -DCMAKE_C_COMPILER="$(pwd)/build-llvm/bin/clang" \
+            -DCMAKE_CXX_COMPILER="$(pwd)/build-llvm/bin/clang++" \
+            -DLLVM_BINARY_DIR="$(pwd)/build-llvm" \
+            -DLLVM_CONFIG_PATH="$(pwd)/build-llvm/bin/llvm-config"
+          ninja -C build-runtimes -j$(nproc) cxx cxxabi
+
+      - name: Install into clean prefix and strip
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          PREFIX=/opt/toolchain-clang
+          sudo mkdir -p "$PREFIX"
+
+          sudo mkdir -p "$PREFIX/bin"
+          for bin in clang-p2996/build-llvm/bin/clang \
+                     clang-p2996/build-llvm/bin/clang++ \
+                     clang-p2996/build-llvm/bin/llvm-config; do
+            [ -f "$bin" ] && sudo cp -L "$bin" "$PREFIX/bin/"
+          done
+
+          sudo mkdir -p "$PREFIX/include"
+          sudo cp -r clang-p2996/build-llvm/include/c++ "$PREFIX/include/"
+
+          sudo mkdir -p "$PREFIX/lib"
+          sudo cp -P clang-p2996/build-runtimes/lib/*/libc++*.so* \
+                     clang-p2996/build-runtimes/lib/*/libc++*.a  \
+                     "$PREFIX/lib/" 2>/dev/null || true
+          sudo cp -P clang-p2996/build-llvm/lib/libLLVM*.so* \
+                     "$PREFIX/lib/" 2>/dev/null || true
+
+          sudo cp clang-p2996/libcxx/include/meta "$PREFIX/include/c++/v1/meta"
+
+          sudo find "$PREFIX" -type f \( -name "*.so*" -o -perm /111 \) \
+            -exec sh -c 'file "$1" | grep -q ELF && strip --strip-unneeded "$1"' _ {} \; 2>/dev/null || true
+
+          echo "Installed size: $(du -sh $PREFIX | cut -f1)"
+
+      - name: Verify cached prefix
+        run: |
+          ls -lh /opt/toolchain-clang/bin/
+          /opt/toolchain-clang/bin/clang++ --version

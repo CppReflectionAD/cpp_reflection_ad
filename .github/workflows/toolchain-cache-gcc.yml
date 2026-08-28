@@ -1,0 +1,82 @@
+name: Build GCC Toolchain (Cache)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "gcc-mirror"
+      - ".github/workflows/toolchain-cache-gcc.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  gcc:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Compute cache key
+        id: key
+        shell: bash
+        run: |
+          set -euo pipefail
+          GCC_MIRROR_SHA="$(git rev-parse HEAD:gcc-mirror)"
+          BUILD_INPUT_HASH="$(sha256sum .github/workflows/toolchain-cache-gcc.yml | sha256sum | cut -d' ' -f1)"
+          CACHE_KEY="gcc-${{ runner.os }}-${{ runner.arch }}-${GCC_MIRROR_SHA:0:12}-${BUILD_INPUT_HASH:0:12}"
+          echo "cache_key=${CACHE_KEY}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore gcc toolchain from cache
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: /opt/toolchain-gcc
+          key: ${{ steps.key.outputs.cache_key }}
+
+      - name: Install gcc build dependencies
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential flex bison libgmp-dev libmpfr-dev \
+            libmpc-dev texinfo zlib1g-dev dejagnu python3 git
+
+      - name: Build and install GCC into clean prefix
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          PREFIX=/opt/toolchain-gcc
+          sudo mkdir -p "$PREFIX"
+          mkdir -p build/gcc-mirror
+
+          cd gcc-mirror
+          contrib/download_prerequisites
+
+          cd ../build/gcc-mirror
+          ../../gcc-mirror/configure \
+            --disable-bootstrap \
+            --disable-multilib \
+            --disable-nls \
+            --enable-languages=c,c++ \
+            "--prefix=$PREFIX"
+
+          make -j$(nproc)
+          sudo make install
+
+      - name: Strip GCC binaries
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          PREFIX=/opt/toolchain-gcc
+          sudo find "$PREFIX" -type f \( -name "*.so*" -o -perm /111 \) \
+            -exec sh -c 'file "$1" | grep -q ELF && strip --strip-unneeded "$1"' _ {} \; 2>/dev/null || true
+          echo "Installed size: $(du -sh $PREFIX | cut -f1)"
+
+      - name: Verify cached prefix
+        run: |
+          ls -lh /opt/toolchain-gcc/bin/
+          /opt/toolchain-gcc/bin/g++ --version
