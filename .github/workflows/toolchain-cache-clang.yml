@@ -100,11 +100,22 @@ jobs:
           sudo mkdir -p "$PREFIX/lib"
           # Keep full runtime lib layout for robustness across LLVM layout changes.
           sudo mkdir -p "$PREFIX/lib/runtimes"
-          sudo cp -a clang-p2996/build-runtimes/lib/. "$PREFIX/lib/runtimes/"
+          if [ -d clang-p2996/build-runtimes/lib ]; then
+            sudo cp -a clang-p2996/build-runtimes/lib/. "$PREFIX/lib/runtimes/"
+          else
+            mapfile -t RUNTIME_LIB_DIRS < <(find clang-p2996/build-runtimes -type d -name lib | sort)
+            for d in "${RUNTIME_LIB_DIRS[@]}"; do
+              rel="${d#clang-p2996/build-runtimes/}"
+              sudo mkdir -p "$PREFIX/lib/runtimes/$rel"
+              sudo cp -a "$d/." "$PREFIX/lib/runtimes/$rel/"
+            done
+          fi
 
           # Keep the LLVM lib directory snapshot as a fallback for transitive deps.
           sudo mkdir -p "$PREFIX/lib/llvm"
-          sudo cp -a clang-p2996/build-llvm/lib/. "$PREFIX/lib/llvm/"
+          if [ -d clang-p2996/build-llvm/lib ]; then
+            sudo cp -a clang-p2996/build-llvm/lib/. "$PREFIX/lib/llvm/"
+          fi
 
           # Runtime libs may live under different subdirs depending on target/config.
           mapfile -t RUNTIME_LIBS < <(find clang-p2996/build-runtimes \( -type f -o -type l \) \
