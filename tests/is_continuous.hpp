@@ -25,6 +25,21 @@
 // `true` answer is a guarantee; a `false` may be a false alarm on a
 // pathological domain (e.g. a Div whose denominator's true range avoids zero
 // but the interval over-approximation doesn't).
+//
+// Branches (`c ? a : b`) are handled by deciding `c` over the input box:
+//
+//   - `c` provably true or false  → only that branch matters. The other is
+//     dead, and its preconditions are *not* checked, so
+//     `x > 0 ? std::log(x) : 0.0` is continuous on x ∈ [-2,-1].
+//   - `c` undecidable on the box  → the function may jump at the switching
+//     surface, so this reports discontinuous (failing_op == OpKind::Select).
+//     Incomplete in the same direction as everything else here: two branches
+//     that happen to agree on the surface are still reported.
+//
+// abs/max/min are ops in their own right rather than branches, because they
+// are continuous everywhere — only non-differentiable at the kink. Telling
+// those two properties apart is what a future `is_differentiable_on` would do
+// with the same `Tri` machinery.
 
 #include "autograd.h" // for ad::Node, ad::OpKind, ad::build_nodes<>
 #include "cx_std/cx_erfc.hpp"
@@ -54,6 +69,14 @@ struct Interval {
   // Width guard: a degenerate/empty interval is treated as a problem.
   consteval bool valid() const { return lo <= hi; }
 };
+
+// ---------------------------------------------------------------------------
+// Tri — the truth value of a condition over the whole input box.
+// ---------------------------------------------------------------------------
+// A condition is `Unknown` when the box straddles its switching surface. That
+// is the interesting case: a branch whose outcome varies across the box is
+// exactly where the function can jump.
+enum class Tri { False, True, Unknown };
 
 // ---------------------------------------------------------------------------
 // Interval arithmetic helpers
@@ -136,15 +159,82 @@ consteval Interval erfc_range(Interval a) {
   return {cx::erfc(a.hi), cx::erfc(a.lo)};
 }
 
-// A sentinel representing "computation aborted due to a continuity failure".
+// The kinks. All three are continuous everywhere -- they are only
+// non-differentiable at their switching surface -- so none has a precondition.
+consteval Interval abs_range(Interval a) {
+  if (a.lo >= 0.0)
+    return a;
+  if (a.hi <= 0.0)
+    return {-a.hi, -a.lo};
+  return {0.0, std::max(-a.lo, a.hi)};
+}
+
+consteval Interval max_range(Interval a, Interval b) {
+  return {std::max(a.lo, b.lo), std::max(a.hi, b.hi)};
+}
+
+consteval Interval min_range(Interval a, Interval b) {
+  return {std::min(a.lo, b.lo), std::min(a.hi, b.hi)};
+}
+
+// --- Kleene three-valued logic, and comparisons lifted to intervals ---------
+consteval Tri tri_not(Tri t) {
+  if (t == Tri::True)
+    return Tri::False;
+  if (t == Tri::False)
+    return Tri::True;
+  return Tri::Unknown;
+}
+
+consteval Tri tri_and(Tri x, Tri y) {
+  if (x == Tri::False || y == Tri::False)
+    return Tri::False;
+  if (x == Tri::True && y == Tri::True)
+    return Tri::True;
+  return Tri::Unknown;
+}
+
+consteval Tri tri_or(Tri x, Tri y) {
+  if (x == Tri::True || y == Tri::True)
+    return Tri::True;
+  if (x == Tri::False && y == Tri::False)
+    return Tri::False;
+  return Tri::Unknown;
+}
+
+consteval Tri tri_lt(Interval a, Interval b) {
+  if (a.hi < b.lo)
+    return Tri::True;
+  if (a.lo >= b.hi)
+    return Tri::False;
+  return Tri::Unknown;
+}
+
+consteval Tri tri_le(Interval a, Interval b) {
+  if (a.hi <= b.lo)
+    return Tri::True;
+  if (a.lo > b.hi)
+    return Tri::False;
+  return Tri::Unknown;
+}
+
+// Equality is decidable only between two point intervals or two disjoint ones,
+// so `x == y` over a box of any width is Unknown -- which is the honest answer:
+// an equality-guarded branch is a discontinuity unless its two sides agree.
+consteval Tri tri_eq(Interval a, Interval b) {
+  if (a.lo == a.hi && b.lo == b.hi && a.lo == b.lo)
+    return Tri::True;
+  if (a.hi < b.lo || b.hi < a.lo)
+    return Tri::False;
+  return Tri::Unknown;
+}
+
+// A placeholder range for nodes that have no meaningful one (dead or
+// poisoned). Nothing tests for it -- `poisoned[]` carries that information,
+// because NaN does not reliably survive min/max/abs.
 consteval Interval failed() {
   return {std::numeric_limits<double>::quiet_NaN(),
           std::numeric_limits<double>::quiet_NaN()};
-}
-
-consteval bool is_failed(Interval iv) {
-  // NaN != NaN
-  return !(iv.lo == iv.lo);
 }
 
 } // namespace detail_cont
@@ -172,75 +262,203 @@ check_continuity(const std::array<Interval, P> &input_bounds) {
   constexpr std::size_t N = nodes.size();
 
   Interval ranges[N];
-  for (std::size_t i = 0; i < N; ++i)
+  Tri truth[N];
+  // Whether this node's range is meaningless because a precondition failed
+  // somewhere below it, under a guard we could not decide. Tracked explicitly
+  // rather than as a NaN in `ranges`, because NaN does not survive arithmetic:
+  // `std::min(2.0, NaN)` is `2.0`, so a poisoned range laundered through
+  // min/max/abs would come out looking like a perfectly good interval and a
+  // later comparison would then "decide" a branch on it.
+  bool poisoned[N];
+  for (std::size_t i = 0; i < N; ++i) {
     ranges[i] = detail_cont::failed();
+    truth[i] = Tri::Unknown;
+    poisoned[i] = false;
+  }
 
   template for (constexpr auto n : nodes) {
     // n is constexpr, so n.op / n.a / n.b / n.self are all constexpr.
     // ranges[] is a runtime array (within consteval): reads/writes are fine.
-    constexpr bool has_a = n.op != OpKind::Input && n.op != OpKind::Const;
-    constexpr bool has_b = n.op == OpKind::Add || n.op == OpKind::Sub ||
-                           n.op == OpKind::Mul || n.op == OpKind::Div;
 
-    Interval a = has_a ? ranges[n.a] : detail_cont::failed();
-    Interval b = has_b ? ranges[n.b] : detail_cont::failed();
+    // Decide this node's guard first. Branch nodes precede their Select in
+    // topological order, so without this a provably-untaken branch would be
+    // checked as if it ran -- and `x > 0 ? log(x) : 0.0` would be reported as
+    // discontinuous on x in [-2,-1], where the log never executes.
+    Tri guard = Tri::True;
+    if constexpr (n.guard != UNGUARDED)
+      guard = truth[n.guard];
 
-    if constexpr (n.op == OpKind::Input) {
-      if constexpr (n.self >= P)
-        return {false, static_cast<int>(n.self), OpKind::Input};
-      ranges[n.self] = input_bounds[n.self];
-
-    } else if constexpr (n.op == OpKind::Const) {
-      // Splice the literal value to get a tight point interval.
-      // This mirrors how autograd.h evaluators use `[: n.leaf :]`.
-      constexpr double v = static_cast<double>([:n.leaf:]);
-      ranges[n.self] = {v, v};
-
-    } else if constexpr (n.op == OpKind::Output) {
-      ranges[n.self] = ranges[n.a];
-
-    } else if constexpr (n.op == OpKind::Add) {
-      ranges[n.self] = detail_cont::add(a, b);
-
-    } else if constexpr (n.op == OpKind::Sub) {
-      ranges[n.self] = detail_cont::sub(a, b);
-
-    } else if constexpr (n.op == OpKind::Mul) {
-      ranges[n.self] = detail_cont::mul(a, b);
-
-    } else if constexpr (n.op == OpKind::Div) {
-      if (b.contains_zero())
-        return {false, static_cast<int>(n.self), OpKind::Div};
-      ranges[n.self] = detail_cont::div(a, b);
-
-    } else if constexpr (n.op == OpKind::Neg) {
-      ranges[n.self] = detail_cont::neg(a);
-
-    } else if constexpr (n.op == OpKind::Sin) {
-      ranges[n.self] = detail_cont::sin_range(a);
-
-    } else if constexpr (n.op == OpKind::Cos) {
-      ranges[n.self] = detail_cont::cos_range(a);
-
-    } else if constexpr (n.op == OpKind::Exp) {
-      ranges[n.self] = detail_cont::exp_range(a);
-
-    } else if constexpr (n.op == OpKind::Log) {
-      if (!a.strictly_positive())
-        return {false, static_cast<int>(n.self), OpKind::Log};
-      ranges[n.self] = detail_cont::log_range(a);
-
-    } else if constexpr (n.op == OpKind::Sqrt) {
-      if (!a.non_negative())
-        return {false, static_cast<int>(n.self), OpKind::Sqrt};
-      ranges[n.self] = detail_cont::sqrt_range(a);
-
-    } else if constexpr (n.op == OpKind::Erfc) {
-      ranges[n.self] = detail_cont::erfc_range(a);
+    if (guard == Tri::False) {
+      // Unreachable on this box. Recording the node as False rather than
+      // Unknown is what makes deadness propagate into any nested guard built
+      // on top of it.
+      ranges[n.self] = detail_cont::failed();
+      truth[n.self] = Tri::False;
+      poisoned[n.self] = false;   // never read: nothing live consumes a dead node
 
     } else {
-      // Tensor ops or any unrecognised op: not supported yet.
-      return {false, static_cast<int>(n.self), n.op};
+      // Only a node we can prove is entered gets its preconditions enforced.
+      // Under an undecidable guard we still compute a range -- the Select above
+      // it may yet be decidable -- but a domain error inside a branch we cannot
+      // prove runs is not yet the function's problem, and reporting it would
+      // bury the real finding. Such a node is marked poisoned instead.
+      const bool certainly_runs = (guard == Tri::True);
+
+      // Poison is inherited: any range computed from a meaningless one is
+      // itself meaningless. Three places must then refuse to act on it -- the
+      // comparisons, the Select, and the Output -- because those are the only
+      // points where a range turns into a decision.
+      const bool operand_poisoned =
+          (op_has_a(n.op) && poisoned[n.a]) ||
+          (op_has_b(n.op) && poisoned[n.b]) ||
+          (op_has_cond(n.op) && poisoned[n.cond]);
+      poisoned[n.self] = operand_poisoned;
+
+      Interval a = op_has_a(n.op) ? ranges[n.a] : detail_cont::failed();
+      Interval b = op_has_b(n.op) ? ranges[n.b] : detail_cont::failed();
+
+      if constexpr (n.op == OpKind::Input) {
+        if constexpr (n.self >= P)
+          return {false, static_cast<int>(n.self), OpKind::Input};
+        ranges[n.self] = input_bounds[n.self];
+
+      } else if constexpr (n.op == OpKind::Const) {
+        // Splice the literal value to get a tight point interval.
+        // This mirrors how autograd.h evaluators use `[: n.leaf :]`.
+        constexpr double v = static_cast<double>([:n.leaf:]);
+        ranges[n.self] = {v, v};
+
+      } else if constexpr (n.op == OpKind::Output) {
+        if (poisoned[n.a])
+          return {false, static_cast<int>(n.self), OpKind::Output};
+        ranges[n.self] = ranges[n.a];
+
+      } else if constexpr (n.op == OpKind::Add) {
+        ranges[n.self] = detail_cont::add(a, b);
+
+      } else if constexpr (n.op == OpKind::Sub) {
+        ranges[n.self] = detail_cont::sub(a, b);
+
+      } else if constexpr (n.op == OpKind::Mul) {
+        ranges[n.self] = detail_cont::mul(a, b);
+
+      } else if constexpr (n.op == OpKind::Div) {
+        if (b.contains_zero()) {
+          if (certainly_runs)
+            return {false, static_cast<int>(n.self), OpKind::Div};
+          ranges[n.self] = detail_cont::failed();
+          poisoned[n.self] = true;
+        } else {
+          ranges[n.self] = detail_cont::div(a, b);
+        }
+
+      } else if constexpr (n.op == OpKind::Neg) {
+        ranges[n.self] = detail_cont::neg(a);
+
+      } else if constexpr (n.op == OpKind::Sin) {
+        ranges[n.self] = detail_cont::sin_range(a);
+
+      } else if constexpr (n.op == OpKind::Cos) {
+        ranges[n.self] = detail_cont::cos_range(a);
+
+      } else if constexpr (n.op == OpKind::Exp) {
+        ranges[n.self] = detail_cont::exp_range(a);
+
+      } else if constexpr (n.op == OpKind::Log) {
+        if (!a.strictly_positive()) {
+          if (certainly_runs)
+            return {false, static_cast<int>(n.self), OpKind::Log};
+          ranges[n.self] = detail_cont::failed();
+          poisoned[n.self] = true;
+        } else {
+          ranges[n.self] = detail_cont::log_range(a);
+        }
+
+      } else if constexpr (n.op == OpKind::Sqrt) {
+        if (!a.non_negative()) {
+          if (certainly_runs)
+            return {false, static_cast<int>(n.self), OpKind::Sqrt};
+          ranges[n.self] = detail_cont::failed();
+          poisoned[n.self] = true;
+        } else {
+          ranges[n.self] = detail_cont::sqrt_range(a);
+        }
+
+      } else if constexpr (n.op == OpKind::Erfc) {
+        ranges[n.self] = detail_cont::erfc_range(a);
+
+      // --- the kinks: continuous everywhere, no precondition ---------------
+      } else if constexpr (n.op == OpKind::Abs) {
+        ranges[n.self] = detail_cont::abs_range(a);
+
+      } else if constexpr (n.op == OpKind::Max) {
+        ranges[n.self] = detail_cont::max_range(a, b);
+
+      } else if constexpr (n.op == OpKind::Min) {
+        ranges[n.self] = detail_cont::min_range(a, b);
+
+      // --- conditions: carry a truth value rather than a useful range ------
+      } else if constexpr (n.op == OpKind::Lt) {
+        truth[n.self] = operand_poisoned ? Tri::Unknown : detail_cont::tri_lt(a, b);
+        ranges[n.self] = {0.0, 1.0};
+
+      } else if constexpr (n.op == OpKind::Le) {
+        truth[n.self] = operand_poisoned ? Tri::Unknown : detail_cont::tri_le(a, b);
+        ranges[n.self] = {0.0, 1.0};
+
+      } else if constexpr (n.op == OpKind::Gt) {
+        truth[n.self] = operand_poisoned ? Tri::Unknown : detail_cont::tri_lt(b, a);
+        ranges[n.self] = {0.0, 1.0};
+
+      } else if constexpr (n.op == OpKind::Ge) {
+        truth[n.self] = operand_poisoned ? Tri::Unknown : detail_cont::tri_le(b, a);
+        ranges[n.self] = {0.0, 1.0};
+
+      } else if constexpr (n.op == OpKind::Eq) {
+        truth[n.self] = operand_poisoned ? Tri::Unknown : detail_cont::tri_eq(a, b);
+        ranges[n.self] = {0.0, 1.0};
+
+      } else if constexpr (n.op == OpKind::Ne) {
+        truth[n.self] = operand_poisoned ? Tri::Unknown : detail_cont::tri_not(detail_cont::tri_eq(a, b));
+        ranges[n.self] = {0.0, 1.0};
+
+      } else if constexpr (n.op == OpKind::And) {
+        truth[n.self] = detail_cont::tri_and(truth[n.a], truth[n.b]);
+        ranges[n.self] = {0.0, 1.0};
+
+      } else if constexpr (n.op == OpKind::Or) {
+        truth[n.self] = detail_cont::tri_or(truth[n.a], truth[n.b]);
+        ranges[n.self] = {0.0, 1.0};
+
+      } else if constexpr (n.op == OpKind::Not) {
+        truth[n.self] = detail_cont::tri_not(truth[n.a]);
+        ranges[n.self] = {0.0, 1.0};
+
+      } else if constexpr (n.op == OpKind::Select) {
+        const Tri cond = truth[n.cond];
+        // Only the live branch's poison counts -- a dead branch's domain error
+        // is not the function's problem, which is the whole point of deciding
+        // the condition first.
+        if (cond == Tri::True) {
+          if (poisoned[n.a])
+            return {false, static_cast<int>(n.self), OpKind::Select};
+          ranges[n.self] = ranges[n.a];
+          poisoned[n.self] = false;
+        } else if (cond == Tri::False) {
+          if (poisoned[n.b])
+            return {false, static_cast<int>(n.self), OpKind::Select};
+          ranges[n.self] = ranges[n.b];
+          poisoned[n.self] = false;
+        } else
+          // The branch goes both ways on this box, so the function may jump at
+          // the switching surface. Sound but incomplete, as documented above:
+          // two branches that happen to agree there are still reported.
+          return {false, static_cast<int>(n.self), OpKind::Select};
+
+      } else {
+        // Tensor ops or any unrecognised op: not supported yet.
+        return {false, static_cast<int>(n.self), n.op};
+      }
     }
   }
 

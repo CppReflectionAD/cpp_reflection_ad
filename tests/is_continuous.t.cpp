@@ -6,6 +6,7 @@
 #include "functions/3-two_arg.h"
 #include "functions/4-shared_intemediate.h"
 #include "functions/5-black_scholes.h"
+#include "functions/6-piecewise.h"
 
 #include <cmath>
 
@@ -25,6 +26,27 @@ inline double fn_sqrt_neg(double x) { return std::sqrt(x); }
 // log(x - y): discontinuous when the denominator x - y <= 0.
 inline double fn_log_diff(double x, double y) { return std::log(x - y); }
 
+// A branch whose dead side contains a domain error. On a box where the
+// condition is decidable, only the live side is checked.
+inline double branch_log(double x) { return x > 0.0 ? std::log(x) : 0.0; }
+
+// |x| is continuous across zero (it is merely non-differentiable there), so
+// recognising Abs as an op rather than desugaring it into a branch is what
+// keeps this from being a false alarm.
+inline double fn_abs(double x) { return std::fabs(x); }
+
+// A branch that is decidable on the box, either way.
+inline double fn_clamped(double x) { return std::fmin(std::fmax(x, 0.0), 1.0); }
+
+// A domain error under an *undecidable* guard, whose meaningless range is then
+// fed through fmin. Nothing may "decide" the outer branch from that range: the
+// function really does jump at x = 0 (h(1e-9) == 1, h(-1e-9) == 0). This is a
+// regression test — reporting it continuous would break the header's promise
+// that a `true` answer is a guarantee.
+inline double fn_laundered(double x) {
+  return (x > 0.0 && std::fmin(2.0, std::log(x)) < 1.0) ? 1.0 : 0.0;
+}
+
 // ---------------------------------------------------------------------------
 // Compile-time assertions (static_assert): these are the primary tests.
 // They fail at compile time if the implementation is wrong.
@@ -37,6 +59,49 @@ static_assert(ad::is_continuous_on<^^poly>(ad::Interval{0.0, 1.0}));
 
 // --- trig(x) = sin(x²)  — entire, continuous everywhere ---
 static_assert(ad::is_continuous_on<^^trig>(ad::Interval{-10.0, 10.0}));
+
+// --- branches -------------------------------------------------------------
+// Condition decidably true on the box: only the live (log) side is checked,
+// and it is fine there.
+static_assert(ad::is_continuous_on<^^branch_log>(ad::Interval{1.0, 5.0}));
+
+// Condition decidably false: the log on the dead side is never reached, so a
+// domain error there is not the function's problem.
+static_assert(ad::is_continuous_on<^^branch_log>(ad::Interval{-2.0, -1.0}));
+
+// Condition undecidable across the box: the function may jump at x = 0.
+static_assert(!ad::is_continuous_on<^^branch_log>(ad::Interval{-1.0, 1.0}));
+
+// Same shape, but the two sides happen to meet at zero. The checker reports it
+// as discontinuous anyway — sound, and incomplete in the documented direction.
+static_assert(!ad::is_continuous_on<^^guarded_sqrt>(ad::Interval{-5.0, 5.0}));
+static_assert(ad::is_continuous_on<^^guarded_sqrt>(ad::Interval{1.0, 5.0}));
+
+// abs/min/max are kinks, not jumps: continuous across the switching point.
+static_assert(ad::is_continuous_on<^^fn_abs>(ad::Interval{-3.0, 3.0}));
+static_assert(ad::is_continuous_on<^^fn_clamped>(ad::Interval{-3.0, 3.0}));
+
+// A meaningless range must not be launderable back into a decision by an op
+// that drops NaN (std::min(2.0, NaN) == 2.0).
+static_assert(!ad::is_continuous_on<^^fn_laundered>(ad::Interval{-1.0, 1.0}));
+
+// --- the remaining Tri helpers -------------------------------------------
+// `||` (tri_or), decided both ways: inside the window both operands are
+// provably false, so the branch is settled; a box straddling an edge is not.
+static_assert(ad::is_continuous_on<^^window>(ad::Interval{0.2, 0.8}));
+static_assert(!ad::is_continuous_on<^^window>(ad::Interval{-2.0, 2.0}));
+
+// `<=` (tri_le) and `>=`, decidable on a box clear of the switching point.
+static_assert(ad::is_continuous_on<^^ramp_le>(ad::Interval{2.0, 3.0}));
+static_assert(!ad::is_continuous_on<^^ramp_le>(ad::Interval{0.0, 2.0}));
+static_assert(ad::is_continuous_on<^^ramp_ge>(ad::Interval{1.0, 3.0}));
+
+// `==` (tri_eq) is decidable only between point or disjoint intervals, so an
+// equality-guarded branch over any wider box is reported.
+static_assert(!ad::is_continuous_on<^^pick_eq>(ad::Interval{1.0, 3.0},
+                                               ad::Interval{0.0, 1.0}));
+static_assert(ad::is_continuous_on<^^pick_eq>(ad::Interval{5.0, 6.0},
+                                              ad::Interval{0.0, 1.0}));
 
 // --- two_arg(x,y) = x*y + exp(x)  — entire ---
 static_assert(ad::is_continuous_on<^^two_arg>(ad::Interval{-5.0, 5.0},
@@ -123,6 +188,24 @@ int main() {
     constexpr auto r =
         ad::continuity_result<^^poly>(ad::Interval{-100.0, 100.0});
     EXPECT_TRUE(r.continuous);
+  }
+
+  // An undecidable branch is reported against the Select, not against whatever
+  // happens to sit inside the branch.
+  {
+    constexpr auto r =
+        ad::continuity_result<^^guarded_sqrt>(ad::Interval{-5.0, 5.0});
+    EXPECT_FALSE(r.continuous);
+    EXPECT_EQUAL(r.failing_op, ad::OpKind::Select);
+  }
+
+  // The dead branch of a decidable condition holds a domain error that must
+  // not fire: on x < 0 the log is never reached.
+  {
+    constexpr auto r =
+        ad::continuity_result<^^branch_log>(ad::Interval{-2.0, -1.0});
+    EXPECT_TRUE(r.continuous);
+    EXPECT_EQUAL(r.failing_node, -1);
   }
 
   TEST_END;
