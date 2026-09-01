@@ -1,9 +1,6 @@
 name: Test GCC
 
 on:
-  push:
-    branches: [ "main" ]
-  pull_request:
   workflow_dispatch:
 
 jobs:
@@ -12,7 +9,7 @@ jobs:
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # Use 'true' for top-level submodules or 'recursive' for nested submodules
           submodules: true

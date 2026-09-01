@@ -10,3 +10,6 @@
 	path = gcc-darwin-reflect
 	url = https://github.com/iains/gcc-darwin-arm64.git
 	branch = master-wip-apple-si
+	# Keep this submodule out of parent git status: we frequently carry local
+	# reflection backports here without intending to update the superproject pin.
+	ignore = all

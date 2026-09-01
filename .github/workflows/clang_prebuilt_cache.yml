@@ -1,0 +1,63 @@
+# actions/cache variant — see clang_prebuilt.yml for the GHCR/oras variant.
+name: Test Clang (Prebuilt Cache)
+
+on:
+  push:
+    branches: [ "main" ]
+    paths-ignore:
+      - "clang-p2996"
+      - ".github/workflows/toolchain-cache-clang.yml"
+  workflow_run:
+    workflows: [ "Build Clang Toolchain (Cache)" ]
+    types: [ completed ]
+    branches: [ "main" ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    if: ${{ github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Compute cache key
+        id: key
+        shell: bash
+        run: |
+          set -euo pipefail
+          CLANG_SHA="$(git rev-parse HEAD:clang-p2996)"
+          BUILD_INPUT_HASH="$(sha256sum .github/workflows/toolchain-cache-clang.yml | sha256sum | cut -d' ' -f1)"
+          CACHE_KEY="clang-${{ runner.os }}-${{ runner.arch }}-${CLANG_SHA:0:12}-${BUILD_INPUT_HASH:0:12}"
+          echo "cache_key=${CACHE_KEY}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore clang toolchain from cache
+        id: cache
+        uses: actions/cache@v6
+        with:
+          path: /opt/toolchain-clang
+          key: ${{ steps.key.outputs.cache_key }}
+
+      - name: Fail fast on cache miss
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          echo "Clang toolchain not in cache: ${{ steps.key.outputs.cache_key }}"
+          echo "Run workflow 'Build Toolchains (Cache)' first to populate the cache."
+          exit 1
+
+      - name: Install test runtime dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3 git
+
+      - name: Test AD (clang cached)
+        run: |
+          python3 run_tests.py --compiler clang --run-executables \
+            --clang-root /opt/toolchain-clang \
+            --gcc-toolchain /usr

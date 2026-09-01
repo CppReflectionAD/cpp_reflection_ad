@@ -1,0 +1,5 @@
+{
+    "cmake.buildDirectory": "${workspaceFolder}/build/cmake",
+    "cmakeExplorer.debugConfig": "lldb",
+    "lldb.displayFormat": "auto"
+}

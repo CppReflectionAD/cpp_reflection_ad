@@ -1,0 +1,26 @@
+[
+  {
+    "name": "Clang reflection",
+    "compilers": {
+      "C": "${workspaceFolder}/build/clang-p2996/bin/clang",
+      "CXX": "${workspaceFolder}/build/clang-p2996/bin/clang++"
+    },
+    "isTrusted": true
+  },
+  {
+    "name": "GCC reflection (macOS)",
+    "compilers": {
+      "C": "${workspaceFolder}/build/gcc-darwin-reflect/artifacts/bin/gcc",
+      "CXX": "${workspaceFolder}/build/gcc-darwin-reflect/artifacts/bin/g++"
+    },
+    "isTrusted": true
+  },
+  {
+    "name": "GCC reflection (Linux)",
+    "compilers": {
+      "C": "${workspaceFolder}/build/gcc-mirror/artifacts/bin/gcc",
+      "CXX": "${workspaceFolder}/build/gcc-mirror/artifacts/bin/g++"
+    },
+    "isTrusted": true
+  }
+]
