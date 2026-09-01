@@ -57,7 +57,7 @@ constexpr double two_over_root_pi = 2. * std::numbers::inv_sqrtpi_v<double>;
 // ---------------------------------------------------------------------------
 enum class OpKind {
   Input, Const, Output,
-  Add, Sub, Mul, Div, Neg,
+  Add, Sub, Mul, Neg, Inv,
   Sin, Cos, Exp, Log, Sqrt, Erfc,
   // Tensor ops (recognised as named calls; VJPs live in the tensor engine).
   Matmul, Transpose, Sum, Relu,
@@ -108,8 +108,7 @@ consteval bool op_has_a(OpKind op) {
 }
 consteval bool op_has_b(OpKind op) {
   return op == OpKind::Add || op == OpKind::Sub ||
-         op == OpKind::Mul || op == OpKind::Div ||
-         op == OpKind::Matmul;
+         op == OpKind::Mul || op == OpKind::Matmul;
 }
 
 namespace detail {
@@ -145,8 +144,8 @@ consteval OpKind binOp(m::operators op) {
   if (op == m::operators::op_plus)  return OpKind::Add;
   if (op == m::operators::op_minus) return OpKind::Sub;
   if (op == m::operators::op_star)  return OpKind::Mul;
-  if (op == m::operators::op_slash) return OpKind::Div;
-  return OpKind::Add;  // unsupported binary op (v1)
+  if (op == m::operators::op_slash) throw "Should not get here. `/` is a special case.";
+  throw "Unsupported binary operator";
 }
 
 // Peel "transparent" wrapper nodes so we reach the real subexpression:
@@ -252,6 +251,14 @@ consteval std::size_t lower(Ctx &c, info e) {
     auto ops = m::operands_of(e);
     std::size_t a = lower(c, ops[0]);
     std::size_t b = lower(c, ops[1]);
+    // `a / b` becomes `a * inv(b)`.
+    if (m::expression_operator_of(e) == m::operators::op_slash) {
+      std::size_t inv = c.nodes.size();
+      c.nodes.push_back(Node{OpKind::Inv, inv, b, 0});
+      std::size_t s = c.nodes.size();
+      c.nodes.push_back(Node{OpKind::Mul, s, a, inv});
+      return s;
+    }
     std::size_t s = c.nodes.size();
     c.nodes.push_back(Node{binOp(m::expression_operator_of(e)), s, a, b});
     return s;
@@ -389,12 +396,13 @@ consteval std::vector<Node> build_nodes() {
 // factor's derivative.
 // Ops whose derivative rule reads the primal value of an operand / of itself.
 consteval bool deriv_reads_operand_vals(OpKind op) {  // reads val[a] (and val[b])
-  return op == OpKind::Mul || op == OpKind::Div ||
+  return op == OpKind::Mul ||
          op == OpKind::Sin || op == OpKind::Cos || op == OpKind::Log ||
          op == OpKind::Erfc;
 }
+
 consteval bool deriv_reads_self_val(OpKind op) {       // reads val[self]
-  return op == OpKind::Exp || op == OpKind::Sqrt;
+  return op == OpKind::Exp || op == OpKind::Sqrt || op == OpKind::Inv;
 }
 
 // `active_mask` bit i set => input i is differentiated w.r.t. (~0ull = all).
@@ -562,22 +570,12 @@ consteval std::vector<Node> differentiate(const std::vector<Node> &src,
         } else if (va) tang[i] = emit_node(out, OpKind::Mul, tang[n.a], n.b);
         else if (vb)   tang[i] = emit_node(out, OpKind::Mul, n.a, tang[n.b]);
         break;
-      case OpKind::Div:                     // d(a/b) = (da*b - a*db) / (b*b)
-        varied[i] = va || vb;
-        if (va && vb) {
-          // quotient rule
-          std::size_t l  = emit_node(out, OpKind::Mul, tang[n.a], n.b);
-          std::size_t r  = emit_node(out, OpKind::Mul, n.a, tang[n.b]);
-          std::size_t numerator = emit_node(out, OpKind::Sub, l, r);
-          std::size_t denominator = emit_node(out, OpKind::Mul, n.b, n.b);
-          tang[i] = emit_node(out, OpKind::Div, numerator, denominator);
-        } else if (va) {
-          tang[i] = emit_node(out, OpKind::Div, tang[n.a], n.b);
-        } else if (vb) {                    // -a*db / (b*b)
-          std::size_t numerator = emit_node(out, OpKind::Mul, n.a, tang[n.b]);
-          std::size_t denominator = emit_node(out, OpKind::Mul, n.b, n.b);
-          std::size_t quotient  = emit_node(out, OpKind::Div, numerator, denominator);
-          tang[i] = emit_node(out, OpKind::Neg, quotient, 0);
+      case OpKind::Inv:                     // d(1/a) = -(1/a)*(1/a) * da
+        varied[i] = va;
+        if (va) {
+          std::size_t inv_a_squared = emit_node(out, OpKind::Mul, i, i);
+          std::size_t p = emit_node(out, OpKind::Mul, inv_a_squared, tang[n.a]);
+          tang[i] = emit_node(out, OpKind::Neg, p, 0);
         }
         break;
       case OpKind::Neg:
@@ -604,17 +602,21 @@ consteval std::vector<Node> differentiate(const std::vector<Node> &src,
         // slot i is `exp(a)`
         if (va) tang[i] = emit_node(out, OpKind::Mul, i, tang[n.a]);
         break;
-      case OpKind::Log:                     // da / a
+      case OpKind::Log:                     // da * (1/a)
         varied[i] = va;
-        if (va) tang[i] = emit_node(out, OpKind::Div, tang[n.a], n.a);
+        if (va) {
+          std::size_t inv_a = emit_node(out, OpKind::Inv, n.a, 0);
+          tang[i] = emit_node(out, OpKind::Mul, tang[n.a], inv_a);
+        }
         break;
-      case OpKind::Sqrt:                    // da / (2*sqrt(a)) = da / (2 * self)
+      case OpKind::Sqrt:                    // da * 1/(2*sqrt(a)) = da * 1/(2 * self)
         varied[i] = va;
         if (va) {
           std::size_t two = ensure_const_node(out, constPool, 2.0);
           // slot i is `sqrt(a)`
           std::size_t two_sqrt_a  = emit_node(out, OpKind::Mul, two, i);
-          tang[i] = emit_node(out, OpKind::Div, tang[n.a], two_sqrt_a);
+          std::size_t inv_two_sqrt_a = emit_node(out, OpKind::Inv, two_sqrt_a, 0);
+          tang[i] = emit_node(out, OpKind::Mul, tang[n.a], inv_two_sqrt_a);
         }
         break;
       case OpKind::Erfc:                    // -2/sqrt(pi) * exp(-a*a) * da
@@ -689,8 +691,8 @@ constexpr double partial_derivative(Args... args) {
       else if constexpr (n.op == OpKind::Add)    val[n.self] = val[n.a] + val[n.b];
       else if constexpr (n.op == OpKind::Sub)    val[n.self] = val[n.a] - val[n.b];
       else if constexpr (n.op == OpKind::Mul)    val[n.self] = val[n.a] * val[n.b];
-      else if constexpr (n.op == OpKind::Div)    val[n.self] = val[n.a] / val[n.b];
       else if constexpr (n.op == OpKind::Neg)    val[n.self] = -val[n.a];
+      else if constexpr (n.op == OpKind::Inv)    val[n.self] = 1.0 / val[n.a];
       else if constexpr (n.op == OpKind::Sin)    val[n.self] = std::sin(val[n.a]);
       else if constexpr (n.op == OpKind::Cos)    val[n.self] = std::cos(val[n.a]);
       else if constexpr (n.op == OpKind::Exp)    val[n.self] = std::exp(val[n.a]);
@@ -722,8 +724,8 @@ constexpr T forward_derivative(Args... args) {
       else if constexpr (n.op == OpKind::Add)    val[n.self] = val[n.a] + val[n.b];
       else if constexpr (n.op == OpKind::Sub)    val[n.self] = val[n.a] - val[n.b];
       else if constexpr (n.op == OpKind::Mul)    val[n.self] = val[n.a] * val[n.b];
-      else if constexpr (n.op == OpKind::Div)    val[n.self] = val[n.a] / val[n.b];
       else if constexpr (n.op == OpKind::Neg)    val[n.self] = -val[n.a];
+      else if constexpr (n.op == OpKind::Inv)    val[n.self] = T{1} / val[n.a];
       else if constexpr (n.op == OpKind::Sin)    val[n.self] = std::sin(val[n.a]);
       else if constexpr (n.op == OpKind::Cos)    val[n.self] = std::cos(val[n.a]);
       else if constexpr (n.op == OpKind::Exp)    val[n.self] = std::exp(val[n.a]);
@@ -738,6 +740,7 @@ constexpr T forward_derivative(Args... args) {
     else if constexpr (!n.vself)               tang[n.self] = T{0};  // not varied
     else if constexpr (n.op == OpKind::Output) tang[n.self] = tang[n.a];
     else if constexpr (n.op == OpKind::Neg)    tang[n.self] = -tang[n.a];
+    else if constexpr (n.op == OpKind::Inv)    tang[n.self] = -val[n.self] * val[n.self] * tang[n.a];
     else if constexpr (n.op == OpKind::Sin)    tang[n.self] = std::cos(val[n.a]) * tang[n.a];
     else if constexpr (n.op == OpKind::Cos)    tang[n.self] = -std::sin(val[n.a]) * tang[n.a];
     else if constexpr (n.op == OpKind::Exp)    tang[n.self] = val[n.self] * tang[n.a];
@@ -756,11 +759,6 @@ constexpr T forward_derivative(Args... args) {
       if constexpr (n.va && n.vb) tang[n.self] = tang[n.a] * val[n.b] + val[n.a] * tang[n.b];
       else if constexpr (n.va)    tang[n.self] = tang[n.a] * val[n.b];
       else                        tang[n.self] = val[n.a] * tang[n.b];
-    } else if constexpr (n.op == OpKind::Div) {
-      if constexpr (n.va && n.vb)
-        tang[n.self] = (tang[n.a] * val[n.b] - val[n.a] * tang[n.b]) / (val[n.b] * val[n.b]);
-      else if constexpr (n.va)    tang[n.self] = tang[n.a] / val[n.b];
-      else                        tang[n.self] = -val[n.a] * tang[n.b] / (val[n.b] * val[n.b]);
     } else {
       tang[n.self] = T{0};  // Const and any unhandled op
     }
@@ -806,8 +804,8 @@ constexpr std::array<T, sizeof...(Args)> gradient_reverse(Args... args) {
       else if constexpr (n.op == OpKind::Add)    val[n.self] = val[n.a] + val[n.b];
       else if constexpr (n.op == OpKind::Sub)    val[n.self] = val[n.a] - val[n.b];
       else if constexpr (n.op == OpKind::Mul)    val[n.self] = val[n.a] * val[n.b];
-      else if constexpr (n.op == OpKind::Div)    val[n.self] = val[n.a] / val[n.b];
       else if constexpr (n.op == OpKind::Neg)    val[n.self] = -val[n.a];
+      else if constexpr (n.op == OpKind::Inv)    val[n.self] = T{1} / val[n.a];
       else if constexpr (n.op == OpKind::Sin)    val[n.self] = std::sin(val[n.a]);
       else if constexpr (n.op == OpKind::Cos)    val[n.self] = std::cos(val[n.a]);
       else if constexpr (n.op == OpKind::Exp)    val[n.self] = std::exp(val[n.a]);
@@ -835,9 +833,8 @@ constexpr std::array<T, sizeof...(Args)> gradient_reverse(Args... args) {
     } else if constexpr (n.op == OpKind::Mul) {
       if constexpr (n.va) adj[n.a] += adj[n.self] * val[n.b];
       if constexpr (n.vb) adj[n.b] += adj[n.self] * val[n.a];
-    } else if constexpr (n.op == OpKind::Div) {
-      if constexpr (n.va) adj[n.a] += adj[n.self] / val[n.b];
-      if constexpr (n.vb) adj[n.b] -= adj[n.self] * val[n.a] / (val[n.b] * val[n.b]);
+    } else if constexpr (n.op == OpKind::Inv) {
+      if constexpr (n.va) adj[n.a] -= adj[n.self] * val[n.self] * val[n.self];
     } else if constexpr (n.op == OpKind::Neg) {
       if constexpr (n.va) adj[n.a] -= adj[n.self];
     } else if constexpr (n.op == OpKind::Sin) {
