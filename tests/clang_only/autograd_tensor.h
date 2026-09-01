@@ -3,7 +3,7 @@
 // Reuses the reflection IR from autograd.h (build_marked_nodes / activity
 // analysis) and adds a reverse sweep whose VJP rules are written against a
 // generic op *vocabulary* — matmul, transpose, sum, relu, elementwise
-// add/sub/mul/div, and the helpers zeros_like / ones_like / unbroadcast /
+// add/sub/mul/neg/inv, and the helpers zeros_like / ones_like / unbroadcast /
 // d_relu — all called *unqualified* so they resolve by ADL to whatever tensor
 // type you use. The engine names no concrete tensor type, so it works with a
 // custom Tensor, Eigen, libtorch, … given those ops.
@@ -47,8 +47,8 @@ std::array<T, sizeof...(Params)> gradient_wrt(const Args &...args) {
     else if constexpr (n.op == OpKind::Add)    val[n.self] = add(val[n.a], val[n.b]);
     else if constexpr (n.op == OpKind::Sub)    val[n.self] = sub(val[n.a], val[n.b]);
     else if constexpr (n.op == OpKind::Mul)    val[n.self] = mul(val[n.a], val[n.b]);
-    else if constexpr (n.op == OpKind::Div)    val[n.self] = div(val[n.a], val[n.b]);
     else if constexpr (n.op == OpKind::Neg)    val[n.self] = neg(val[n.a]);
+    else if constexpr (n.op == OpKind::Inv)    val[n.self] = inv(val[n.a]);
     else if constexpr (n.op == OpKind::Matmul) val[n.self] = matmul(val[n.a], val[n.b]);
     else if constexpr (n.op == OpKind::Transpose) val[n.self] = transpose(val[n.a]);
     else if constexpr (n.op == OpKind::Sum)    val[n.self] = sum(val[n.a]);
@@ -80,12 +80,10 @@ std::array<T, sizeof...(Params)> gradient_wrt(const Args &...args) {
     } else if constexpr (n.op == OpKind::Mul) {   // elementwise
       if constexpr (n.va) acc(n.a, unbroadcast(mul(adj[n.self], val[n.b]), val[n.a]));
       if constexpr (n.vb) acc(n.b, unbroadcast(mul(adj[n.self], val[n.a]), val[n.b]));
-    } else if constexpr (n.op == OpKind::Div) {
-      if constexpr (n.va) acc(n.a, unbroadcast(div(adj[n.self], val[n.b]), val[n.a]));
-      if constexpr (n.vb) acc(n.b, unbroadcast(neg(div(mul(adj[n.self], val[n.a]),
-                                                        mul(val[n.b], val[n.b]))), val[n.b]));
     } else if constexpr (n.op == OpKind::Neg) {
       if constexpr (n.va) acc(n.a, neg(adj[n.self]));
+    } else if constexpr (n.op == OpKind::Inv) {
+      if constexpr (n.va) acc(n.a, neg(mul(adj[n.self], mul(val[n.self], val[n.self]))));
     } else if constexpr (n.op == OpKind::Matmul) {
       // C = A·B  =>  Ā += C̄·Bᵀ ,  B̄ += Aᵀ·C̄
       if constexpr (n.va) acc(n.a, matmul(adj[n.self], transpose(val[n.b])));
