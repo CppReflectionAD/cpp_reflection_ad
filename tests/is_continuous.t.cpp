@@ -103,11 +103,11 @@ int main() {
     EXPECT_EQUAL(r.failing_op, ad::OpKind::Log);
   }
 
-  // A failing check on 1/x identifies Div.
+  // A failing check on 1/x identifies Inv.
   {
     constexpr auto r = ad::continuity_result<^^fn_inv>(ad::Interval{-1.0, 1.0});
     EXPECT_FALSE(r.continuous);
-    EXPECT_EQUAL(r.failing_op, ad::OpKind::Div);
+    EXPECT_EQUAL(r.failing_op, ad::OpKind::Inv);
   }
 
   // A failing check on sqrt identifies Sqrt.
