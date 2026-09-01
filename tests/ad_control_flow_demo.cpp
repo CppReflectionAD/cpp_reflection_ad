@@ -16,6 +16,7 @@
 
 #include "functions/6-piecewise.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace {
@@ -25,7 +26,33 @@ template <class F> double fd(F f, double x, double h = 1e-6) {
   return (f(x + h) - f(x - h)) / (2.0 * h);
 }
 
+// Does the lowered DAG of `Fn` contain this op? Lets a test assert *how* a
+// call was lowered, which a derivative check cannot: a helper that is inlined
+// rather than recognised as a primitive still yields the right gradient.
+template <std::meta::info Fn> consteval bool lowers_to(ad::OpKind op) {
+  for (const ad::Node &n : ad::build_nodes<Fn>())
+    if (n.op == op)
+      return true;
+  return false;
+}
+
 }  // namespace
+
+// <algorithm>'s max/min, as opposed to <cmath>'s fmax/fmin.
+inline double algo_max(double x, double y) { return std::max(x, y); }
+inline double algo_min(double x, double y) { return std::min(x, y); }
+
+// They are registered as primitives, so they lower to a single Max/Min node.
+// Were they not, they would be inlined as `a < b ? b : a` -- still correct for
+// AD, but a Select, which is_continuous_on cannot prove continuous.
+static_assert(lowers_to<^^algo_max>(ad::OpKind::Max));
+static_assert(lowers_to<^^algo_min>(ad::OpKind::Min));
+static_assert(!lowers_to<^^algo_max>(ad::OpKind::Select));
+static_assert(!lowers_to<^^algo_min>(ad::OpKind::Select));
+
+// The same check for the other two lowerings this file depends on.
+static_assert(lowers_to<^^abs_scaled>(ad::OpKind::Abs));
+static_assert(lowers_to<^^relu>(ad::OpKind::Select));
 
 int main() {
   // --- the plainest branch, both sides -------------------------------------
@@ -182,12 +209,59 @@ int main() {
     EXPECT_NEAR_ABS((ad::partial_derivative<^^clamp_to, 0, 0>(0.5, 0.0, 1.0)), 0.0, 1e-12);
   }
 
+  // --- <algorithm>'s max/min differentiate like <cmath>'s -------------------
+  {
+    auto const g = ad::gradient_reverse<^^algo_max>(1.0, 2.0);
+    EXPECT_NEAR_ABS(g[0], 0.0, 1e-12);
+    EXPECT_NEAR_ABS(g[1], 1.0, 1e-12);
+    auto const h = ad::gradient_reverse<^^algo_min>(1.0, 2.0);
+    EXPECT_NEAR_ABS(h[0], 1.0, 1e-12);
+    EXPECT_NEAR_ABS(h[1], 0.0, 1e-12);
+  }
+
+  // --- ramp_le / ramp_ge in the modes their forward checks above skip ------
+  {
+    EXPECT_NEAR_ABS(ad::gradient_reverse<^^ramp_le>(0.5)[0], 1.0, 1e-12);
+    EXPECT_NEAR_ABS(ad::gradient_reverse<^^ramp_le>(3.0)[0], 2.0, 1e-12);
+    EXPECT_NEAR_ABS(ad::gradient_reverse<^^ramp_ge>(-2.0)[0], -1.0, 1e-12);
+    // x^2 below the switch (f'' = 2), linear above it (f'' = 0).
+    EXPECT_NEAR_ABS((ad::partial_derivative<^^ramp_le, 0, 0>(0.5)), 2.0, 1e-12);
+    EXPECT_NEAR_ABS((ad::partial_derivative<^^ramp_le, 0, 0>(3.0)), 0.0, 1e-12);
+    EXPECT_NEAR_ABS((ad::partial_derivative<^^ramp_ge, 0, 0>(-2.0)), 0.0, 1e-12);
+    EXPECT_NEAR_ABS((ad::partial_derivative<^^window, 0, 0>(0.5)), 0.0, 1e-12);
+  }
+
   // --- forward and reverse are independent engines: they must agree --------
   {
-    for (double x : {-2.5, -0.3, 0.4, 3.1}) {
-      auto const gr = ad::gradient_reverse<^^relu>(x);
-      auto const gf = ad::gradient_of<^^relu>(x);
+    for (double x : {-2.5, -0.3, 0.0, 0.4, 1.0, 3.1}) {
+      // Every single-argument branch function, on both sides of its switch
+      // and at it. Two engines with separate rule tables reaching the same
+      // answer is a much stronger check than either against a hand value.
+      EXPECT_NEAR_ABS(ad::gradient_reverse<^^relu>(x)[0],
+                      ad::gradient_of<^^relu>(x)[0], 1e-12);
+      EXPECT_NEAR_ABS(ad::gradient_reverse<^^guarded_sqrt>(x)[0],
+                      ad::gradient_of<^^guarded_sqrt>(x)[0], 1e-12);
+      EXPECT_NEAR_ABS(ad::gradient_reverse<^^staircase>(x)[0],
+                      ad::gradient_of<^^staircase>(x)[0], 1e-12);
+      EXPECT_NEAR_ABS(ad::gradient_reverse<^^window>(x)[0],
+                      ad::gradient_of<^^window>(x)[0], 1e-12);
+      EXPECT_NEAR_ABS(ad::gradient_reverse<^^ramp_le>(x)[0],
+                      ad::gradient_of<^^ramp_le>(x)[0], 1e-12);
+      EXPECT_NEAR_ABS(ad::gradient_reverse<^^ramp_ge>(x)[0],
+                      ad::gradient_of<^^ramp_ge>(x)[0], 1e-12);
+      EXPECT_NEAR_ABS(ad::gradient_reverse<^^safe_recip>(x)[0],
+                      ad::gradient_of<^^safe_recip>(x)[0], 1e-12);
+    }
+    for (double x : {-1.0, 0.0, 0.5, 2.0}) {
+      auto const gr = ad::gradient_reverse<^^clamp_to>(x, 0.0, 1.0);
+      auto const gf = ad::gradient_of<^^clamp_to>(x, 0.0, 1.0);
       EXPECT_NEAR_ABS(gr[0], gf[0], 1e-12);
+      EXPECT_NEAR_ABS(gr[1], gf[1], 1e-12);
+      EXPECT_NEAR_ABS(gr[2], gf[2], 1e-12);
+      auto const ar = ad::gradient_reverse<^^abs_scaled>(x, 2.0);
+      auto const af = ad::gradient_of<^^abs_scaled>(x, 2.0);
+      EXPECT_NEAR_ABS(ar[0], af[0], 1e-12);
+      EXPECT_NEAR_ABS(ar[1], af[1], 1e-12);
     }
     for (double f : {0.0, 1.0}) {
       auto const gr = ad::gradient_reverse<^^blend>(f, 1.1, 2.2);

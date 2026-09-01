@@ -33,21 +33,12 @@
 // reflected into the same DAG), so ordinary functions compose; the callee must
 // itself be straight-line and non-recursive (free functions only).
 //
-// Control flow, so far, means the conditional *expression*: `c ? a : b`, the
-// comparison and logical operators that build `c`, and abs/max/min. Statement
-// control flow (`if`, loops) is not supported yet.
-//
-// Branches are *predicated*, not evaluated eagerly. Each node carries the
-// condition of the branch it was lowered in (Node::guard), and every sweep --
-// primal, tangent, adjoint -- skips a node whose predicate does not hold. So
-// `x > 0 ? std::sqrt(x) : 0.0` really does not call sqrt at x < 0, and the
-// reverse pass never turns the NaN it would have produced into `0 * NaN` in an
-// adjoint. `&&` and `||` short-circuit for the same reason.
-//
-// The derivative taken is that of the branch actually taken, which is correct
-// almost everywhere; at a switching surface the function is generally not
-// differentiable at all, and the value returned there is whatever the branch
-// convention gives (e.g. `Max` picks its first operand on a tie).
+// Control flow so far means `c ? a : b`, the operators building `c`, and
+// abs/max/min; `if` and loops are not supported. Branches are predicated, not
+// eager: each node carries its branch's condition (Node::guard) and every
+// sweep skips nodes whose guard is false, so `x > 0 ? sqrt(x) : 0.0` never
+// calls sqrt at x < 0 -- which would leak NaN into the gradient via `0 / NaN`.
+// The derivative is that of the branch taken: correct almost everywhere.
 
 #ifndef REFLECT_DEMO_AUTOGRAD_H
 #define REFLECT_DEMO_AUTOGRAD_H
@@ -76,21 +67,17 @@ enum class OpKind {
   Input, Const, Output,
   Add, Sub, Mul, Div, Neg,
   Sin, Cos, Exp, Log, Sqrt, Erfc,
-  // Boolean-valued ops: conditions and their combinators. A predicate is
-  // piecewise constant, so its derivative is identically zero and these are
-  // never "varied". Their value is carried in the same array as everything
-  // else, as 0 or 1.
+  // Conditions and their combinators. Piecewise constant, so never "varied";
+  // valued 0 or 1 in the same array as everything else.
   Lt, Le, Gt, Ge, Eq, Ne, And, Or, Not,
-  // Branching. Select is `c ? a : b`; Abs/Max/Min are the kinks that would
-  // otherwise have to be written as one.
+  // Select is `c ? a : b`; Abs/Max/Min are the kinks.
   Select, Abs, Max, Min,
   // Tensor ops (recognised as named calls; VJPs live in the tensor engine).
   Matmul, Transpose, Sum, Relu,
 };
 
-// Value of Node::guard meaning "no condition gates this node": always run.
-// A real guard is a slot index, and slot 0 is a genuine node, so the sentinel
-// has to be a value no slot can ever take.
+// Node::guard value meaning "always run". A guard is a slot index and slot 0
+// is a real node, so the sentinel must be a value no slot can take.
 inline constexpr std::size_t UNGUARDED = static_cast<std::size_t>(-1);
 
 // A call is a *primitive* (has a built-in VJP) iff its callee is registered
@@ -119,17 +106,10 @@ struct Node {
   std::size_t self = 0;      // this node's SSA slot (== its index)
   std::size_t a = 0, b = 0;  // operand slots
   info leaf = ^^int;         // Const only: reflection of the literal expression
-  // Select only: the slot of the deciding condition. Declared after `leaf` so
-  // the positional aggregate initialisers elsewhere in this file keep meaning
-  // what they say.
+  // Select only. After `leaf` so positional aggregate inits still hold.
   std::size_t cond = 0;
-  // The slot of the condition gating this node: it is evaluated only when
-  // val[guard] is nonzero, and UNGUARDED means "always". Nodes lowered from a
-  // ternary branch carry that branch's condition, and every sweep -- primal,
-  // tangent, adjoint -- honours it. That
-  // is what keeps `x > 0 ? std::sqrt(x) : 0.0` from evaluating sqrt of a
-  // negative at x < 0, and (in reverse mode) from folding the resulting NaN
-  // into an adjoint via `0 * NaN`.
+  // Condition gating this node; UNGUARDED means "always". Honoured by every
+  // sweep, so an untaken branch is never evaluated.
   std::size_t guard = UNGUARDED;
   // Activity analysis flags (stamped by mark_activity):
   //   vself = this node depends on a differentiated input ("varied");
@@ -143,10 +123,8 @@ struct Node {
   bool vself = true, va = true, vb = true, nself = true;
 };
 
-// Which operands a node reads (Input/Const read none; binary ops read a and b;
-// everything else reads only a). `c` is the Select condition, kept separate
-// from a/b so that activity analysis does not treat it as a differentiable
-// operand.
+// Which operands a node reads. The Select condition is kept out of a/b so
+// activity analysis does not treat it as a differentiable operand.
 consteval bool op_has_a(OpKind op) {
   return op != OpKind::Input && op != OpKind::Const;
 }
@@ -162,8 +140,7 @@ consteval bool op_has_b(OpKind op) {
 }
 consteval bool op_has_cond(OpKind op) { return op == OpKind::Select; }
 
-// Ops whose value is a 0/1 flag. Their derivative is identically zero, so they
-// are never varied and never carry a tangent.
+// Ops valued 0/1. Derivative identically zero, so never varied.
 consteval bool op_is_boolean(OpKind op) {
   return op == OpKind::Lt || op == OpKind::Le ||
          op == OpKind::Gt || op == OpKind::Ge ||
@@ -178,9 +155,8 @@ struct Ctx {
   std::vector<info> envDecl;      // decl -> slot environment
   std::vector<std::size_t> envSlot;
   std::vector<info> callStack;    // callees currently being inlined (cycle guard)
-  // The guard in force at the current lowering position: every node emitted
-  // here runs only when val[curGuard] is nonzero. UNGUARDED at the top level; a
-  // ternary narrows it for the duration of each branch.
+  // The guard in force while lowering. UNGUARDED at the top level; a ternary
+  // narrows it for the duration of each branch.
   std::size_t curGuard = UNGUARDED;
 };
 
@@ -192,9 +168,8 @@ consteval std::size_t emit(Ctx &c, OpKind op, std::size_t a, std::size_t b = 0,
   return s;
 }
 
-// Tighten the enclosing guard by also requiring `p`, and return the slot of the
-// combined condition. At the top level there is nothing to combine with, so the
-// narrower guard is just `p` -- which is why a non-nested ternary emits no And.
+// Tighten the enclosing guard by also requiring `p`. Nothing to combine with
+// at the top level, so a non-nested ternary emits no And node.
 consteval std::size_t narrow_guard(Ctx &c, std::size_t outer, std::size_t p) {
   if (outer == UNGUARDED)
     return p;
@@ -221,9 +196,8 @@ consteval std::size_t findSlot(const Ctx &c, std::string_view name) {
   throw "reflection AD: name is not a parameter or local of the reflected body";
 }
 
-// Erroring on an unrecognised operator beats returning a plausible default: a
-// silent fallback to Add would turn `x < y` into `x + y`, i.e. a wrong
-// derivative with no diagnostic.
+// Erroring beats a plausible default: falling back to Add would turn `x < y`
+// into `x + y` -- a wrong derivative with no diagnostic.
 consteval OpKind binOp(m::operators op) {
   if (op == m::operators::op_plus)  return OpKind::Add;
   if (op == m::operators::op_minus) return OpKind::Sub;
@@ -277,16 +251,9 @@ template <class T> inline T p_exp (T x) { return std::exp(x); }
 template <class T> inline T p_log (T x) { return std::log(x); }
 template <class T> inline T p_sqrt(T x) { return std::sqrt(x); }
 template <class T> inline T p_erfc(T x) { return std::erfc(x); }
-// The kinks. These are recognised as ops in their own right rather than
-// desugared into Select, for two reasons: their derivative rule is simpler
-// stated directly, and `is_continuous_on` can then give the right answer --
-// |x| *is* continuous across zero, whereas the Select it would desugar to
-// looks like an undecidable branch.
-//
-// Max/Min follow std::max/std::min semantics (`a < b ? b : a`), so a tie
-// yields the first operand. fmax/fmin are mapped onto the same ops, which
-// differs from the real thing only in NaN handling -- an input the derivative
-// is meaningless for anyway.
+// The kinks. Real ops rather than desugared Selects, so `is_continuous_on`
+// can see that |x| is continuous across zero. Max/Min follow std::max
+// (`a < b ? b : a`), so a tie yields the first operand.
 template <class T> inline T p_fabs(T x) { return std::fabs(x); }
 template <class T> inline T p_abs (T x) { return std::abs(x); }
 template <class T> inline T p_fmax(T x, T y) { return std::fmax(x, y); }
@@ -365,9 +332,8 @@ consteval std::size_t lower(Ctx &c, info e) {
     auto ops = m::operands_of(e);
     OpKind op = binOp(m::expression_operator_of(e));
     std::size_t a = lower(c, ops[0]);
-    // `&&` and `||` short-circuit: the right operand is evaluated only when the
-    // left does not already decide the result. Lowering it under that guard
-    // preserves the C++ semantics, so `x != 0 && 1/x > 5` stays safe.
+    // Short-circuit: lower the right operand under the guard saying the left
+    // did not already decide, so `x != 0 && 1/x > 5` stays safe.
     if (op == OpKind::And || op == OpKind::Or) {
       std::size_t outer = c.curGuard;
       std::size_t reached = (op == OpKind::And) ? a : emit(c, OpKind::Not, a);
@@ -381,10 +347,8 @@ consteval std::size_t lower(Ctx &c, info e) {
   }
 
   if (m::is_conditional_operator(e)) {
-    // The condition is evaluated in the enclosing guard; each branch is then
-    // lowered under a narrower one, so a branch's nodes exist in the DAG but
-    // are only evaluated when that branch is actually taken -- in the primal
-    // sweep and in both derivative sweeps alike.
+    // Each branch is lowered under a narrower guard, so its nodes exist in
+    // the DAG but only evaluate when that branch is taken -- in all sweeps.
     std::size_t p = lower(c, m::condition_of(e));
     std::size_t outer = c.curGuard;
 
@@ -529,8 +493,7 @@ consteval bool deriv_reads_operand_vals(OpKind op) {  // reads val[a] (and val[b
   return op == OpKind::Mul || op == OpKind::Div ||
          op == OpKind::Sin || op == OpKind::Cos || op == OpKind::Log ||
          op == OpKind::Erfc ||
-         // these decide at runtime which operand's tangent to pass through,
-         // which means reading the operands' values
+         // pick an operand's tangent at runtime, so read the operands
          op == OpKind::Abs || op == OpKind::Max || op == OpKind::Min;
 }
 consteval bool deriv_reads_self_val(OpKind op) {       // reads val[self]
@@ -550,8 +513,7 @@ consteval void mark_activity(std::vector<Node> &ns, unsigned long long active_ma
     else if (n.op == OpKind::Const || op_is_boolean(n.op))
       varied = false;   // a predicate is piecewise constant: zero derivative
     else
-      // For Select this is v[a] || v[b]: the condition (slot c) is deliberately
-      // not consulted, since it contributes no tangent.
+      // Select: v[a] || v[b]. The condition contributes no tangent.
       varied = (op_has_a(n.op) && v[n.a]) || (op_has_b(n.op) && v[n.b]);
     v[n.self] = varied ? 1 : 0;
     n.vself = varied;
@@ -566,9 +528,8 @@ consteval void mark_activity(std::vector<Node> &ns, unsigned long long active_ma
   // derivative -- stay unneeded and are not emitted.
   std::vector<char> need(N, 0);
   for (Node &n : ns) {
-    // A guard is read by every sweep that touches the node it guards, so it
-    // must be computed whether or not anything else wants its value. Leaving
-    // it out would have the emitted `if (val[guard] ...)` read an unwritten slot.
+    // The guard is read by whichever sweep touches this node, so it must be
+    // computed even if nothing else wants its value.
     if (n.guard != UNGUARDED)
       need[n.guard] = 1;
     if (!n.vself)
@@ -579,8 +540,7 @@ consteval void mark_activity(std::vector<Node> &ns, unsigned long long active_ma
     }
     if (deriv_reads_self_val(n.op))
       need[n.self] = 1;
-    // A Select's tangent/adjoint rule reads the condition even when the
-    // Select's own value is dead.
+    // A Select's derivative reads the condition even when its value is dead.
     if (op_has_cond(n.op))
       need[n.cond] = 1;
   }
@@ -631,11 +591,9 @@ consteval std::size_t emit_raw(std::vector<Node> &out, OpKind op,
   return s;
 }
 
-// If we have an existing node in the DAG with the same operation and operands, we
-// can reuse it instead of bloating the DAG with duplicate nodes. The condition
-// and the guard are part of the key: two Selects differing only in their
-// condition are different nodes, and a value computed under one predicate must
-// not be reused under another, where its slot may never have been written.
+// Reuse a node with the same op and operands rather than bloating the DAG.
+// `cond` and `guard` are in the key: a value computed under one guard must not
+// be reused under another, where its slot may never have been written.
 consteval std::size_t emit_node(std::vector<Node> &out, OpKind op,
                                 std::size_t a, std::size_t b, info leaf = ^^int,
                                 std::size_t cond = 0,
@@ -688,10 +646,8 @@ consteval std::vector<Node> differentiate(const std::vector<Node> &src,
     // `va`/`vb` correspond to whether operand a/b has a nonzero tangent
     const bool va = op_has_a(n.op) && varied[n.a];
     const bool vb = op_has_b(n.op) && varied[n.b];
-    // A derivative node belongs to the same branch as the primal it came from,
-    // so it inherits that primal's guard. Consts are the exception: they have no
-    // operands and are safe to evaluate anywhere, so ensure_const_node leaves
-    // them unguarded.
+    // A derivative node inherits the guard of the primal it came from. Consts
+    // are the exception -- safe anywhere, so they stay unguarded.
     auto emit_here = [&](OpKind op, std::size_t x, std::size_t y) {
       return emit_node(out, op, x, y, ^^int, 0, n.guard);
     };
@@ -862,11 +818,8 @@ consteval void prune_reachable(std::vector<Node> &ns) {
     n.nself = need[n.self];
 }
 
-// The primal (value) rule for one node. Every sweep -- forward mode, reverse
-// mode, and the higher-order evaluator -- needs identical value semantics, so
-// the op table lives here once instead of being copy-pasted into each; adding
-// an op is then a one-place change. `nself` is the activity-analysis flag: a
-// value that no emitted derivative reads is not computed at all.
+// The value rule for one node, shared by all three sweeps so adding an op is a
+// one-place change. `nself`: a value no emitted derivative reads is skipped.
 template <Node N, typename T>
 constexpr void eval_primal(T *val, const T *in) {
   if constexpr (N.nself) {
@@ -896,15 +849,13 @@ constexpr void eval_primal(T *val, const T *in) {
     else if constexpr (N.op == OpKind::Eq)     val[N.self] = (val[N.a] == val[N.b]) ? T{1} : T{0};
     else if constexpr (N.op == OpKind::Ne)     val[N.self] = (val[N.a] != val[N.b]) ? T{1} : T{0};
     else if constexpr (N.op == OpKind::Not)    val[N.self] = (val[N.a] != T{0}) ? T{0} : T{1};
-    // `&&` / `||` read val[b] only when val[a] leaves the result undecided --
-    // which is exactly when the right operand was lowered as reachable and so
-    // is the only case in which its slot has been written.
+    // Reads val[b] only when val[a] leaves it undecided -- exactly when the
+    // right operand was lowered as reachable, so its slot is written.
     else if constexpr (N.op == OpKind::And)
       val[N.self] = (val[N.a] != T{0} && val[N.b] != T{0}) ? T{1} : T{0};
     else if constexpr (N.op == OpKind::Or)
       val[N.self] = (val[N.a] != T{0} || val[N.b] != T{0}) ? T{1} : T{0};
-    // Likewise Select reads only the branch it takes: the other one may never
-    // have been evaluated.
+    // Select likewise reads only the branch it takes.
     else if constexpr (N.op == OpKind::Select)
       val[N.self] = (val[N.cond] != T{0}) ? val[N.a] : val[N.b];
     else if constexpr (N.op == OpKind::Abs)
@@ -916,9 +867,8 @@ constexpr void eval_primal(T *val, const T *in) {
   }
 }
 
-// The forward-mode tangent rule for one node. Guarded exactly like the primal:
-// a branch that is not taken contributes no tangent work, so a NaN produced in
-// an untaken branch can never reach the result.
+// Forward-mode tangent for one node, guarded like the primal so an untaken
+// branch contributes no tangent work.
 template <Node N, typename T, std::size_t Wrt>
 constexpr void eval_tangent(T *tang, const T *val) {
   if constexpr (N.op == OpKind::Input) {
@@ -963,8 +913,7 @@ constexpr void eval_tangent(T *tang, const T *val) {
     } else if constexpr (N.op == OpKind::Abs) {
       tang[N.self] = (val[N.a] < T{0}) ? -tang[N.a] : tang[N.a];
     } else if constexpr (N.op == OpKind::Max || N.op == OpKind::Min) {
-      // Both pick one operand through; `takes_b` is the comparison that selects
-      // it, so the two differ only in which way round the operands go.
+      // Both pass one operand through; they differ only in which way round.
       const bool takes_b = (N.op == OpKind::Max) ? (val[N.a] < val[N.b])
                                                 : (val[N.b] < val[N.a]);
       if constexpr (N.va && N.vb) tang[N.self] = takes_b ? tang[N.b] : tang[N.a];
@@ -976,17 +925,12 @@ constexpr void eval_tangent(T *tang, const T *val) {
   }
 }
 
-// The reverse-mode rule for one node: push this node's adjoint to each of its
-// operands via the local VJP. Only *varied* operands are updated -- a
-// non-varied operand leads to no differentiated input, so the update would be a
-// wasted `+= ... * 0` into a dead slot -- and only when this node's guard holds.
+// Reverse mode: push this node's adjoint to its operands via the local VJP.
+// Varied operands only (others are a wasted `+= ... * 0`), guard permitting.
 template <Node N, typename T>
 constexpr void eval_adjoint(T *adj, const T *val) {
-  // Nothing to push: either no operand leads to a differentiated input, or this
-  // op has no adjoint rule (Input, Const, and every predicate fall straight
-  // through the chain below). Bailing here also avoids loading the guard, and
-  // avoids Max/Min reading operand values that mark_activity never marked as
-  // needed -- it only seeds those reads for nodes that are varied.
+  // Nothing to push: bail before the guard load, and before Max/Min reads
+  // operand values mark_activity never marked as needed.
   if constexpr (!N.va && !N.vb)
     return;
   else {

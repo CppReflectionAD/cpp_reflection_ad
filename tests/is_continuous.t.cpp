@@ -103,6 +103,34 @@ static_assert(!ad::is_continuous_on<^^pick_eq>(ad::Interval{1.0, 3.0},
 static_assert(ad::is_continuous_on<^^pick_eq>(ad::Interval{5.0, 6.0},
                                               ad::Interval{0.0, 1.0}));
 
+// --- the same functions the AD tests use, checked from this side ----------
+static_assert(ad::is_continuous_on<^^relu>(ad::Interval{1.0, 5.0}));
+static_assert(ad::is_continuous_on<^^relu>(ad::Interval{-5.0, -1.0}));
+// relu really is continuous at 0, but proving that needs the two branches to
+// be compared on the switching surface, which interval arithmetic does not do.
+// Pinned as a known-incomplete case, not as desired behaviour.
+static_assert(!ad::is_continuous_on<^^relu>(ad::Interval{-1.0, 1.0}));
+
+// A three-parameter box, which the one-argument fn_clamped above cannot reach:
+// each bound gets its own interval.
+static_assert(ad::is_continuous_on<^^clamp_to>(ad::Interval{-3.0, 3.0},
+                                               ad::Interval{0.0, 0.0},
+                                               ad::Interval{1.0, 1.0}));
+
+// A branch nested inside a larger expression. The boxes below are all at least
+// 2π wide in `t = k*x`, which is not incidental: narrower intervals through a
+// Sin/Cos node do not compile today. See the LIMITATION on sin_range in
+// is_continuous.hpp.
+//   t in [7,20]: the branch is live, and sin_range takes its wide-interval path
+static_assert(ad::is_continuous_on<^^smooth_step>(ad::Interval{7.0, 20.0},
+                                                  ad::Interval{1.0, 1.0}));
+//   t in [-20,-7]: the sin branch is dead and never evaluated at all
+static_assert(ad::is_continuous_on<^^smooth_step>(ad::Interval{-20.0, -7.0},
+                                                  ad::Interval{1.0, 1.0}));
+//   t straddling 0: undecidable branch, so reported as a jump
+static_assert(!ad::is_continuous_on<^^smooth_step>(ad::Interval{-20.0, 20.0},
+                                                   ad::Interval{1.0, 1.0}));
+
 // --- two_arg(x,y) = x*y + exp(x)  — entire ---
 static_assert(ad::is_continuous_on<^^two_arg>(ad::Interval{-5.0, 5.0},
                                               ad::Interval{-5.0, 5.0}));

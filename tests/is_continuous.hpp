@@ -26,20 +26,10 @@
 // pathological domain (e.g. a Div whose denominator's true range avoids zero
 // but the interval over-approximation doesn't).
 //
-// Branches (`c ? a : b`) are handled by deciding `c` over the input box:
-//
-//   - `c` provably true or false  → only that branch matters. The other is
-//     dead, and its preconditions are *not* checked, so
-//     `x > 0 ? std::log(x) : 0.0` is continuous on x ∈ [-2,-1].
-//   - `c` undecidable on the box  → the function may jump at the switching
-//     surface, so this reports discontinuous (failing_op == OpKind::Select).
-//     Incomplete in the same direction as everything else here: two branches
-//     that happen to agree on the surface are still reported.
-//
-// abs/max/min are ops in their own right rather than branches, because they
-// are continuous everywhere — only non-differentiable at the kink. Telling
-// those two properties apart is what a future `is_differentiable_on` would do
-// with the same `Tri` machinery.
+// Branches are decided over the box: a provably true/false `c` checks only the
+// live branch (`x > 0 ? log(x) : 0.0` is continuous on [-2,-1]); an undecidable
+// one may jump, and is reported. abs/max/min are ops, not branches: kinked but
+// continuous. Not handled: Sin/Cos narrower than 2π — see sin_range.
 
 #include "autograd.h" // for ad::Node, ad::OpKind, ad::build_nodes<>
 #include "cx_std/cx_erfc.hpp"
@@ -70,12 +60,7 @@ struct Interval {
   consteval bool valid() const { return lo <= hi; }
 };
 
-// ---------------------------------------------------------------------------
-// Tri — the truth value of a condition over the whole input box.
-// ---------------------------------------------------------------------------
-// A condition is `Unknown` when the box straddles its switching surface. That
-// is the interesting case: a branch whose outcome varies across the box is
-// exactly where the function can jump.
+// Truth of a condition over the box; `Unknown` = it straddles the switch.
 enum class Tri { False, True, Unknown };
 
 // ---------------------------------------------------------------------------
@@ -105,6 +90,10 @@ consteval Interval div(Interval a, Interval b) {
   return mul(a, b_inv);
 }
 
+// LIMITATION: only the `>= 2π` early return works -- the narrow path calls
+// non-constexpr std::sin/std::cos, so it fails to compile rather than answer
+// wrongly. `trig` passes only because it takes the early return. Fix: add
+// cx_std/cx_sin.hpp + cx_cos.hpp, and tighten these loose bounds.
 consteval Interval sin_range(Interval a) {
   // Conservative: full range [-1, 1] if the interval is >= 2π wide.
   constexpr double two_pi = 2.0 * 3.141592653589793;
@@ -159,8 +148,7 @@ consteval Interval erfc_range(Interval a) {
   return {cx::erfc(a.hi), cx::erfc(a.lo)};
 }
 
-// The kinks. All three are continuous everywhere -- they are only
-// non-differentiable at their switching surface -- so none has a precondition.
+// The kinks: continuous everywhere, so none has a precondition.
 consteval Interval abs_range(Interval a) {
   if (a.lo >= 0.0)
     return a;
@@ -218,9 +206,7 @@ consteval Tri tri_le(Interval a, Interval b) {
   return Tri::Unknown;
 }
 
-// Equality is decidable only between two point intervals or two disjoint ones,
-// so `x == y` over a box of any width is Unknown -- which is the honest answer:
-// an equality-guarded branch is a discontinuity unless its two sides agree.
+// Decidable only between point or disjoint intervals.
 consteval Tri tri_eq(Interval a, Interval b) {
   if (a.lo == a.hi && b.lo == b.hi && a.lo == b.lo)
     return Tri::True;
@@ -229,9 +215,7 @@ consteval Tri tri_eq(Interval a, Interval b) {
   return Tri::Unknown;
 }
 
-// A placeholder range for nodes that have no meaningful one (dead or
-// poisoned). Nothing tests for it -- `poisoned[]` carries that information,
-// because NaN does not reliably survive min/max/abs.
+// Placeholder for nodes with no meaningful range; `poisoned[]` tracks why.
 consteval Interval failed() {
   return {std::numeric_limits<double>::quiet_NaN(),
           std::numeric_limits<double>::quiet_NaN()};
@@ -263,12 +247,8 @@ check_continuity(const std::array<Interval, P> &input_bounds) {
 
   Interval ranges[N];
   Tri truth[N];
-  // Whether this node's range is meaningless because a precondition failed
-  // somewhere below it, under a guard we could not decide. Tracked explicitly
-  // rather than as a NaN in `ranges`, because NaN does not survive arithmetic:
-  // `std::min(2.0, NaN)` is `2.0`, so a poisoned range laundered through
-  // min/max/abs would come out looking like a perfectly good interval and a
-  // later comparison would then "decide" a branch on it.
+  // A precondition failed below this node under an undecidable guard. Explicit
+  // rather than a NaN range: `std::min(2.0, NaN)` is `2.0`, laundering it away.
   bool poisoned[N];
   for (std::size_t i = 0; i < N; ++i) {
     ranges[i] = detail_cont::failed();
@@ -280,34 +260,24 @@ check_continuity(const std::array<Interval, P> &input_bounds) {
     // n is constexpr, so n.op / n.a / n.b / n.self are all constexpr.
     // ranges[] is a runtime array (within consteval): reads/writes are fine.
 
-    // Decide this node's guard first. Branch nodes precede their Select in
-    // topological order, so without this a provably-untaken branch would be
-    // checked as if it ran -- and `x > 0 ? log(x) : 0.0` would be reported as
-    // discontinuous on x in [-2,-1], where the log never executes.
+    // Guard first: branch nodes precede their Select, so otherwise a
+    // provably-untaken branch is checked as if it ran.
     Tri guard = Tri::True;
     if constexpr (n.guard != UNGUARDED)
       guard = truth[n.guard];
 
     if (guard == Tri::False) {
-      // Unreachable on this box. Recording the node as False rather than
-      // Unknown is what makes deadness propagate into any nested guard built
-      // on top of it.
+      // Unreachable. False (not Unknown) propagates deadness into nested guards.
       ranges[n.self] = detail_cont::failed();
       truth[n.self] = Tri::False;
       poisoned[n.self] = false;   // never read: nothing live consumes a dead node
 
     } else {
-      // Only a node we can prove is entered gets its preconditions enforced.
-      // Under an undecidable guard we still compute a range -- the Select above
-      // it may yet be decidable -- but a domain error inside a branch we cannot
-      // prove runs is not yet the function's problem, and reporting it would
-      // bury the real finding. Such a node is marked poisoned instead.
+      // Only a node we can prove runs has its preconditions enforced; under an
+      // undecidable guard, poison it instead and let the Select report.
       const bool certainly_runs = (guard == Tri::True);
 
-      // Poison is inherited: any range computed from a meaningless one is
-      // itself meaningless. Three places must then refuse to act on it -- the
-      // comparisons, the Select, and the Output -- because those are the only
-      // points where a range turns into a decision.
+      // Inherited; the decision points (comparisons, Select, Output) refuse it.
       const bool operand_poisoned =
           (op_has_a(n.op) && poisoned[n.a]) ||
           (op_has_b(n.op) && poisoned[n.b]) ||
@@ -436,9 +406,7 @@ check_continuity(const std::array<Interval, P> &input_bounds) {
 
       } else if constexpr (n.op == OpKind::Select) {
         const Tri cond = truth[n.cond];
-        // Only the live branch's poison counts -- a dead branch's domain error
-        // is not the function's problem, which is the whole point of deciding
-        // the condition first.
+        // Only the live branch's poison counts.
         if (cond == Tri::True) {
           if (poisoned[n.a])
             return {false, static_cast<int>(n.self), OpKind::Select};
@@ -450,9 +418,7 @@ check_continuity(const std::array<Interval, P> &input_bounds) {
           ranges[n.self] = ranges[n.b];
           poisoned[n.self] = false;
         } else
-          // The branch goes both ways on this box, so the function may jump at
-          // the switching surface. Sound but incomplete, as documented above:
-          // two branches that happen to agree there are still reported.
+          // May jump. Incomplete: branches agreeing there are still reported.
           return {false, static_cast<int>(n.self), OpKind::Select};
 
       } else {
