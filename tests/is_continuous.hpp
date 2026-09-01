@@ -23,7 +23,7 @@
 // NOTE: interval arithmetic here is an *over-approximation* — ranges may be
 // wider than the true image, so the checker is *sound but incomplete*: a
 // `true` answer is a guarantee; a `false` may be a false alarm on a
-// pathological domain (e.g. a Div whose denominator's true range avoids zero
+// pathological domain (e.g. an Inv whose operand's true range avoids zero
 // but the interval over-approximation doesn't).
 
 #include "autograd.h" // for ad::Node, ad::OpKind, ad::build_nodes<>
@@ -76,11 +76,8 @@ consteval Interval mul(Interval a, Interval b) {
   return {lo, hi};
 }
 
-// Precondition: b does not contain zero (caller must check).
-consteval Interval div(Interval a, Interval b) {
-  Interval b_inv{1.0 / b.hi, 1.0 / b.lo};
-  return mul(a, b_inv);
-}
+// Precondition: a does not contain zero (caller must check).
+consteval Interval inv(Interval a) { return {1.0 / a.hi, 1.0 / a.lo}; }
 
 consteval Interval sin_range(Interval a) {
   // Conservative: full range [-1, 1] if the interval is >= 2π wide.
@@ -180,7 +177,7 @@ check_continuity(const std::array<Interval, P> &input_bounds) {
     // ranges[] is a runtime array (within consteval): reads/writes are fine.
     constexpr bool has_a = n.op != OpKind::Input && n.op != OpKind::Const;
     constexpr bool has_b = n.op == OpKind::Add || n.op == OpKind::Sub ||
-                           n.op == OpKind::Mul || n.op == OpKind::Div;
+                           n.op == OpKind::Mul;
 
     Interval a = has_a ? ranges[n.a] : detail_cont::failed();
     Interval b = has_b ? ranges[n.b] : detail_cont::failed();
@@ -208,13 +205,13 @@ check_continuity(const std::array<Interval, P> &input_bounds) {
     } else if constexpr (n.op == OpKind::Mul) {
       ranges[n.self] = detail_cont::mul(a, b);
 
-    } else if constexpr (n.op == OpKind::Div) {
-      if (b.contains_zero())
-        return {false, static_cast<int>(n.self), OpKind::Div};
-      ranges[n.self] = detail_cont::div(a, b);
-
     } else if constexpr (n.op == OpKind::Neg) {
       ranges[n.self] = detail_cont::neg(a);
+
+    } else if constexpr (n.op == OpKind::Inv) {
+      if (a.contains_zero())
+        return {false, static_cast<int>(n.self), OpKind::Inv};
+      ranges[n.self] = detail_cont::inv(a);
 
     } else if constexpr (n.op == OpKind::Sin) {
       ranges[n.self] = detail_cont::sin_range(a);
