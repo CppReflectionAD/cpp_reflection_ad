@@ -37,8 +37,8 @@ inline Tensor ew(const Tensor &a, const Tensor &b, F f) {   // elementwise + bro
 inline Tensor add(const Tensor &a, const Tensor &b) { return ew(a, b, [](double x, double y){ return x + y; }); }
 inline Tensor sub(const Tensor &a, const Tensor &b) { return ew(a, b, [](double x, double y){ return x - y; }); }
 inline Tensor mul(const Tensor &a, const Tensor &b) { return ew(a, b, [](double x, double y){ return x * y; }); }
-inline Tensor div(const Tensor &a, const Tensor &b) { return ew(a, b, [](double x, double y){ return x / y; }); }
 inline Tensor neg(const Tensor &a) { Tensor o = a; for (double &v : o.d) v = -v; return o; }
+inline Tensor inv(const Tensor &a) { Tensor o = a; for (double &v : o.d) v = 1.0 / v; return o; }
 
 inline Tensor matmul(const Tensor &a, const Tensor &b) {
   Tensor o(a.r, b.c);
