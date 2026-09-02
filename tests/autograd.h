@@ -32,12 +32,20 @@
 // additive. Calls to user-defined helpers are inlined (the callee's body is
 // reflected into the same DAG), so ordinary functions compose; the callee must
 // itself be straight-line and non-recursive (free functions only).
+//
+// Control flow so far means `c ? a : b`, the operators building `c`, and
+// abs/max/min; `if` and loops are not supported. Branches are predicated, not
+// eager: each node carries its branch's condition (Node::guard) and every
+// sweep skips nodes whose guard is false, so `x > 0 ? sqrt(x) : 0.0` never
+// calls sqrt at x < 0 -- which would leak NaN into the gradient via `0 / NaN`.
+// The derivative is that of the branch taken: correct almost everywhere.
 
 #ifndef REFLECT_DEMO_AUTOGRAD_H
 #define REFLECT_DEMO_AUTOGRAD_H
 
 #include <meta>
 #include <vector>
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -59,9 +67,18 @@ enum class OpKind {
   Input, Const, Output,
   Add, Sub, Mul, Div, Neg,
   Sin, Cos, Exp, Log, Sqrt, Erfc,
+  // Conditions and their combinators. Piecewise constant, so never "varied";
+  // valued 0 or 1 in the same array as everything else.
+  Lt, Le, Gt, Ge, Eq, Ne, And, Or, Not,
+  // Select is `c ? a : b`; Abs/Max/Min are the kinks.
+  Select, Abs, Max, Min,
   // Tensor ops (recognised as named calls; VJPs live in the tensor engine).
   Matmul, Transpose, Sum, Relu,
 };
+
+// Node::guard value meaning "always run". A guard is a slot index and slot 0
+// is a real node, so the sentinel must be a value no slot can take.
+inline constexpr std::size_t UNGUARDED = static_cast<std::size_t>(-1);
 
 // A call is a *primitive* (has a built-in VJP) iff its callee is registered
 // here; anything else is a user helper and gets inlined. The key is the callee
@@ -89,6 +106,11 @@ struct Node {
   std::size_t self = 0;      // this node's SSA slot (== its index)
   std::size_t a = 0, b = 0;  // operand slots
   info leaf = ^^int;         // Const only: reflection of the literal expression
+  // Select only. After `leaf` so positional aggregate inits still hold.
+  std::size_t cond = 0;
+  // Condition gating this node; UNGUARDED means "always". Honoured by every
+  // sweep, so an untaken branch is never evaluated.
+  std::size_t guard = UNGUARDED;
   // Activity analysis flags (stamped by mark_activity):
   //   vself = this node depends on a differentiated input ("varied");
   //   va/vb = operand a/b is varied. A non-varied value has a statically-zero
@@ -101,15 +123,29 @@ struct Node {
   bool vself = true, va = true, vb = true, nself = true;
 };
 
-// Which operands a node reads (Input/Const read none; binary ops read a and b;
-// everything else reads only a).
+// Which operands a node reads. The Select condition is kept out of a/b so
+// activity analysis does not treat it as a differentiable operand.
 consteval bool op_has_a(OpKind op) {
   return op != OpKind::Input && op != OpKind::Const;
 }
 consteval bool op_has_b(OpKind op) {
   return op == OpKind::Add || op == OpKind::Sub ||
          op == OpKind::Mul || op == OpKind::Div ||
+         op == OpKind::Lt || op == OpKind::Le ||
+         op == OpKind::Gt || op == OpKind::Ge ||
+         op == OpKind::Eq || op == OpKind::Ne ||
+         op == OpKind::And || op == OpKind::Or ||
+         op == OpKind::Select || op == OpKind::Max || op == OpKind::Min ||
          op == OpKind::Matmul;
+}
+consteval bool op_has_cond(OpKind op) { return op == OpKind::Select; }
+
+// Ops valued 0/1. Derivative identically zero, so never varied.
+consteval bool op_is_boolean(OpKind op) {
+  return op == OpKind::Lt || op == OpKind::Le ||
+         op == OpKind::Gt || op == OpKind::Ge ||
+         op == OpKind::Eq || op == OpKind::Ne ||
+         op == OpKind::And || op == OpKind::Or || op == OpKind::Not;
 }
 
 namespace detail {
@@ -119,7 +155,26 @@ struct Ctx {
   std::vector<info> envDecl;      // decl -> slot environment
   std::vector<std::size_t> envSlot;
   std::vector<info> callStack;    // callees currently being inlined (cycle guard)
+  // The guard in force while lowering. UNGUARDED at the top level; a ternary
+  // narrows it for the duration of each branch.
+  std::size_t curGuard = UNGUARDED;
 };
+
+// Append a node carrying the guard currently in force.
+consteval std::size_t emit(Ctx &c, OpKind op, std::size_t a, std::size_t b = 0,
+                           info leaf = ^^int, std::size_t cond = 0) {
+  std::size_t s = c.nodes.size();
+  c.nodes.push_back(Node{op, s, a, b, leaf, cond, c.curGuard});
+  return s;
+}
+
+// Tighten the enclosing guard by also requiring `p`. Nothing to combine with
+// at the top level, so a non-nested ternary emits no And node.
+consteval std::size_t narrow_guard(Ctx &c, std::size_t outer, std::size_t p) {
+  if (outer == UNGUARDED)
+    return p;
+  return emit(c, OpKind::And, outer, p);
+}
 
 // Forward decls: lower / lower_body / inline_call are mutually recursive (a call
 // site inlines its callee's body, which may contain further calls).
@@ -141,12 +196,22 @@ consteval std::size_t findSlot(const Ctx &c, std::string_view name) {
   throw "reflection AD: name is not a parameter or local of the reflected body";
 }
 
+// Erroring beats a plausible default: falling back to Add would turn `x < y`
+// into `x + y` -- a wrong derivative with no diagnostic.
 consteval OpKind binOp(m::operators op) {
   if (op == m::operators::op_plus)  return OpKind::Add;
   if (op == m::operators::op_minus) return OpKind::Sub;
   if (op == m::operators::op_star)  return OpKind::Mul;
   if (op == m::operators::op_slash) return OpKind::Div;
-  return OpKind::Add;  // unsupported binary op (v1)
+  if (op == m::operators::op_less)               return OpKind::Lt;
+  if (op == m::operators::op_less_equals)        return OpKind::Le;
+  if (op == m::operators::op_greater)            return OpKind::Gt;
+  if (op == m::operators::op_greater_equals)     return OpKind::Ge;
+  if (op == m::operators::op_equals_equals)      return OpKind::Eq;
+  if (op == m::operators::op_exclamation_equals) return OpKind::Ne;
+  if (op == m::operators::op_ampersand_ampersand) return OpKind::And;
+  if (op == m::operators::op_pipe_pipe)           return OpKind::Or;
+  throw "reflection AD: unsupported binary operator";
 }
 
 // Peel "transparent" wrapper nodes so we reach the real subexpression:
@@ -186,6 +251,15 @@ template <class T> inline T p_exp (T x) { return std::exp(x); }
 template <class T> inline T p_log (T x) { return std::log(x); }
 template <class T> inline T p_sqrt(T x) { return std::sqrt(x); }
 template <class T> inline T p_erfc(T x) { return std::erfc(x); }
+// The kinks. Real ops rather than desugared Selects, so `is_continuous_on`
+// can see that |x| is continuous across zero. Max/Min follow std::max
+// (`a < b ? b : a`), so a tie yields the first operand.
+template <class T> inline T p_fabs(T x) { return std::fabs(x); }
+template <class T> inline T p_abs (T x) { return std::abs(x); }
+template <class T> inline T p_fmax(T x, T y) { return std::fmax(x, y); }
+template <class T> inline T p_fmin(T x, T y) { return std::fmin(x, y); }
+template <class T> inline T p_max (T x, T y) { return std::max(x, y); }
+template <class T> inline T p_min (T x, T y) { return std::min(x, y); }
 
 struct Prim { bool found; OpKind op; };
 
@@ -211,6 +285,15 @@ consteval Prim find_primitive(info callee) {
     return {true, OpKind::Sqrt};
   if (is_std_fn(callee, ^^p_erfc<float>, ^^p_erfc<double>, ^^p_erfc<long double>))
     return {true, OpKind::Erfc};
+  if (is_std_fn(callee, ^^p_fabs<float>, ^^p_fabs<double>, ^^p_fabs<long double>) ||
+      is_std_fn(callee, ^^p_abs<float>,  ^^p_abs<double>,  ^^p_abs<long double>))
+    return {true, OpKind::Abs};
+  if (is_std_fn(callee, ^^p_fmax<float>, ^^p_fmax<double>, ^^p_fmax<long double>) ||
+      is_std_fn(callee, ^^p_max<float>,  ^^p_max<double>,  ^^p_max<long double>))
+    return {true, OpKind::Max};
+  if (is_std_fn(callee, ^^p_fmin<float>, ^^p_fmin<double>, ^^p_fmin<long double>) ||
+      is_std_fn(callee, ^^p_min<float>,  ^^p_min<double>,  ^^p_min<long double>))
+    return {true, OpKind::Min};
 
   info spec = m::substitute(^^primitive, {m::reflect_constant(callee)});
   if (m::is_complete_type(spec))
@@ -228,33 +311,57 @@ consteval std::size_t lower(Ctx &c, info e) {
     return findSlot(c, m::identifier_of(m::declaration_of(e)));
 
   if (m::is_literal(e)) {
-    std::size_t s = c.nodes.size();
     // Reduce the literal to a value reflection (constant_of); it is spliced by
     // the existing P2996 value splice at codegen -- no expression splicing.
-    c.nodes.push_back(Node{OpKind::Const, s, 0, 0, m::constant_of(e)});
-    return s;
+    return emit(c, OpKind::Const, 0, 0, m::constant_of(e));
   }
 
   if (m::is_unary_operator(e)) {
-    std::size_t a = lower(c, m::operands_of(e).front());
     m::operators op = m::expression_operator_of(e);
+    std::size_t a = lower(c, m::operands_of(e).front());
     if (op == m::operators::op_plus)
       return a;  // unary plus is a no-op
-    if (op == m::operators::op_minus) {
-      std::size_t s = c.nodes.size();
-      c.nodes.push_back(Node{OpKind::Neg, s, a, 0});
-      return s;
-    }
-    throw "Unsupported unary operator"; 
+    if (op == m::operators::op_minus)
+      return emit(c, OpKind::Neg, a);
+    if (op == m::operators::op_exclamation)
+      return emit(c, OpKind::Not, a);
+    throw "reflection AD: unsupported unary operator";
   }
 
   if (m::is_binary_operator(e)) {
     auto ops = m::operands_of(e);
+    OpKind op = binOp(m::expression_operator_of(e));
     std::size_t a = lower(c, ops[0]);
+    // Short-circuit: lower the right operand under the guard saying the left
+    // did not already decide, so `x != 0 && 1/x > 5` stays safe.
+    if (op == OpKind::And || op == OpKind::Or) {
+      std::size_t outer = c.curGuard;
+      std::size_t reached = (op == OpKind::And) ? a : emit(c, OpKind::Not, a);
+      c.curGuard = narrow_guard(c, outer, reached);
+      std::size_t b = lower(c, ops[1]);
+      c.curGuard = outer;
+      return emit(c, op, a, b);
+    }
     std::size_t b = lower(c, ops[1]);
-    std::size_t s = c.nodes.size();
-    c.nodes.push_back(Node{binOp(m::expression_operator_of(e)), s, a, b});
-    return s;
+    return emit(c, op, a, b);
+  }
+
+  if (m::is_conditional_operator(e)) {
+    // Each branch is lowered under a narrower guard, so its nodes exist in
+    // the DAG but only evaluate when that branch is taken -- in all sweeps.
+    std::size_t p = lower(c, m::condition_of(e));
+    std::size_t outer = c.curGuard;
+
+    c.curGuard = narrow_guard(c, outer, p);
+    std::size_t whenTrue = lower(c, m::true_expression_of(e));
+
+    c.curGuard = outer;
+    std::size_t notP = emit(c, OpKind::Not, p);
+    c.curGuard = narrow_guard(c, outer, notP);
+    std::size_t whenFalse = lower(c, m::false_expression_of(e));
+
+    c.curGuard = outer;
+    return emit(c, OpKind::Select, whenTrue, whenFalse, ^^int, p);
   }
 
   if (m::is_function_call(e)) {
@@ -267,20 +374,14 @@ consteval std::size_t lower(Ctx &c, info e) {
     if (op_has_b(op)) {                    // binary call, e.g. matmul(a, b)
       std::size_t a = lower(c, ops[1]);
       std::size_t b = lower(c, ops[2]);
-      std::size_t s = c.nodes.size();
-      c.nodes.push_back(Node{op, s, a, b});
-      return s;
+      return emit(c, op, a, b);
     }
     std::size_t a = lower(c, ops[ops.size() - 1]);   // unary call
-    std::size_t s = c.nodes.size();
-    c.nodes.push_back(Node{op, s, a, 0});
-    return s;
+    return emit(c, op, a);
   }
 
   // Unsupported: emit a constant placeholder from its value.
-  std::size_t s = c.nodes.size();
-  c.nodes.push_back(Node{OpKind::Const, s, 0, 0, m::constant_of(e)});
-  return s;
+  return emit(c, OpKind::Const, 0, 0, m::constant_of(e));
 }
 
 // Lower the statements of a straight-line body into `c`, resolving names against
@@ -391,7 +492,9 @@ consteval std::vector<Node> build_nodes() {
 consteval bool deriv_reads_operand_vals(OpKind op) {  // reads val[a] (and val[b])
   return op == OpKind::Mul || op == OpKind::Div ||
          op == OpKind::Sin || op == OpKind::Cos || op == OpKind::Log ||
-         op == OpKind::Erfc;
+         op == OpKind::Erfc ||
+         // pick an operand's tangent at runtime, so read the operands
+         op == OpKind::Abs || op == OpKind::Max || op == OpKind::Min;
 }
 consteval bool deriv_reads_self_val(OpKind op) {       // reads val[self]
   return op == OpKind::Exp || op == OpKind::Sqrt;
@@ -407,9 +510,10 @@ consteval void mark_activity(std::vector<Node> &ns, unsigned long long active_ma
     bool varied;
     if (n.op == OpKind::Input)
       varied = (active_mask >> n.self) & 1ull;
-    else if (n.op == OpKind::Const)
-      varied = false;
+    else if (n.op == OpKind::Const || op_is_boolean(n.op))
+      varied = false;   // a predicate is piecewise constant: zero derivative
     else
+      // Select: v[a] || v[b]. The condition contributes no tangent.
       varied = (op_has_a(n.op) && v[n.a]) || (op_has_b(n.op) && v[n.b]);
     v[n.self] = varied ? 1 : 0;
     n.vself = varied;
@@ -424,6 +528,10 @@ consteval void mark_activity(std::vector<Node> &ns, unsigned long long active_ma
   // derivative -- stay unneeded and are not emitted.
   std::vector<char> need(N, 0);
   for (Node &n : ns) {
+    // The guard is read by whichever sweep touches this node, so it must be
+    // computed even if nothing else wants its value.
+    if (n.guard != UNGUARDED)
+      need[n.guard] = 1;
     if (!n.vself)
       continue;
     if (deriv_reads_operand_vals(n.op)) {
@@ -432,6 +540,9 @@ consteval void mark_activity(std::vector<Node> &ns, unsigned long long active_ma
     }
     if (deriv_reads_self_val(n.op))
       need[n.self] = 1;
+    // A Select's derivative reads the condition even when its value is dead.
+    if (op_has_cond(n.op))
+      need[n.cond] = 1;
   }
   for (std::size_t i = N; i-- > 0;) {   // backward: needed val pulls in operands
     if (!need[i])
@@ -439,6 +550,8 @@ consteval void mark_activity(std::vector<Node> &ns, unsigned long long active_ma
     const Node &n = ns[i];
     if (op_has_a(n.op)) need[n.a] = 1;
     if (op_has_b(n.op)) need[n.b] = 1;
+    if (op_has_cond(n.op)) need[n.cond] = 1;
+    if (n.guard != UNGUARDED) need[n.guard] = 1;
   }
   for (Node &n : ns)
     n.nself = need[n.self];
@@ -470,20 +583,25 @@ namespace detail {
 
 // Raw append: always pushes a new node and returns its slot.
 consteval std::size_t emit_raw(std::vector<Node> &out, OpKind op,
-                               std::size_t a, std::size_t b, info leaf = ^^int) {
+                               std::size_t a, std::size_t b, info leaf = ^^int,
+                               std::size_t cond = 0,
+                               std::size_t guard = UNGUARDED) {
   std::size_t s = out.size();
-  out.push_back(Node{op, s, a, b, leaf});
+  out.push_back(Node{op, s, a, b, leaf, cond, guard});
   return s;
 }
 
-// If we have an existing node in the DAG with the same operation and operands, we
-// can reuse it instead of bloating the DAG with duplicate nodes.
+// Reuse a node with the same op and operands rather than bloating the DAG.
+// `cond` and `guard` are in the key: a value computed under one guard must not
+// be reused under another, where its slot may never have been written.
 consteval std::size_t emit_node(std::vector<Node> &out, OpKind op,
-                                std::size_t a, std::size_t b, info leaf = ^^int) {
+                                std::size_t a, std::size_t b, info leaf = ^^int,
+                                std::size_t cond = 0,
+                                std::size_t guard = UNGUARDED) {
   for (const Node &n : out)
-    if (n.op == op && n.a == a && n.b == b)
+    if (n.op == op && n.a == a && n.b == b && n.cond == cond && n.guard == guard)
       return n.self;
-  return emit_raw(out, op, a, b, leaf);
+  return emit_raw(out, op, a, b, leaf, cond, guard);
 }
 
 // A compile-time map from a constant scalar value to the slot of its (unique)
@@ -518,7 +636,7 @@ consteval std::vector<Node> differentiate(const std::vector<Node> &src,
   // later.
   for (const Node &n : src)
     if (n.op != OpKind::Output)
-      emit_raw(out, n.op, n.a, n.b, n.leaf);
+      emit_raw(out, n.op, n.a, n.b, n.leaf, n.cond, n.guard);
 
   ConstPool constPool;
 
@@ -528,6 +646,11 @@ consteval std::vector<Node> differentiate(const std::vector<Node> &src,
     // `va`/`vb` correspond to whether operand a/b has a nonzero tangent
     const bool va = op_has_a(n.op) && varied[n.a];
     const bool vb = op_has_b(n.op) && varied[n.b];
+    // A derivative node inherits the guard of the primal it came from. Consts
+    // are the exception -- safe anywhere, so they stay unguarded.
+    auto emit_here = [&](OpKind op, std::size_t x, std::size_t y) {
+      return emit_node(out, op, x, y, ^^int, 0, n.guard);
+    };
     switch (n.op) {
       case OpKind::Input:
         varied[i] = (i == wrt);
@@ -542,94 +665,128 @@ consteval std::vector<Node> differentiate(const std::vector<Node> &src,
         break;
       case OpKind::Add:
         varied[i] = va || vb;
-        if (va && vb) tang[i] = emit_node(out, OpKind::Add, tang[n.a], tang[n.b]);
+        if (va && vb) tang[i] = emit_here(OpKind::Add, tang[n.a], tang[n.b]);
         else if (va)  tang[i] = tang[n.a];
         else if (vb)  tang[i] = tang[n.b];
         break;
       case OpKind::Sub:
         varied[i] = va || vb;
-        if (va && vb) tang[i] = emit_node(out, OpKind::Sub, tang[n.a], tang[n.b]);
+        if (va && vb) tang[i] = emit_here(OpKind::Sub, tang[n.a], tang[n.b]);
         else if (va)  tang[i] = tang[n.a];
-        else if (vb)  tang[i] = emit_node(out, OpKind::Neg, tang[n.b], 0);
+        else if (vb)  tang[i] = emit_here(OpKind::Neg, tang[n.b], 0);
         break;
       case OpKind::Mul:                     // d(ab) = da*b + a*db
         varied[i] = va || vb;
         if (va && vb) {
           // product rule
-          std::size_t l = emit_node(out, OpKind::Mul, tang[n.a], n.b);
-          std::size_t r = emit_node(out, OpKind::Mul, n.a, tang[n.b]);
-          tang[i] = emit_node(out, OpKind::Add, l, r);
-        } else if (va) tang[i] = emit_node(out, OpKind::Mul, tang[n.a], n.b);
-        else if (vb)   tang[i] = emit_node(out, OpKind::Mul, n.a, tang[n.b]);
+          std::size_t l = emit_here(OpKind::Mul, tang[n.a], n.b);
+          std::size_t r = emit_here(OpKind::Mul, n.a, tang[n.b]);
+          tang[i] = emit_here(OpKind::Add, l, r);
+        } else if (va) tang[i] = emit_here(OpKind::Mul, tang[n.a], n.b);
+        else if (vb)   tang[i] = emit_here(OpKind::Mul, n.a, tang[n.b]);
         break;
       case OpKind::Div:                     // d(a/b) = (da*b - a*db) / (b*b)
         varied[i] = va || vb;
         if (va && vb) {
           // quotient rule
-          std::size_t l  = emit_node(out, OpKind::Mul, tang[n.a], n.b);
-          std::size_t r  = emit_node(out, OpKind::Mul, n.a, tang[n.b]);
-          std::size_t numerator = emit_node(out, OpKind::Sub, l, r);
-          std::size_t denominator = emit_node(out, OpKind::Mul, n.b, n.b);
-          tang[i] = emit_node(out, OpKind::Div, numerator, denominator);
+          std::size_t l  = emit_here(OpKind::Mul, tang[n.a], n.b);
+          std::size_t r  = emit_here(OpKind::Mul, n.a, tang[n.b]);
+          std::size_t numerator = emit_here(OpKind::Sub, l, r);
+          std::size_t denominator = emit_here(OpKind::Mul, n.b, n.b);
+          tang[i] = emit_here(OpKind::Div, numerator, denominator);
         } else if (va) {
-          tang[i] = emit_node(out, OpKind::Div, tang[n.a], n.b);
+          tang[i] = emit_here(OpKind::Div, tang[n.a], n.b);
         } else if (vb) {                    // -a*db / (b*b)
-          std::size_t numerator = emit_node(out, OpKind::Mul, n.a, tang[n.b]);
-          std::size_t denominator = emit_node(out, OpKind::Mul, n.b, n.b);
-          std::size_t quotient  = emit_node(out, OpKind::Div, numerator, denominator);
-          tang[i] = emit_node(out, OpKind::Neg, quotient, 0);
+          std::size_t numerator = emit_here(OpKind::Mul, n.a, tang[n.b]);
+          std::size_t denominator = emit_here(OpKind::Mul, n.b, n.b);
+          std::size_t quotient  = emit_here(OpKind::Div, numerator, denominator);
+          tang[i] = emit_here(OpKind::Neg, quotient, 0);
         }
         break;
       case OpKind::Neg:
         varied[i] = va;
-        if (va) tang[i] = emit_node(out, OpKind::Neg, tang[n.a], 0);
+        if (va) tang[i] = emit_here(OpKind::Neg, tang[n.a], 0);
         break;
       case OpKind::Sin:                     // cos(a) * da
         varied[i] = va;
         if (va) {
-          std::size_t c = emit_node(out, OpKind::Cos, n.a, 0);
-          tang[i] = emit_node(out, OpKind::Mul, c, tang[n.a]);
+          std::size_t c = emit_here(OpKind::Cos, n.a, 0);
+          tang[i] = emit_here(OpKind::Mul, c, tang[n.a]);
         }
         break;
       case OpKind::Cos:                     // -sin(a) * da
         varied[i] = va;
         if (va) {
-          std::size_t s = emit_node(out, OpKind::Sin, n.a, 0);
-          std::size_t p = emit_node(out, OpKind::Mul, s, tang[n.a]);
-          tang[i] = emit_node(out, OpKind::Neg, p, 0);
+          std::size_t s = emit_here(OpKind::Sin, n.a, 0);
+          std::size_t p = emit_here(OpKind::Mul, s, tang[n.a]);
+          tang[i] = emit_here(OpKind::Neg, p, 0);
         }
         break;
       case OpKind::Exp:                     // exp(a) * da
         varied[i] = va;
         // slot i is `exp(a)`
-        if (va) tang[i] = emit_node(out, OpKind::Mul, i, tang[n.a]);
+        if (va) tang[i] = emit_here(OpKind::Mul, i, tang[n.a]);
         break;
       case OpKind::Log:                     // da / a
         varied[i] = va;
-        if (va) tang[i] = emit_node(out, OpKind::Div, tang[n.a], n.a);
+        if (va) tang[i] = emit_here(OpKind::Div, tang[n.a], n.a);
         break;
       case OpKind::Sqrt:                    // da / (2*sqrt(a)) = da / (2 * self)
         varied[i] = va;
         if (va) {
           std::size_t two = ensure_const_node(out, constPool, 2.0);
           // slot i is `sqrt(a)`
-          std::size_t two_sqrt_a  = emit_node(out, OpKind::Mul, two, i);
-          tang[i] = emit_node(out, OpKind::Div, tang[n.a], two_sqrt_a);
+          std::size_t two_sqrt_a  = emit_here(OpKind::Mul, two, i);
+          tang[i] = emit_here(OpKind::Div, tang[n.a], two_sqrt_a);
         }
         break;
       case OpKind::Erfc:                    // -2/sqrt(pi) * exp(-a*a) * da
         varied[i] = va;
         if (va) {
           std::size_t k   = ensure_const_node(out, constPool, -two_over_root_pi);
-          std::size_t a_squared  = emit_node(out, OpKind::Mul, n.a, n.a);
-          std::size_t minus_a_squared = emit_node(out, OpKind::Neg, a_squared, 0);
-          std::size_t exp_minus_a_squared   = emit_node(out, OpKind::Exp, minus_a_squared, 0);
-          std::size_t ke  = emit_node(out, OpKind::Mul, k, exp_minus_a_squared);
-          tang[i] = emit_node(out, OpKind::Mul, ke, tang[n.a]);
+          std::size_t a_squared  = emit_here(OpKind::Mul, n.a, n.a);
+          std::size_t minus_a_squared = emit_here(OpKind::Neg, a_squared, 0);
+          std::size_t exp_minus_a_squared   = emit_here(OpKind::Exp, minus_a_squared, 0);
+          std::size_t ke  = emit_here(OpKind::Mul, k, exp_minus_a_squared);
+          tang[i] = emit_here(OpKind::Mul, ke, tang[n.a]);
+        }
+        break;
+      case OpKind::Lt: case OpKind::Le: case OpKind::Gt: case OpKind::Ge:
+      case OpKind::Eq: case OpKind::Ne:
+      case OpKind::And: case OpKind::Or: case OpKind::Not:
+        varied[i] = false;   // a predicate is piecewise constant
+        break;
+      case OpKind::Select:                  // the tangent follows the branch taken
+        varied[i] = va || vb;
+        if (varied[i]) {
+          std::size_t zero = ensure_const_node(out, constPool, 0.0);
+          tang[i] = emit_node(out, OpKind::Select, va ? tang[n.a] : zero,
+                              vb ? tang[n.b] : zero, ^^int, n.cond, n.guard);
+        }
+        break;
+      case OpKind::Abs:                     // d|a| = (a < 0 ? -da : da)
+        varied[i] = va;
+        if (va) {
+          std::size_t zero  = ensure_const_node(out, constPool, 0.0);
+          std::size_t isNeg = emit_here(OpKind::Lt, n.a, zero);
+          std::size_t neg_tangent   = emit_here(OpKind::Neg, tang[n.a], 0);
+          tang[i] = emit_node(out, OpKind::Select, neg_tangent, tang[n.a], ^^int, isNeg,
+                              n.guard);
+        }
+        break;
+      case OpKind::Max:                     // max(a,b) = (a < b ? b : a)
+      case OpKind::Min:                     // min(a,b) = (b < a ? b : a)
+        varied[i] = va || vb;
+        if (varied[i]) {
+          std::size_t zero = ensure_const_node(out, constPool, 0.0);
+          std::size_t cmp  = (n.op == OpKind::Max) ? emit_here(OpKind::Lt, n.a, n.b)
+                                                   : emit_here(OpKind::Lt, n.b, n.a);
+          tang[i] = emit_node(out, OpKind::Select, vb ? tang[n.b] : zero,
+                              va ? tang[n.a] : zero, ^^int, cmp, n.guard);
         }
         break;
       default:
-        throw "Unhandled";
+        throw "reflection AD: no derivative rule for this op";
         break;
     }
   }
@@ -654,9 +811,175 @@ consteval void prune_reachable(std::vector<Node> &ns) {
     const Node &n = ns[k];
     if (op_has_a(n.op)) need[n.a] = 1;
     if (op_has_b(n.op)) need[n.b] = 1;
+    if (op_has_cond(n.op)) need[n.cond] = 1;
+    if (n.guard != UNGUARDED) need[n.guard] = 1;
   }
   for (Node &n : ns)
     n.nself = need[n.self];
+}
+
+// The value rule for one node, shared by all three sweeps so adding an op is a
+// one-place change. `nself`: a value no emitted derivative reads is skipped.
+template <Node N, typename T>
+constexpr void eval_primal(T *val, const T *in) {
+  if constexpr (N.nself) {
+    // A guarded node belongs to a branch; skip it unless that branch is taken.
+    if constexpr (N.guard != UNGUARDED) {
+      if (!(val[N.guard] != T{0}))
+        return;
+    }
+    if constexpr (N.op == OpKind::Input)       val[N.self] = in[N.self];
+    else if constexpr (N.op == OpKind::Const)  val[N.self] = static_cast<T>([: N.leaf :]);
+    else if constexpr (N.op == OpKind::Output) val[N.self] = val[N.a];
+    else if constexpr (N.op == OpKind::Add)    val[N.self] = val[N.a] + val[N.b];
+    else if constexpr (N.op == OpKind::Sub)    val[N.self] = val[N.a] - val[N.b];
+    else if constexpr (N.op == OpKind::Mul)    val[N.self] = val[N.a] * val[N.b];
+    else if constexpr (N.op == OpKind::Div)    val[N.self] = val[N.a] / val[N.b];
+    else if constexpr (N.op == OpKind::Neg)    val[N.self] = -val[N.a];
+    else if constexpr (N.op == OpKind::Sin)    val[N.self] = std::sin(val[N.a]);
+    else if constexpr (N.op == OpKind::Cos)    val[N.self] = std::cos(val[N.a]);
+    else if constexpr (N.op == OpKind::Exp)    val[N.self] = std::exp(val[N.a]);
+    else if constexpr (N.op == OpKind::Log)    val[N.self] = std::log(val[N.a]);
+    else if constexpr (N.op == OpKind::Sqrt)   val[N.self] = std::sqrt(val[N.a]);
+    else if constexpr (N.op == OpKind::Erfc)   val[N.self] = std::erfc(val[N.a]);
+    else if constexpr (N.op == OpKind::Lt)     val[N.self] = (val[N.a] <  val[N.b]) ? T{1} : T{0};
+    else if constexpr (N.op == OpKind::Le)     val[N.self] = (val[N.a] <= val[N.b]) ? T{1} : T{0};
+    else if constexpr (N.op == OpKind::Gt)     val[N.self] = (val[N.a] >  val[N.b]) ? T{1} : T{0};
+    else if constexpr (N.op == OpKind::Ge)     val[N.self] = (val[N.a] >= val[N.b]) ? T{1} : T{0};
+    else if constexpr (N.op == OpKind::Eq)     val[N.self] = (val[N.a] == val[N.b]) ? T{1} : T{0};
+    else if constexpr (N.op == OpKind::Ne)     val[N.self] = (val[N.a] != val[N.b]) ? T{1} : T{0};
+    else if constexpr (N.op == OpKind::Not)    val[N.self] = (val[N.a] != T{0}) ? T{0} : T{1};
+    // Reads val[b] only when val[a] leaves it undecided -- exactly when the
+    // right operand was lowered as reachable, so its slot is written.
+    else if constexpr (N.op == OpKind::And)
+      val[N.self] = (val[N.a] != T{0} && val[N.b] != T{0}) ? T{1} : T{0};
+    else if constexpr (N.op == OpKind::Or)
+      val[N.self] = (val[N.a] != T{0} || val[N.b] != T{0}) ? T{1} : T{0};
+    // Select likewise reads only the branch it takes.
+    else if constexpr (N.op == OpKind::Select)
+      val[N.self] = (val[N.cond] != T{0}) ? val[N.a] : val[N.b];
+    else if constexpr (N.op == OpKind::Abs)
+      val[N.self] = (val[N.a] < T{0}) ? -val[N.a] : val[N.a];
+    else if constexpr (N.op == OpKind::Max)
+      val[N.self] = (val[N.a] < val[N.b]) ? val[N.b] : val[N.a];
+    else if constexpr (N.op == OpKind::Min)
+      val[N.self] = (val[N.b] < val[N.a]) ? val[N.b] : val[N.a];
+  }
+}
+
+// Forward-mode tangent for one node, guarded like the primal so an untaken
+// branch contributes no tangent work.
+template <Node N, typename T, std::size_t Wrt>
+constexpr void eval_tangent(T *tang, const T *val) {
+  if constexpr (N.op == OpKind::Input) {
+    tang[N.self] = (N.self == Wrt) ? T{1} : T{0};
+  } else if constexpr (!N.vself) {
+    tang[N.self] = T{0};   // not varied (includes Const and every predicate)
+  } else {
+    if constexpr (N.guard != UNGUARDED) {
+      if (!(val[N.guard] != T{0}))
+        return;
+    }
+    if constexpr (N.op == OpKind::Output)    tang[N.self] = tang[N.a];
+    else if constexpr (N.op == OpKind::Neg)  tang[N.self] = -tang[N.a];
+    else if constexpr (N.op == OpKind::Sin)  tang[N.self] = std::cos(val[N.a]) * tang[N.a];
+    else if constexpr (N.op == OpKind::Cos)  tang[N.self] = -std::sin(val[N.a]) * tang[N.a];
+    else if constexpr (N.op == OpKind::Exp)  tang[N.self] = val[N.self] * tang[N.a];
+    else if constexpr (N.op == OpKind::Log)  tang[N.self] = tang[N.a] / val[N.a];
+    else if constexpr (N.op == OpKind::Sqrt) tang[N.self] = tang[N.a] / (T{2} * val[N.self]);
+    else if constexpr (N.op == OpKind::Erfc)
+      tang[N.self] = tang[N.a] * -1 * two_over_root_pi * (std::exp(-1 * (val[N.a] * val[N.a])));
+    else if constexpr (N.op == OpKind::Add) {
+      if constexpr (N.va && N.vb) tang[N.self] = tang[N.a] + tang[N.b];
+      else if constexpr (N.va)    tang[N.self] = tang[N.a];
+      else                        tang[N.self] = tang[N.b];
+    } else if constexpr (N.op == OpKind::Sub) {
+      if constexpr (N.va && N.vb) tang[N.self] = tang[N.a] - tang[N.b];
+      else if constexpr (N.va)    tang[N.self] = tang[N.a];
+      else                        tang[N.self] = -tang[N.b];
+    } else if constexpr (N.op == OpKind::Mul) {
+      if constexpr (N.va && N.vb) tang[N.self] = tang[N.a] * val[N.b] + val[N.a] * tang[N.b];
+      else if constexpr (N.va)    tang[N.self] = tang[N.a] * val[N.b];
+      else                        tang[N.self] = val[N.a] * tang[N.b];
+    } else if constexpr (N.op == OpKind::Div) {
+      if constexpr (N.va && N.vb)
+        tang[N.self] = (tang[N.a] * val[N.b] - val[N.a] * tang[N.b]) / (val[N.b] * val[N.b]);
+      else if constexpr (N.va)    tang[N.self] = tang[N.a] / val[N.b];
+      else                        tang[N.self] = -val[N.a] * tang[N.b] / (val[N.b] * val[N.b]);
+    } else if constexpr (N.op == OpKind::Select) {
+      if constexpr (N.va && N.vb) tang[N.self] = (val[N.cond] != T{0}) ? tang[N.a] : tang[N.b];
+      else if constexpr (N.va)    tang[N.self] = (val[N.cond] != T{0}) ? tang[N.a] : T{0};
+      else                        tang[N.self] = (val[N.cond] != T{0}) ? T{0} : tang[N.b];
+    } else if constexpr (N.op == OpKind::Abs) {
+      tang[N.self] = (val[N.a] < T{0}) ? -tang[N.a] : tang[N.a];
+    } else if constexpr (N.op == OpKind::Max || N.op == OpKind::Min) {
+      // Both pass one operand through; they differ only in which way round.
+      const bool takes_b = (N.op == OpKind::Max) ? (val[N.a] < val[N.b])
+                                                : (val[N.b] < val[N.a]);
+      if constexpr (N.va && N.vb) tang[N.self] = takes_b ? tang[N.b] : tang[N.a];
+      else if constexpr (N.va)    tang[N.self] = takes_b ? T{0} : tang[N.a];
+      else                        tang[N.self] = takes_b ? tang[N.b] : T{0};
+    } else {
+      tang[N.self] = T{0};   // any unhandled op
+    }
+  }
+}
+
+// Reverse mode: push this node's adjoint to its operands via the local VJP.
+// Varied operands only (others are a wasted `+= ... * 0`), guard permitting.
+template <Node N, typename T>
+constexpr void eval_adjoint(T *adj, const T *val) {
+  // Nothing to push: bail before the guard load, and before Max/Min reads
+  // operand values mark_activity never marked as needed.
+  if constexpr (!N.va && !N.vb)
+    return;
+  else {
+  if constexpr (N.guard != UNGUARDED) {
+    if (!(val[N.guard] != T{0}))
+      return;
+  }
+  if constexpr (N.op == OpKind::Output) {
+    if constexpr (N.va) adj[N.a] += adj[N.self];
+  } else if constexpr (N.op == OpKind::Add) {
+    if constexpr (N.va) adj[N.a] += adj[N.self];
+    if constexpr (N.vb) adj[N.b] += adj[N.self];
+  } else if constexpr (N.op == OpKind::Sub) {
+    if constexpr (N.va) adj[N.a] += adj[N.self];
+    if constexpr (N.vb) adj[N.b] -= adj[N.self];
+  } else if constexpr (N.op == OpKind::Mul) {
+    if constexpr (N.va) adj[N.a] += adj[N.self] * val[N.b];
+    if constexpr (N.vb) adj[N.b] += adj[N.self] * val[N.a];
+  } else if constexpr (N.op == OpKind::Div) {
+    if constexpr (N.va) adj[N.a] += adj[N.self] / val[N.b];
+    if constexpr (N.vb) adj[N.b] -= adj[N.self] * val[N.a] / (val[N.b] * val[N.b]);
+  } else if constexpr (N.op == OpKind::Neg) {
+    if constexpr (N.va) adj[N.a] -= adj[N.self];
+  } else if constexpr (N.op == OpKind::Sin) {
+    if constexpr (N.va) adj[N.a] += adj[N.self] * std::cos(val[N.a]);
+  } else if constexpr (N.op == OpKind::Cos) {
+    if constexpr (N.va) adj[N.a] += -adj[N.self] * std::sin(val[N.a]);
+  } else if constexpr (N.op == OpKind::Exp) {
+    if constexpr (N.va) adj[N.a] += adj[N.self] * val[N.self];
+  } else if constexpr (N.op == OpKind::Log) {
+    if constexpr (N.va) adj[N.a] += adj[N.self] / val[N.a];
+  } else if constexpr (N.op == OpKind::Sqrt) {
+    if constexpr (N.va) adj[N.a] += adj[N.self] / (T{2} * val[N.self]);
+  } else if constexpr (N.op == OpKind::Erfc) {
+    if constexpr (N.va)
+      adj[N.a] += adj[N.self] * -1 * two_over_root_pi * (std::exp(-1 * (val[N.a] * val[N.a])));
+  } else if constexpr (N.op == OpKind::Select) {
+    // The adjoint flows only down the branch that was taken.
+    if constexpr (N.va) { if (val[N.cond] != T{0})    adj[N.a] += adj[N.self]; }
+    if constexpr (N.vb) { if (!(val[N.cond] != T{0})) adj[N.b] += adj[N.self]; }
+  } else if constexpr (N.op == OpKind::Abs) {
+    if constexpr (N.va) adj[N.a] += (val[N.a] < T{0}) ? -adj[N.self] : adj[N.self];
+  } else if constexpr (N.op == OpKind::Max || N.op == OpKind::Min) {
+    const bool takes_b = (N.op == OpKind::Max) ? (val[N.a] < val[N.b])
+                                              : (val[N.b] < val[N.a]);
+    if constexpr (N.va) { if (!takes_b) adj[N.a] += adj[N.self]; }
+    if constexpr (N.vb) { if (takes_b)  adj[N.b] += adj[N.self]; }
+  }
+  }
 }
 
 }  // namespace detail
@@ -680,24 +1003,9 @@ constexpr double partial_derivative(Args... args) {
   static constexpr auto nodes = std::define_static_array(build_partial_nodes<Fn, Wrts...>());
   constexpr std::size_t N = nodes.size();
   const double in[] = { static_cast<double>(args)... };
-  double val[N];
+  double val[N] = {};
   template for (constexpr auto n : nodes) {
-    if constexpr (n.nself) {
-      if constexpr (n.op == OpKind::Input)       val[n.self] = in[n.self];
-      else if constexpr (n.op == OpKind::Const)  val[n.self] = static_cast<double>([: n.leaf :]);
-      else if constexpr (n.op == OpKind::Output) val[n.self] = val[n.a];
-      else if constexpr (n.op == OpKind::Add)    val[n.self] = val[n.a] + val[n.b];
-      else if constexpr (n.op == OpKind::Sub)    val[n.self] = val[n.a] - val[n.b];
-      else if constexpr (n.op == OpKind::Mul)    val[n.self] = val[n.a] * val[n.b];
-      else if constexpr (n.op == OpKind::Div)    val[n.self] = val[n.a] / val[n.b];
-      else if constexpr (n.op == OpKind::Neg)    val[n.self] = -val[n.a];
-      else if constexpr (n.op == OpKind::Sin)    val[n.self] = std::sin(val[n.a]);
-      else if constexpr (n.op == OpKind::Cos)    val[n.self] = std::cos(val[n.a]);
-      else if constexpr (n.op == OpKind::Exp)    val[n.self] = std::exp(val[n.a]);
-      else if constexpr (n.op == OpKind::Log)    val[n.self] = std::log(val[n.a]);
-      else if constexpr (n.op == OpKind::Sqrt)   val[n.self] = std::sqrt(val[n.a]);
-      else if constexpr (n.op == OpKind::Erfc)   val[n.self] = std::erfc(val[n.a]);
-    }
+    detail::eval_primal<n, double>(val, in);
   }
   return val[N - 1];
 }
@@ -710,60 +1018,16 @@ constexpr T forward_derivative(Args... args) {
   constexpr std::size_t N = nodes.size();
 
   const T in[] = { static_cast<T>(args)... };
-  T val[N];
-  T tang[N];
+  T val[N] = {};
+  T tang[N] = {};
 
   template for (constexpr auto n : nodes) {
     // Primal (only where the value is actually read by a derivative).
-    if constexpr (n.nself) {
-      if constexpr (n.op == OpKind::Input)       val[n.self] = in[n.self];
-      else if constexpr (n.op == OpKind::Const)  val[n.self] = static_cast<T>([: n.leaf :]);
-      else if constexpr (n.op == OpKind::Output) val[n.self] = val[n.a];
-      else if constexpr (n.op == OpKind::Add)    val[n.self] = val[n.a] + val[n.b];
-      else if constexpr (n.op == OpKind::Sub)    val[n.self] = val[n.a] - val[n.b];
-      else if constexpr (n.op == OpKind::Mul)    val[n.self] = val[n.a] * val[n.b];
-      else if constexpr (n.op == OpKind::Div)    val[n.self] = val[n.a] / val[n.b];
-      else if constexpr (n.op == OpKind::Neg)    val[n.self] = -val[n.a];
-      else if constexpr (n.op == OpKind::Sin)    val[n.self] = std::sin(val[n.a]);
-      else if constexpr (n.op == OpKind::Cos)    val[n.self] = std::cos(val[n.a]);
-      else if constexpr (n.op == OpKind::Exp)    val[n.self] = std::exp(val[n.a]);
-      else if constexpr (n.op == OpKind::Log)    val[n.self] = std::log(val[n.a]);
-      else if constexpr (n.op == OpKind::Sqrt)   val[n.self] = std::sqrt(val[n.a]);
-      else if constexpr (n.op == OpKind::Erfc)   val[n.self] = std::erfc(val[n.a]);
-    }
+    detail::eval_primal<n, T>(val, in);
 
     // Tangent (activity-gated: a non-varied operand contributes a zero term,
     // which is dropped instead of emitted as `... * 0`).
-    if constexpr (n.op == OpKind::Input)       tang[n.self] = (n.self == Wrt) ? T{1} : T{0};
-    else if constexpr (!n.vself)               tang[n.self] = T{0};  // not varied
-    else if constexpr (n.op == OpKind::Output) tang[n.self] = tang[n.a];
-    else if constexpr (n.op == OpKind::Neg)    tang[n.self] = -tang[n.a];
-    else if constexpr (n.op == OpKind::Sin)    tang[n.self] = std::cos(val[n.a]) * tang[n.a];
-    else if constexpr (n.op == OpKind::Cos)    tang[n.self] = -std::sin(val[n.a]) * tang[n.a];
-    else if constexpr (n.op == OpKind::Exp)    tang[n.self] = val[n.self] * tang[n.a];
-    else if constexpr (n.op == OpKind::Log)    tang[n.self] = tang[n.a] / val[n.a];
-    else if constexpr (n.op == OpKind::Sqrt)   tang[n.self] = tang[n.a] / (T{2} * val[n.self]);
-    else if constexpr (n.op == OpKind::Erfc)   tang[n.self] = tang[n.a] * -1 * two_over_root_pi * (std::exp(-1 * (val[n.a] * val[n.a]))) ;
-    else if constexpr (n.op == OpKind::Add) {
-      if constexpr (n.va && n.vb) tang[n.self] = tang[n.a] + tang[n.b];
-      else if constexpr (n.va)    tang[n.self] = tang[n.a];
-      else                        tang[n.self] = tang[n.b];
-    } else if constexpr (n.op == OpKind::Sub) {
-      if constexpr (n.va && n.vb) tang[n.self] = tang[n.a] - tang[n.b];
-      else if constexpr (n.va)    tang[n.self] = tang[n.a];
-      else                        tang[n.self] = -tang[n.b];
-    } else if constexpr (n.op == OpKind::Mul) {
-      if constexpr (n.va && n.vb) tang[n.self] = tang[n.a] * val[n.b] + val[n.a] * tang[n.b];
-      else if constexpr (n.va)    tang[n.self] = tang[n.a] * val[n.b];
-      else                        tang[n.self] = val[n.a] * tang[n.b];
-    } else if constexpr (n.op == OpKind::Div) {
-      if constexpr (n.va && n.vb)
-        tang[n.self] = (tang[n.a] * val[n.b] - val[n.a] * tang[n.b]) / (val[n.b] * val[n.b]);
-      else if constexpr (n.va)    tang[n.self] = tang[n.a] / val[n.b];
-      else                        tang[n.self] = -val[n.a] * tang[n.b] / (val[n.b] * val[n.b]);
-    } else {
-      tang[n.self] = T{0};  // Const and any unhandled op
-    }
+    detail::eval_tangent<n, T, Wrt>(tang, val);
   }
 
   return tang[N - 1];
@@ -794,66 +1058,19 @@ constexpr std::array<T, sizeof...(Args)> gradient_reverse(Args... args) {
   constexpr std::size_t P = sizeof...(Args);
 
   const T in[] = { static_cast<T>(args)... };
-  T val[N];
+  T val[N] = {};
   T adj[N] = {};   // adjoints, accumulated; zero-initialized
 
   // Forward (primal) sweep: compute the values the adjoint rules will read.
   template for (constexpr auto n : nodes) {
-    if constexpr (n.nself) {
-      if constexpr (n.op == OpKind::Input)       val[n.self] = in[n.self];
-      else if constexpr (n.op == OpKind::Const)  val[n.self] = static_cast<T>([: n.leaf :]);
-      else if constexpr (n.op == OpKind::Output) val[n.self] = val[n.a];
-      else if constexpr (n.op == OpKind::Add)    val[n.self] = val[n.a] + val[n.b];
-      else if constexpr (n.op == OpKind::Sub)    val[n.self] = val[n.a] - val[n.b];
-      else if constexpr (n.op == OpKind::Mul)    val[n.self] = val[n.a] * val[n.b];
-      else if constexpr (n.op == OpKind::Div)    val[n.self] = val[n.a] / val[n.b];
-      else if constexpr (n.op == OpKind::Neg)    val[n.self] = -val[n.a];
-      else if constexpr (n.op == OpKind::Sin)    val[n.self] = std::sin(val[n.a]);
-      else if constexpr (n.op == OpKind::Cos)    val[n.self] = std::cos(val[n.a]);
-      else if constexpr (n.op == OpKind::Exp)    val[n.self] = std::exp(val[n.a]);
-      else if constexpr (n.op == OpKind::Log)    val[n.self] = std::log(val[n.a]);
-      else if constexpr (n.op == OpKind::Sqrt)   val[n.self] = std::sqrt(val[n.a]);
-      else if constexpr (n.op == OpKind::Erfc)   val[n.self] = std::erfc(val[n.a]);
-    }
+    detail::eval_primal<n, T>(val, in);
   }
 
   // Seed the output adjoint, then sweep the DAG in reverse, pushing each node's
   // adjoint to its operands via the local VJP (accumulating with +=).
   adj[N - 1] = T{1};
   template for (constexpr auto n : rnodes) {
-    // Push this node's adjoint to each operand, but only to *varied* operands
-    // (a non-varied operand leads to no differentiated input, so the update is
-    // a wasted `+= ... * 0` into a dead slot).
-    if constexpr (n.op == OpKind::Output) {
-      if constexpr (n.va) adj[n.a] += adj[n.self];
-    } else if constexpr (n.op == OpKind::Add) {
-      if constexpr (n.va) adj[n.a] += adj[n.self];
-      if constexpr (n.vb) adj[n.b] += adj[n.self];
-    } else if constexpr (n.op == OpKind::Sub) {
-      if constexpr (n.va) adj[n.a] += adj[n.self];
-      if constexpr (n.vb) adj[n.b] -= adj[n.self];
-    } else if constexpr (n.op == OpKind::Mul) {
-      if constexpr (n.va) adj[n.a] += adj[n.self] * val[n.b];
-      if constexpr (n.vb) adj[n.b] += adj[n.self] * val[n.a];
-    } else if constexpr (n.op == OpKind::Div) {
-      if constexpr (n.va) adj[n.a] += adj[n.self] / val[n.b];
-      if constexpr (n.vb) adj[n.b] -= adj[n.self] * val[n.a] / (val[n.b] * val[n.b]);
-    } else if constexpr (n.op == OpKind::Neg) {
-      if constexpr (n.va) adj[n.a] -= adj[n.self];
-    } else if constexpr (n.op == OpKind::Sin) {
-      if constexpr (n.va) adj[n.a] += adj[n.self] * std::cos(val[n.a]);
-    } else if constexpr (n.op == OpKind::Cos) {
-      if constexpr (n.va) adj[n.a] += -adj[n.self] * std::sin(val[n.a]);
-    } else if constexpr (n.op == OpKind::Exp) {
-      if constexpr (n.va) adj[n.a] += adj[n.self] * val[n.self];
-    } else if constexpr (n.op == OpKind::Log) {
-      if constexpr (n.va) adj[n.a] += adj[n.self] / val[n.a];
-    } else if constexpr (n.op == OpKind::Sqrt) {
-      if constexpr (n.va) adj[n.a] += adj[n.self] / (T{2} * val[n.self]);
-    } else if constexpr (n.op == OpKind::Erfc) {
-      if constexpr (n.va) adj[n.a] += adj[n.self] * -1 * two_over_root_pi * (std::exp(-1 * (val[n.a] * val[n.a]))) ;
-    }
-    // Input / Const have no operands: nothing to propagate.
+    detail::eval_adjoint<n, T>(adj, val);
   }
 
   // Input k's accumulated adjoint is the k-th partial derivative.
