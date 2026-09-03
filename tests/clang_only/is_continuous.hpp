@@ -31,7 +31,7 @@
 // one may jump, and is reported. abs/max/min are ops, not branches: kinked but
 // continuous. Not handled: Sin/Cos narrower than 2π — see sin_range.
 
-#include "autograd.h" // for ad::Node, ad::OpKind, ad::build_nodes<>
+#include "../autograd.h" // for ad::Node, ad::OpKind, ad::build_nodes<>
 #include "cx_std/cx_erfc.hpp"
 #include "cx_std/cx_exp.hpp"
 #include "cx_std/cx_log.hpp"
