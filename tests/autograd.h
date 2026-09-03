@@ -1083,11 +1083,7 @@ constexpr std::array<T, sizeof...(Args)> gradient_reverse(Args... args) {
   // adjoint to its operands via the local VJP (accumulating with +=).
   adj[N - 1] = T{1};
   template for (constexpr auto n : rnodes) {
-      // Nothing to push: bail before the guard load, and before Max/Min reads
-      // operand values mark_activity never marked as needed.
-      if constexpr (!n.va && !n.vb)
-        continue;
-      else {
+    if constexpr (n.va || n.vb) {
       if constexpr (n.guard != UNGUARDED) {
         if (!(val[n.guard] != T{0}))
           continue;
@@ -1133,7 +1129,7 @@ constexpr std::array<T, sizeof...(Args)> gradient_reverse(Args... args) {
         if constexpr (n.va) { if (!takes_b) adj[n.a] += adj[n.self]; }
         if constexpr (n.vb) { if (takes_b)  adj[n.b] += adj[n.self]; }
       }
-      }
+    }
   }
 
   // Input k's accumulated adjoint is the k-th partial derivative.
