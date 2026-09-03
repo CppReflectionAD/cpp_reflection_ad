@@ -346,6 +346,7 @@ consteval std::size_t lower(Ctx &c, info e) {
     return emit(c, op, a, b);
   }
 
+#if defined(__clang__)
   if (m::is_conditional_operator(e)) {
     // Each branch is lowered under a narrower guard, so its nodes exist in
     // the DAG but only evaluate when that branch is taken -- in all sweeps.
@@ -363,6 +364,7 @@ consteval std::size_t lower(Ctx &c, info e) {
     c.curGuard = outer;
     return emit(c, OpKind::Select, whenTrue, whenFalse, ^^int, p);
   }
+#endif // __clang__
 
   if (m::is_function_call(e)) {
     // operands_of(call) = [callee, arg0, arg1, ...].
