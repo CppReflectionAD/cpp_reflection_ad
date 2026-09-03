@@ -1,11 +1,17 @@
 name: clang-format Check
 on:
   push:
-    branches:
-      - main
+    branches: [ "main" ]
+  workflow_run:
+    workflows: [ "Clang Format Check" ]
+    types: [ completed ]
+    branches: [ "main" ]
   pull_request:
-    branches:
-      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
 jobs:
   formatting-check:
     name: Formatting Check

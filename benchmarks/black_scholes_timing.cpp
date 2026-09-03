@@ -14,7 +14,7 @@ int main() {
 
   std::size_t iters = 10000;
   if (auto *env_p = std::getenv("ITERATIONS")) {
-    iters = std::stoul(env_p);
+     iters = std::stoul(env_p);
   }
 
   if (iters == 0) {
