@@ -14,7 +14,7 @@
 
 #include "../autograd.h"
 
-#include "functions/6-piecewise.h"
+#include "../functions/6-piecewise.h"
 
 #include <algorithm>
 #include <cmath>
