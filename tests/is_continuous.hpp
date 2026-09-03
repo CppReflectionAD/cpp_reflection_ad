@@ -25,6 +25,11 @@
 // `true` answer is a guarantee; a `false` may be a false alarm on a
 // pathological domain (e.g. a Div whose denominator's true range avoids zero
 // but the interval over-approximation doesn't).
+//
+// Branches are decided over the box: a provably true/false `c` checks only the
+// live branch (`x > 0 ? log(x) : 0.0` is continuous on [-2,-1]); an undecidable
+// one may jump, and is reported. abs/max/min are ops, not branches: kinked but
+// continuous. Not handled: Sin/Cos narrower than 2π — see sin_range.
 
 #include "autograd.h" // for ad::Node, ad::OpKind, ad::build_nodes<>
 #include "cx_std/cx_erfc.hpp"
@@ -55,6 +60,9 @@ struct Interval {
   consteval bool valid() const { return lo <= hi; }
 };
 
+// Truth of a condition over the box; `Unknown` = it straddles the switch.
+enum class Tri { False, True, Unknown };
+
 // ---------------------------------------------------------------------------
 // Interval arithmetic helpers
 // ---------------------------------------------------------------------------
@@ -82,6 +90,10 @@ consteval Interval div(Interval a, Interval b) {
   return mul(a, b_inv);
 }
 
+// LIMITATION: only the `>= 2π` early return works -- the narrow path calls
+// non-constexpr std::sin/std::cos, so it fails to compile rather than answer
+// wrongly. `trig` passes only because it takes the early return. Fix: add
+// cx_std/cx_sin.hpp + cx_cos.hpp, and tighten these loose bounds.
 consteval Interval sin_range(Interval a) {
   // Conservative: full range [-1, 1] if the interval is >= 2π wide.
   constexpr double two_pi = 2.0 * 3.141592653589793;
@@ -136,15 +148,77 @@ consteval Interval erfc_range(Interval a) {
   return {cx::erfc(a.hi), cx::erfc(a.lo)};
 }
 
-// A sentinel representing "computation aborted due to a continuity failure".
+// The kinks: continuous everywhere, so none has a precondition.
+consteval Interval abs_range(Interval a) {
+  if (a.lo >= 0.0)
+    return a;
+  if (a.hi <= 0.0)
+    return {-a.hi, -a.lo};
+  return {0.0, std::max(-a.lo, a.hi)};
+}
+
+consteval Interval max_range(Interval a, Interval b) {
+  return {std::max(a.lo, b.lo), std::max(a.hi, b.hi)};
+}
+
+consteval Interval min_range(Interval a, Interval b) {
+  return {std::min(a.lo, b.lo), std::min(a.hi, b.hi)};
+}
+
+// --- Kleene three-valued logic, and comparisons lifted to intervals ---------
+consteval Tri tri_not(Tri t) {
+  if (t == Tri::True)
+    return Tri::False;
+  if (t == Tri::False)
+    return Tri::True;
+  return Tri::Unknown;
+}
+
+consteval Tri tri_and(Tri x, Tri y) {
+  if (x == Tri::False || y == Tri::False)
+    return Tri::False;
+  if (x == Tri::True && y == Tri::True)
+    return Tri::True;
+  return Tri::Unknown;
+}
+
+consteval Tri tri_or(Tri x, Tri y) {
+  if (x == Tri::True || y == Tri::True)
+    return Tri::True;
+  if (x == Tri::False && y == Tri::False)
+    return Tri::False;
+  return Tri::Unknown;
+}
+
+consteval Tri tri_lt(Interval a, Interval b) {
+  if (a.hi < b.lo)
+    return Tri::True;
+  if (a.lo >= b.hi)
+    return Tri::False;
+  return Tri::Unknown;
+}
+
+consteval Tri tri_le(Interval a, Interval b) {
+  if (a.hi <= b.lo)
+    return Tri::True;
+  if (a.lo > b.hi)
+    return Tri::False;
+  return Tri::Unknown;
+}
+
+// Decidable only between point or disjoint intervals.
+consteval Tri tri_eq(Interval a, Interval b) {
+  if (a.lo == a.hi && b.lo == b.hi && a.lo == b.lo)
+    return Tri::True;
+  if (a.hi < b.lo || b.hi < a.lo)
+    return Tri::False;
+  return Tri::Unknown;
+}
+
+// Placeholder for nodes with no meaningful range; `poisoned[]` tracks why.
 consteval Interval failed() {
   return {std::numeric_limits<double>::quiet_NaN(),
           std::numeric_limits<double>::quiet_NaN()};
-}
-
-consteval bool is_failed(Interval iv) {
-  // NaN != NaN
-  return !(iv.lo == iv.lo);
 }
 
 } // namespace detail_cont
@@ -172,75 +246,185 @@ check_continuity(const std::array<Interval, P> &input_bounds) {
   constexpr std::size_t N = nodes.size();
 
   Interval ranges[N];
-  for (std::size_t i = 0; i < N; ++i)
+  Tri truth[N];
+  // A precondition failed below this node under an undecidable guard. Explicit
+  // rather than a NaN range: `std::min(2.0, NaN)` is `2.0`, laundering it away.
+  bool poisoned[N];
+  for (std::size_t i = 0; i < N; ++i) {
     ranges[i] = detail_cont::failed();
+    truth[i] = Tri::Unknown;
+    poisoned[i] = false;
+  }
 
   template for (constexpr auto n : nodes) {
     // n is constexpr, so n.op / n.a / n.b / n.self are all constexpr.
     // ranges[] is a runtime array (within consteval): reads/writes are fine.
-    constexpr bool has_a = n.op != OpKind::Input && n.op != OpKind::Const;
-    constexpr bool has_b = n.op == OpKind::Add || n.op == OpKind::Sub ||
-                           n.op == OpKind::Mul || n.op == OpKind::Div;
 
-    Interval a = has_a ? ranges[n.a] : detail_cont::failed();
-    Interval b = has_b ? ranges[n.b] : detail_cont::failed();
+    // Guard first: branch nodes precede their Select, so otherwise a
+    // provably-untaken branch is checked as if it ran.
+    Tri guard = Tri::True;
+    if constexpr (n.guard != UNGUARDED)
+      guard = truth[n.guard];
 
-    if constexpr (n.op == OpKind::Input) {
-      if constexpr (n.self >= P)
-        return {false, static_cast<int>(n.self), OpKind::Input};
-      ranges[n.self] = input_bounds[n.self];
-
-    } else if constexpr (n.op == OpKind::Const) {
-      // Splice the literal value to get a tight point interval.
-      // This mirrors how autograd.h evaluators use `[: n.leaf :]`.
-      constexpr double v = static_cast<double>([:n.leaf:]);
-      ranges[n.self] = {v, v};
-
-    } else if constexpr (n.op == OpKind::Output) {
-      ranges[n.self] = ranges[n.a];
-
-    } else if constexpr (n.op == OpKind::Add) {
-      ranges[n.self] = detail_cont::add(a, b);
-
-    } else if constexpr (n.op == OpKind::Sub) {
-      ranges[n.self] = detail_cont::sub(a, b);
-
-    } else if constexpr (n.op == OpKind::Mul) {
-      ranges[n.self] = detail_cont::mul(a, b);
-
-    } else if constexpr (n.op == OpKind::Div) {
-      if (b.contains_zero())
-        return {false, static_cast<int>(n.self), OpKind::Div};
-      ranges[n.self] = detail_cont::div(a, b);
-
-    } else if constexpr (n.op == OpKind::Neg) {
-      ranges[n.self] = detail_cont::neg(a);
-
-    } else if constexpr (n.op == OpKind::Sin) {
-      ranges[n.self] = detail_cont::sin_range(a);
-
-    } else if constexpr (n.op == OpKind::Cos) {
-      ranges[n.self] = detail_cont::cos_range(a);
-
-    } else if constexpr (n.op == OpKind::Exp) {
-      ranges[n.self] = detail_cont::exp_range(a);
-
-    } else if constexpr (n.op == OpKind::Log) {
-      if (!a.strictly_positive())
-        return {false, static_cast<int>(n.self), OpKind::Log};
-      ranges[n.self] = detail_cont::log_range(a);
-
-    } else if constexpr (n.op == OpKind::Sqrt) {
-      if (!a.non_negative())
-        return {false, static_cast<int>(n.self), OpKind::Sqrt};
-      ranges[n.self] = detail_cont::sqrt_range(a);
-
-    } else if constexpr (n.op == OpKind::Erfc) {
-      ranges[n.self] = detail_cont::erfc_range(a);
+    if (guard == Tri::False) {
+      // Unreachable. False (not Unknown) propagates deadness into nested guards.
+      ranges[n.self] = detail_cont::failed();
+      truth[n.self] = Tri::False;
+      poisoned[n.self] = false;   // never read: nothing live consumes a dead node
 
     } else {
-      // Tensor ops or any unrecognised op: not supported yet.
-      return {false, static_cast<int>(n.self), n.op};
+      // Only a node we can prove runs has its preconditions enforced; under an
+      // undecidable guard, poison it instead and let the Select report.
+      const bool certainly_runs = (guard == Tri::True);
+
+      // Inherited; the decision points (comparisons, Select, Output) refuse it.
+      const bool operand_poisoned =
+          (op_has_a(n.op) && poisoned[n.a]) ||
+          (op_has_b(n.op) && poisoned[n.b]) ||
+          (op_has_cond(n.op) && poisoned[n.cond]);
+      poisoned[n.self] = operand_poisoned;
+
+      Interval a = op_has_a(n.op) ? ranges[n.a] : detail_cont::failed();
+      Interval b = op_has_b(n.op) ? ranges[n.b] : detail_cont::failed();
+
+      if constexpr (n.op == OpKind::Input) {
+        if constexpr (n.self >= P)
+          return {false, static_cast<int>(n.self), OpKind::Input};
+        ranges[n.self] = input_bounds[n.self];
+
+      } else if constexpr (n.op == OpKind::Const) {
+        // Splice the literal value to get a tight point interval.
+        // This mirrors how autograd.h evaluators use `[: n.leaf :]`.
+        constexpr double v = static_cast<double>([:n.leaf:]);
+        ranges[n.self] = {v, v};
+
+      } else if constexpr (n.op == OpKind::Output) {
+        if (poisoned[n.a])
+          return {false, static_cast<int>(n.self), OpKind::Output};
+        ranges[n.self] = ranges[n.a];
+
+      } else if constexpr (n.op == OpKind::Add) {
+        ranges[n.self] = detail_cont::add(a, b);
+
+      } else if constexpr (n.op == OpKind::Sub) {
+        ranges[n.self] = detail_cont::sub(a, b);
+
+      } else if constexpr (n.op == OpKind::Mul) {
+        ranges[n.self] = detail_cont::mul(a, b);
+
+      } else if constexpr (n.op == OpKind::Div) {
+        if (b.contains_zero()) {
+          if (certainly_runs)
+            return {false, static_cast<int>(n.self), OpKind::Div};
+          ranges[n.self] = detail_cont::failed();
+          poisoned[n.self] = true;
+        } else {
+          ranges[n.self] = detail_cont::div(a, b);
+        }
+
+      } else if constexpr (n.op == OpKind::Neg) {
+        ranges[n.self] = detail_cont::neg(a);
+
+      } else if constexpr (n.op == OpKind::Sin) {
+        ranges[n.self] = detail_cont::sin_range(a);
+
+      } else if constexpr (n.op == OpKind::Cos) {
+        ranges[n.self] = detail_cont::cos_range(a);
+
+      } else if constexpr (n.op == OpKind::Exp) {
+        ranges[n.self] = detail_cont::exp_range(a);
+
+      } else if constexpr (n.op == OpKind::Log) {
+        if (!a.strictly_positive()) {
+          if (certainly_runs)
+            return {false, static_cast<int>(n.self), OpKind::Log};
+          ranges[n.self] = detail_cont::failed();
+          poisoned[n.self] = true;
+        } else {
+          ranges[n.self] = detail_cont::log_range(a);
+        }
+
+      } else if constexpr (n.op == OpKind::Sqrt) {
+        if (!a.non_negative()) {
+          if (certainly_runs)
+            return {false, static_cast<int>(n.self), OpKind::Sqrt};
+          ranges[n.self] = detail_cont::failed();
+          poisoned[n.self] = true;
+        } else {
+          ranges[n.self] = detail_cont::sqrt_range(a);
+        }
+
+      } else if constexpr (n.op == OpKind::Erfc) {
+        ranges[n.self] = detail_cont::erfc_range(a);
+
+      // --- the kinks: continuous everywhere, no precondition ---------------
+      } else if constexpr (n.op == OpKind::Abs) {
+        ranges[n.self] = detail_cont::abs_range(a);
+
+      } else if constexpr (n.op == OpKind::Max) {
+        ranges[n.self] = detail_cont::max_range(a, b);
+
+      } else if constexpr (n.op == OpKind::Min) {
+        ranges[n.self] = detail_cont::min_range(a, b);
+
+      // --- conditions: carry a truth value rather than a useful range ------
+      } else if constexpr (n.op == OpKind::Lt) {
+        truth[n.self] = operand_poisoned ? Tri::Unknown : detail_cont::tri_lt(a, b);
+        ranges[n.self] = {0.0, 1.0};
+
+      } else if constexpr (n.op == OpKind::Le) {
+        truth[n.self] = operand_poisoned ? Tri::Unknown : detail_cont::tri_le(a, b);
+        ranges[n.self] = {0.0, 1.0};
+
+      } else if constexpr (n.op == OpKind::Gt) {
+        truth[n.self] = operand_poisoned ? Tri::Unknown : detail_cont::tri_lt(b, a);
+        ranges[n.self] = {0.0, 1.0};
+
+      } else if constexpr (n.op == OpKind::Ge) {
+        truth[n.self] = operand_poisoned ? Tri::Unknown : detail_cont::tri_le(b, a);
+        ranges[n.self] = {0.0, 1.0};
+
+      } else if constexpr (n.op == OpKind::Eq) {
+        truth[n.self] = operand_poisoned ? Tri::Unknown : detail_cont::tri_eq(a, b);
+        ranges[n.self] = {0.0, 1.0};
+
+      } else if constexpr (n.op == OpKind::Ne) {
+        truth[n.self] = operand_poisoned ? Tri::Unknown : detail_cont::tri_not(detail_cont::tri_eq(a, b));
+        ranges[n.self] = {0.0, 1.0};
+
+      } else if constexpr (n.op == OpKind::And) {
+        truth[n.self] = detail_cont::tri_and(truth[n.a], truth[n.b]);
+        ranges[n.self] = {0.0, 1.0};
+
+      } else if constexpr (n.op == OpKind::Or) {
+        truth[n.self] = detail_cont::tri_or(truth[n.a], truth[n.b]);
+        ranges[n.self] = {0.0, 1.0};
+
+      } else if constexpr (n.op == OpKind::Not) {
+        truth[n.self] = detail_cont::tri_not(truth[n.a]);
+        ranges[n.self] = {0.0, 1.0};
+
+      } else if constexpr (n.op == OpKind::Select) {
+        const Tri cond = truth[n.cond];
+        // Only the live branch's poison counts.
+        if (cond == Tri::True) {
+          if (poisoned[n.a])
+            return {false, static_cast<int>(n.self), OpKind::Select};
+          ranges[n.self] = ranges[n.a];
+          poisoned[n.self] = false;
+        } else if (cond == Tri::False) {
+          if (poisoned[n.b])
+            return {false, static_cast<int>(n.self), OpKind::Select};
+          ranges[n.self] = ranges[n.b];
+          poisoned[n.self] = false;
+        } else
+          // May jump. Incomplete: branches agreeing there are still reported.
+          return {false, static_cast<int>(n.self), OpKind::Select};
+
+      } else {
+        // Tensor ops or any unrecognised op: not supported yet.
+        return {false, static_cast<int>(n.self), n.op};
+      }
     }
   }
 
