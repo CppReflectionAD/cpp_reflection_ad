@@ -15,13 +15,29 @@
 #include "../autograd.h"
 #include "tensor.h"
 
-template <> struct ad::primitive<^^nn::add>       { static constexpr ad::OpKind op = ad::OpKind::Add; };
-template <> struct ad::primitive<^^nn::sub>       { static constexpr ad::OpKind op = ad::OpKind::Sub; };
-template <> struct ad::primitive<^^nn::mul>       { static constexpr ad::OpKind op = ad::OpKind::Mul; };
-template <> struct ad::primitive<^^nn::div>       { static constexpr ad::OpKind op = ad::OpKind::Div; };
-template <> struct ad::primitive<^^nn::matmul>    { static constexpr ad::OpKind op = ad::OpKind::Matmul; };
-template <> struct ad::primitive<^^nn::transpose> { static constexpr ad::OpKind op = ad::OpKind::Transpose; };
-template <> struct ad::primitive<^^nn::sum>       { static constexpr ad::OpKind op = ad::OpKind::Sum; };
-template <> struct ad::primitive<^^nn::relu>      { static constexpr ad::OpKind op = ad::OpKind::Relu; };
+template <> struct ad::primitive<^^nn::add> {
+  static constexpr ad::OpKind op = ad::OpKind::Add;
+};
+template <> struct ad::primitive<^^nn::sub> {
+  static constexpr ad::OpKind op = ad::OpKind::Sub;
+};
+template <> struct ad::primitive<^^nn::mul> {
+  static constexpr ad::OpKind op = ad::OpKind::Mul;
+};
+template <> struct ad::primitive<^^nn::div> {
+  static constexpr ad::OpKind op = ad::OpKind::Div;
+};
+template <> struct ad::primitive<^^nn::matmul> {
+  static constexpr ad::OpKind op = ad::OpKind::Matmul;
+};
+template <> struct ad::primitive<^^nn::transpose> {
+  static constexpr ad::OpKind op = ad::OpKind::Transpose;
+};
+template <> struct ad::primitive<^^nn::sum> {
+  static constexpr ad::OpKind op = ad::OpKind::Sum;
+};
+template <> struct ad::primitive<^^nn::relu> {
+  static constexpr ad::OpKind op = ad::OpKind::Relu;
+};
 
-#endif  // REFLECT_DEMO_TENSOR_RULES_H
+#endif // REFLECT_DEMO_TENSOR_RULES_H

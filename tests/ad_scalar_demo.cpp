@@ -20,11 +20,15 @@
 // matched by callee identity, not by name, so these are ordinary helpers and
 // get inlined -- they must NOT be mistaken for the built-in sin/sum ops.
 namespace myns {
-constexpr double sum(double a, double b) { return a + b; }  // 2 args, unlike primitive Sum (1 arg)
-constexpr double sin(double x)           { return x * x; }  // shadows std::sin's name
-}  // namespace myns
-constexpr double collide_sum(double x, double y) { return myns::sum(x * x, y); }  // d/dx = 2x
-constexpr double collide_sin(double x)           { return myns::sin(x); }        // f' = 2x
+constexpr double sum(double a, double b) {
+  return a + b;
+} // 2 args, unlike primitive Sum (1 arg)
+constexpr double sin(double x) { return x * x; } // shadows std::sin's name
+} // namespace myns
+constexpr double collide_sum(double x, double y) {
+  return myns::sum(x * x, y);
+} // d/dx = 2x
+constexpr double collide_sin(double x) { return myns::sin(x); } // f' = 2x
 
 int main() {
   // forward mode (one directional derivative)
@@ -60,7 +64,8 @@ int main() {
   }
 
   // Activity analysis: d/dy of (x*y + exp(x)) is just x — the exp term is
-  // pruned (no exp call, no x*0); verified as code quality in `make run-bench`.
+  // pruned (no exp call, no x*0); verified as code quality in `make
+  // run-bench`.
   {
     double const x = 0.5, y = 2.0;
     auto const result = ad::forward_derivative<^^two_arg, 1>(x, y);

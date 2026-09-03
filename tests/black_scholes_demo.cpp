@@ -10,7 +10,8 @@ int main() {
   double T = 1.20;
 
   // forward mode: double vs float (quantized), results compared side-by-side
-  // float has ~7 significant decimal digits, so 1e-4 relative tolerance is safe
+  // float has ~7 significant decimal digits, so 1e-4 relative tolerance is
+  // safe
 
   // d/dS
   {
