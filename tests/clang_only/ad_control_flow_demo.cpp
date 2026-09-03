@@ -10,11 +10,11 @@
 // see `guarded_sqrt` below, which is the case that distinguishes this from an
 // eager select.
 
-#include "test_simple_include.hpp"
+#include "../test_simple_include.hpp"
 
-#include "autograd.h"
+#include "../autograd.h"
 
-#include "functions/6-piecewise.h"
+#include "../functions/6-piecewise.h"
 
 #include <algorithm>
 #include <cmath>
