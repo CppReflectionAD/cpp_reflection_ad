@@ -944,9 +944,9 @@ consteval std::vector<std::size_t> calculateTaylorCoefficients(DAGBuilder &build
           coefficients[0] = s;
           // Need to divide by a0^n for the nth term, so calculate powers.
           std::vector<std::size_t> powers = builder.pow_slots(a0, order);
-          double coefficient = -1.0;
+          double coefficient = 1.0;
           for (std::size_t m = 1; m <= order; ++m) {
-              coefficient *= -0.5 * static_cast<double>(3 - 2*m) / static_cast<double>(m);
+              coefficient *= -0.5 * static_cast<double>(2.0*m - 3.0) / static_cast<double>(m);
               coefficients[m] = builder.emit_scaling_node(builder.emit_division_node(s, powers[m]), coefficient);
           }
           break;
