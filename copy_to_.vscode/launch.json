@@ -7,8 +7,16 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "lldb",
+            "name": "lldb cmake",
             "program": "${command:cmake.launchTargetPath}",
+            "args": [],
+            "cwd": "${command:cmake.launchTargetDirectory}",
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "lldb test",
+            "program": "${cmake.testProgram}",
             "args": [],
             "cwd": "${command:cmake.launchTargetDirectory}",
         },
