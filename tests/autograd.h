@@ -346,6 +346,7 @@ consteval std::size_t lower(Ctx &c, info e) {
     return emit(c, op, a, b);
   }
 
+#if defined(__clang__)
   if (m::is_conditional_operator(e)) {
     // Each branch is lowered under a narrower guard, so its nodes exist in
     // the DAG but only evaluate when that branch is taken -- in all sweeps.
@@ -363,6 +364,7 @@ consteval std::size_t lower(Ctx &c, info e) {
     c.curGuard = outer;
     return emit(c, OpKind::Select, whenTrue, whenFalse, ^^int, p);
   }
+#endif // __clang__
 
   if (m::is_function_call(e)) {
     // operands_of(call) = [callee, arg0, arg1, ...].
@@ -1186,170 +1188,6 @@ consteval void prune_reachable(std::vector<Node> &ns) {
     n.nself = need[n.self];
 }
 
-// The value rule for one node, shared by all three sweeps so adding an op is a
-// one-place change. `nself`: a value no emitted derivative reads is skipped.
-template <Node N, typename T>
-constexpr void eval_primal(T *val, const T *in) {
-  if constexpr (N.nself) {
-    // A guarded node belongs to a branch; skip it unless that branch is taken.
-    if constexpr (N.guard != UNGUARDED) {
-      if (!(val[N.guard] != T{0}))
-        return;
-    }
-    if constexpr (N.op == OpKind::Input)       val[N.self] = in[N.self];
-    else if constexpr (N.op == OpKind::Const)  val[N.self] = static_cast<T>([: N.leaf :]);
-    else if constexpr (N.op == OpKind::Output) val[N.self] = val[N.a];
-    else if constexpr (N.op == OpKind::Add)    val[N.self] = val[N.a] + val[N.b];
-    else if constexpr (N.op == OpKind::Sub)    val[N.self] = val[N.a] - val[N.b];
-    else if constexpr (N.op == OpKind::Mul)    val[N.self] = val[N.a] * val[N.b];
-    else if constexpr (N.op == OpKind::Div)    val[N.self] = val[N.a] / val[N.b];
-    else if constexpr (N.op == OpKind::Neg)    val[N.self] = -val[N.a];
-    else if constexpr (N.op == OpKind::Sin)    val[N.self] = std::sin(val[N.a]);
-    else if constexpr (N.op == OpKind::Cos)    val[N.self] = std::cos(val[N.a]);
-    else if constexpr (N.op == OpKind::Exp)    val[N.self] = std::exp(val[N.a]);
-    else if constexpr (N.op == OpKind::Log)    val[N.self] = std::log(val[N.a]);
-    else if constexpr (N.op == OpKind::Sqrt)   val[N.self] = std::sqrt(val[N.a]);
-    else if constexpr (N.op == OpKind::Erfc)   val[N.self] = std::erfc(val[N.a]);
-    else if constexpr (N.op == OpKind::Lt)     val[N.self] = (val[N.a] <  val[N.b]) ? T{1} : T{0};
-    else if constexpr (N.op == OpKind::Le)     val[N.self] = (val[N.a] <= val[N.b]) ? T{1} : T{0};
-    else if constexpr (N.op == OpKind::Gt)     val[N.self] = (val[N.a] >  val[N.b]) ? T{1} : T{0};
-    else if constexpr (N.op == OpKind::Ge)     val[N.self] = (val[N.a] >= val[N.b]) ? T{1} : T{0};
-    else if constexpr (N.op == OpKind::Eq)     val[N.self] = (val[N.a] == val[N.b]) ? T{1} : T{0};
-    else if constexpr (N.op == OpKind::Ne)     val[N.self] = (val[N.a] != val[N.b]) ? T{1} : T{0};
-    else if constexpr (N.op == OpKind::Not)    val[N.self] = (val[N.a] != T{0}) ? T{0} : T{1};
-    // Reads val[b] only when val[a] leaves it undecided -- exactly when the
-    // right operand was lowered as reachable, so its slot is written.
-    else if constexpr (N.op == OpKind::And)
-      val[N.self] = (val[N.a] != T{0} && val[N.b] != T{0}) ? T{1} : T{0};
-    else if constexpr (N.op == OpKind::Or)
-      val[N.self] = (val[N.a] != T{0} || val[N.b] != T{0}) ? T{1} : T{0};
-    // Select likewise reads only the branch it takes.
-    else if constexpr (N.op == OpKind::Select)
-      val[N.self] = (val[N.cond] != T{0}) ? val[N.a] : val[N.b];
-    else if constexpr (N.op == OpKind::Abs)
-      val[N.self] = (val[N.a] < T{0}) ? -val[N.a] : val[N.a];
-    else if constexpr (N.op == OpKind::Max)
-      val[N.self] = (val[N.a] < val[N.b]) ? val[N.b] : val[N.a];
-    else if constexpr (N.op == OpKind::Min)
-      val[N.self] = (val[N.b] < val[N.a]) ? val[N.b] : val[N.a];
-  }
-}
-
-// Forward-mode tangent for one node, guarded like the primal so an untaken
-// branch contributes no tangent work.
-template <Node N, typename T, std::size_t Wrt>
-constexpr void eval_tangent(T *tang, const T *val) {
-  if constexpr (N.op == OpKind::Input) {
-    tang[N.self] = (N.self == Wrt) ? T{1} : T{0};
-  } else if constexpr (!N.vself) {
-    tang[N.self] = T{0};   // not varied (includes Const and every predicate)
-  } else {
-    if constexpr (N.guard != UNGUARDED) {
-      if (!(val[N.guard] != T{0}))
-        return;
-    }
-    if constexpr (N.op == OpKind::Output)    tang[N.self] = tang[N.a];
-    else if constexpr (N.op == OpKind::Neg)  tang[N.self] = -tang[N.a];
-    else if constexpr (N.op == OpKind::Sin)  tang[N.self] = std::cos(val[N.a]) * tang[N.a];
-    else if constexpr (N.op == OpKind::Cos)  tang[N.self] = -std::sin(val[N.a]) * tang[N.a];
-    else if constexpr (N.op == OpKind::Exp)  tang[N.self] = val[N.self] * tang[N.a];
-    else if constexpr (N.op == OpKind::Log)  tang[N.self] = tang[N.a] / val[N.a];
-    else if constexpr (N.op == OpKind::Sqrt) tang[N.self] = tang[N.a] / (T{2} * val[N.self]);
-    else if constexpr (N.op == OpKind::Erfc)
-      tang[N.self] = tang[N.a] * -1 * two_over_root_pi * (std::exp(-1 * (val[N.a] * val[N.a])));
-    else if constexpr (N.op == OpKind::Add) {
-      if constexpr (N.va && N.vb) tang[N.self] = tang[N.a] + tang[N.b];
-      else if constexpr (N.va)    tang[N.self] = tang[N.a];
-      else                        tang[N.self] = tang[N.b];
-    } else if constexpr (N.op == OpKind::Sub) {
-      if constexpr (N.va && N.vb) tang[N.self] = tang[N.a] - tang[N.b];
-      else if constexpr (N.va)    tang[N.self] = tang[N.a];
-      else                        tang[N.self] = -tang[N.b];
-    } else if constexpr (N.op == OpKind::Mul) {
-      if constexpr (N.va && N.vb) tang[N.self] = tang[N.a] * val[N.b] + val[N.a] * tang[N.b];
-      else if constexpr (N.va)    tang[N.self] = tang[N.a] * val[N.b];
-      else                        tang[N.self] = val[N.a] * tang[N.b];
-    } else if constexpr (N.op == OpKind::Div) {
-      if constexpr (N.va && N.vb)
-        tang[N.self] = (tang[N.a] * val[N.b] - val[N.a] * tang[N.b]) / (val[N.b] * val[N.b]);
-      else if constexpr (N.va)    tang[N.self] = tang[N.a] / val[N.b];
-      else                        tang[N.self] = -val[N.a] * tang[N.b] / (val[N.b] * val[N.b]);
-    } else if constexpr (N.op == OpKind::Select) {
-      if constexpr (N.va && N.vb) tang[N.self] = (val[N.cond] != T{0}) ? tang[N.a] : tang[N.b];
-      else if constexpr (N.va)    tang[N.self] = (val[N.cond] != T{0}) ? tang[N.a] : T{0};
-      else                        tang[N.self] = (val[N.cond] != T{0}) ? T{0} : tang[N.b];
-    } else if constexpr (N.op == OpKind::Abs) {
-      tang[N.self] = (val[N.a] < T{0}) ? -tang[N.a] : tang[N.a];
-    } else if constexpr (N.op == OpKind::Max || N.op == OpKind::Min) {
-      // Both pass one operand through; they differ only in which way round.
-      const bool takes_b = (N.op == OpKind::Max) ? (val[N.a] < val[N.b])
-                                                : (val[N.b] < val[N.a]);
-      if constexpr (N.va && N.vb) tang[N.self] = takes_b ? tang[N.b] : tang[N.a];
-      else if constexpr (N.va)    tang[N.self] = takes_b ? T{0} : tang[N.a];
-      else                        tang[N.self] = takes_b ? tang[N.b] : T{0};
-    } else {
-      tang[N.self] = T{0};   // any unhandled op
-    }
-  }
-}
-
-// Reverse mode: push this node's adjoint to its operands via the local VJP.
-// Varied operands only (others are a wasted `+= ... * 0`), guard permitting.
-template <Node N, typename T>
-constexpr void eval_adjoint(T *adj, const T *val) {
-  // Nothing to push: bail before the guard load, and before Max/Min reads
-  // operand values mark_activity never marked as needed.
-  if constexpr (!N.va && !N.vb)
-    return;
-  else {
-  if constexpr (N.guard != UNGUARDED) {
-    if (!(val[N.guard] != T{0}))
-      return;
-  }
-  if constexpr (N.op == OpKind::Output) {
-    if constexpr (N.va) adj[N.a] += adj[N.self];
-  } else if constexpr (N.op == OpKind::Add) {
-    if constexpr (N.va) adj[N.a] += adj[N.self];
-    if constexpr (N.vb) adj[N.b] += adj[N.self];
-  } else if constexpr (N.op == OpKind::Sub) {
-    if constexpr (N.va) adj[N.a] += adj[N.self];
-    if constexpr (N.vb) adj[N.b] -= adj[N.self];
-  } else if constexpr (N.op == OpKind::Mul) {
-    if constexpr (N.va) adj[N.a] += adj[N.self] * val[N.b];
-    if constexpr (N.vb) adj[N.b] += adj[N.self] * val[N.a];
-  } else if constexpr (N.op == OpKind::Div) {
-    if constexpr (N.va) adj[N.a] += adj[N.self] / val[N.b];
-    if constexpr (N.vb) adj[N.b] -= adj[N.self] * val[N.a] / (val[N.b] * val[N.b]);
-  } else if constexpr (N.op == OpKind::Neg) {
-    if constexpr (N.va) adj[N.a] -= adj[N.self];
-  } else if constexpr (N.op == OpKind::Sin) {
-    if constexpr (N.va) adj[N.a] += adj[N.self] * std::cos(val[N.a]);
-  } else if constexpr (N.op == OpKind::Cos) {
-    if constexpr (N.va) adj[N.a] += -adj[N.self] * std::sin(val[N.a]);
-  } else if constexpr (N.op == OpKind::Exp) {
-    if constexpr (N.va) adj[N.a] += adj[N.self] * val[N.self];
-  } else if constexpr (N.op == OpKind::Log) {
-    if constexpr (N.va) adj[N.a] += adj[N.self] / val[N.a];
-  } else if constexpr (N.op == OpKind::Sqrt) {
-    if constexpr (N.va) adj[N.a] += adj[N.self] / (T{2} * val[N.self]);
-  } else if constexpr (N.op == OpKind::Erfc) {
-    if constexpr (N.va)
-      adj[N.a] += adj[N.self] * -1 * two_over_root_pi * (std::exp(-1 * (val[N.a] * val[N.a])));
-  } else if constexpr (N.op == OpKind::Select) {
-    // The adjoint flows only down the branch that was taken.
-    if constexpr (N.va) { if (val[N.cond] != T{0})    adj[N.a] += adj[N.self]; }
-    if constexpr (N.vb) { if (!(val[N.cond] != T{0})) adj[N.b] += adj[N.self]; }
-  } else if constexpr (N.op == OpKind::Abs) {
-    if constexpr (N.va) adj[N.a] += (val[N.a] < T{0}) ? -adj[N.self] : adj[N.self];
-  } else if constexpr (N.op == OpKind::Max || N.op == OpKind::Min) {
-    const bool takes_b = (N.op == OpKind::Max) ? (val[N.a] < val[N.b])
-                                              : (val[N.b] < val[N.a]);
-    if constexpr (N.va) { if (!takes_b) adj[N.a] += adj[N.self]; }
-    if constexpr (N.vb) { if (takes_b)  adj[N.b] += adj[N.self]; }
-  }
-  }
-}
-
 }  // namespace detail
 
 // Create nodes for a DAG corresponding to the partial derivative of `Fn`,
@@ -1370,7 +1208,49 @@ constexpr double partial_derivative(Args... args) {
   const double in[] = { static_cast<double>(args)... };
   double val[N] = {};
   template for (constexpr auto n : nodes) {
-    detail::eval_primal<n, double>(val, in);
+    if constexpr (n.nself) {
+      // A guarded node belongs to a branch; skip it unless that branch is taken.
+      if constexpr (n.guard != UNGUARDED) {
+        if (!(val[n.guard] != 0.0))
+          continue;
+      }
+      if constexpr (n.op == OpKind::Input)       val[n.self] = in[n.self];
+      else if constexpr (n.op == OpKind::Const)  val[n.self] = static_cast<double>([: n.leaf :]);
+      else if constexpr (n.op == OpKind::Output) val[n.self] = val[n.a];
+      else if constexpr (n.op == OpKind::Add)    val[n.self] = val[n.a] + val[n.b];
+      else if constexpr (n.op == OpKind::Sub)    val[n.self] = val[n.a] - val[n.b];
+      else if constexpr (n.op == OpKind::Mul)    val[n.self] = val[n.a] * val[n.b];
+      else if constexpr (n.op == OpKind::Div)    val[n.self] = val[n.a] / val[n.b];
+      else if constexpr (n.op == OpKind::Neg)    val[n.self] = -val[n.a];
+      else if constexpr (n.op == OpKind::Sin)    val[n.self] = std::sin(val[n.a]);
+      else if constexpr (n.op == OpKind::Cos)    val[n.self] = std::cos(val[n.a]);
+      else if constexpr (n.op == OpKind::Exp)    val[n.self] = std::exp(val[n.a]);
+      else if constexpr (n.op == OpKind::Log)    val[n.self] = std::log(val[n.a]);
+      else if constexpr (n.op == OpKind::Sqrt)   val[n.self] = std::sqrt(val[n.a]);
+      else if constexpr (n.op == OpKind::Erfc)   val[n.self] = std::erfc(val[n.a]);
+      else if constexpr (n.op == OpKind::Lt)     val[n.self] = (val[n.a] <  val[n.b]) ? 1.0: 0.0;
+      else if constexpr (n.op == OpKind::Le)     val[n.self] = (val[n.a] <= val[n.b]) ? 1.0: 0.0;
+      else if constexpr (n.op == OpKind::Gt)     val[n.self] = (val[n.a] >  val[n.b]) ? 1.0: 0.0;
+      else if constexpr (n.op == OpKind::Ge)     val[n.self] = (val[n.a] >= val[n.b]) ? 1.0: 0.0;
+      else if constexpr (n.op == OpKind::Eq)     val[n.self] = (val[n.a] == val[n.b]) ? 1.0: 0.0;
+      else if constexpr (n.op == OpKind::Ne)     val[n.self] = (val[n.a] != val[n.b]) ? 1.0: 0.0;
+      else if constexpr (n.op == OpKind::Not)    val[n.self] = (val[n.a] != 0.0) ? 0.0: 1.0;
+      // Reads val[b] only when val[a] leaves it undecided -- exactly when the
+      // right operand was lowered as reachable, so its slot is written.
+      else if constexpr (n.op == OpKind::And)
+        val[n.self] = (val[n.a] != 0.0 && val[n.b] != 0.0) ? 1.0: 0.0;
+      else if constexpr (n.op == OpKind::Or)
+        val[n.self] = (val[n.a] != 0.0 || val[n.b] != 0.0) ? 1.0: 0.0;
+      // Select likewise reads only the branch it takes.
+      else if constexpr (n.op == OpKind::Select)
+        val[n.self] = (val[n.cond] != 0.0) ? val[n.a] : val[n.b];
+      else if constexpr (n.op == OpKind::Abs)
+        val[n.self] = (val[n.a] < 0.0) ? -val[n.a] : val[n.a];
+      else if constexpr (n.op == OpKind::Max)
+        val[n.self] = (val[n.a] < val[n.b]) ? val[n.b] : val[n.a];
+      else if constexpr (n.op == OpKind::Min)
+        val[n.self] = (val[n.b] < val[n.a]) ? val[n.b] : val[n.a];
+    }
   }
   return val[N - 1];
 }
@@ -1388,11 +1268,104 @@ constexpr T forward_derivative(Args... args) {
 
   template for (constexpr auto n : nodes) {
     // Primal (only where the value is actually read by a derivative).
-    detail::eval_primal<n, T>(val, in);
+    if constexpr (n.nself) {
+      // A guarded node belongs to a branch; skip it unless that branch is taken.
+      if constexpr (n.guard != UNGUARDED) {
+        if (!(val[n.guard] != T{0}))
+          continue;
+      }
+      if constexpr (n.op == OpKind::Input)       val[n.self] = in[n.self];
+      else if constexpr (n.op == OpKind::Const)  val[n.self] = static_cast<T>([: n.leaf :]);
+      else if constexpr (n.op == OpKind::Output) val[n.self] = val[n.a];
+      else if constexpr (n.op == OpKind::Add)    val[n.self] = val[n.a] + val[n.b];
+      else if constexpr (n.op == OpKind::Sub)    val[n.self] = val[n.a] - val[n.b];
+      else if constexpr (n.op == OpKind::Mul)    val[n.self] = val[n.a] * val[n.b];
+      else if constexpr (n.op == OpKind::Div)    val[n.self] = val[n.a] / val[n.b];
+      else if constexpr (n.op == OpKind::Neg)    val[n.self] = -val[n.a];
+      else if constexpr (n.op == OpKind::Sin)    val[n.self] = std::sin(val[n.a]);
+      else if constexpr (n.op == OpKind::Cos)    val[n.self] = std::cos(val[n.a]);
+      else if constexpr (n.op == OpKind::Exp)    val[n.self] = std::exp(val[n.a]);
+      else if constexpr (n.op == OpKind::Log)    val[n.self] = std::log(val[n.a]);
+      else if constexpr (n.op == OpKind::Sqrt)   val[n.self] = std::sqrt(val[n.a]);
+      else if constexpr (n.op == OpKind::Erfc)   val[n.self] = std::erfc(val[n.a]);
+      else if constexpr (n.op == OpKind::Lt)     val[n.self] = (val[n.a] <  val[n.b]) ? T{1} : T{0};
+      else if constexpr (n.op == OpKind::Le)     val[n.self] = (val[n.a] <= val[n.b]) ? T{1} : T{0};
+      else if constexpr (n.op == OpKind::Gt)     val[n.self] = (val[n.a] >  val[n.b]) ? T{1} : T{0};
+      else if constexpr (n.op == OpKind::Ge)     val[n.self] = (val[n.a] >= val[n.b]) ? T{1} : T{0};
+      else if constexpr (n.op == OpKind::Eq)     val[n.self] = (val[n.a] == val[n.b]) ? T{1} : T{0};
+      else if constexpr (n.op == OpKind::Ne)     val[n.self] = (val[n.a] != val[n.b]) ? T{1} : T{0};
+      else if constexpr (n.op == OpKind::Not)    val[n.self] = (val[n.a] != T{0}) ? T{0} : T{1};
+      // Reads val[b] only when val[a] leaves it undecided -- exactly when the
+      // right operand was lowered as reachable, so its slot is written.
+      else if constexpr (n.op == OpKind::And)
+        val[n.self] = (val[n.a] != T{0} && val[n.b] != T{0}) ? T{1} : T{0};
+      else if constexpr (n.op == OpKind::Or)
+        val[n.self] = (val[n.a] != T{0} || val[n.b] != T{0}) ? T{1} : T{0};
+      // Select likewise reads only the branch it takes.
+      else if constexpr (n.op == OpKind::Select)
+        val[n.self] = (val[n.cond] != T{0}) ? val[n.a] : val[n.b];
+      else if constexpr (n.op == OpKind::Abs)
+        val[n.self] = (val[n.a] < T{0}) ? -val[n.a] : val[n.a];
+      else if constexpr (n.op == OpKind::Max)
+        val[n.self] = (val[n.a] < val[n.b]) ? val[n.b] : val[n.a];
+      else if constexpr (n.op == OpKind::Min)
+        val[n.self] = (val[n.b] < val[n.a]) ? val[n.b] : val[n.a];
+    }
 
     // Tangent (activity-gated: a non-varied operand contributes a zero term,
     // which is dropped instead of emitted as `... * 0`).
-    detail::eval_tangent<n, T, Wrt>(tang, val);
+    if constexpr (n.op == OpKind::Input) {
+      tang[n.self] = (n.self == Wrt) ? T{1} : T{0};
+    } else if constexpr (!n.vself) {
+      tang[n.self] = T{0};   // not varied (includes Const and every predicate)
+    } else {
+      if constexpr (n.guard != UNGUARDED) {
+        if (!(val[n.guard] != T{0}))
+          continue;
+      }
+      if constexpr (n.op == OpKind::Output)    tang[n.self] = tang[n.a];
+      else if constexpr (n.op == OpKind::Neg)  tang[n.self] = -tang[n.a];
+      else if constexpr (n.op == OpKind::Sin)  tang[n.self] = std::cos(val[n.a]) * tang[n.a];
+      else if constexpr (n.op == OpKind::Cos)  tang[n.self] = -std::sin(val[n.a]) * tang[n.a];
+      else if constexpr (n.op == OpKind::Exp)  tang[n.self] = val[n.self] * tang[n.a];
+      else if constexpr (n.op == OpKind::Log)  tang[n.self] = tang[n.a] / val[n.a];
+      else if constexpr (n.op == OpKind::Sqrt) tang[n.self] = tang[n.a] / (T{2} * val[n.self]);
+      else if constexpr (n.op == OpKind::Erfc)
+        tang[n.self] = tang[n.a] * -1 * two_over_root_pi * (std::exp(-1 * (val[n.a] * val[n.a])));
+      else if constexpr (n.op == OpKind::Add) {
+        if constexpr (n.va && n.vb) tang[n.self] = tang[n.a] + tang[n.b];
+        else if constexpr (n.va)    tang[n.self] = tang[n.a];
+        else                        tang[n.self] = tang[n.b];
+      } else if constexpr (n.op == OpKind::Sub) {
+        if constexpr (n.va && n.vb) tang[n.self] = tang[n.a] - tang[n.b];
+        else if constexpr (n.va)    tang[n.self] = tang[n.a];
+        else                        tang[n.self] = -tang[n.b];
+      } else if constexpr (n.op == OpKind::Mul) {
+        if constexpr (n.va && n.vb) tang[n.self] = tang[n.a] * val[n.b] + val[n.a] * tang[n.b];
+        else if constexpr (n.va)    tang[n.self] = tang[n.a] * val[n.b];
+        else                        tang[n.self] = val[n.a] * tang[n.b];
+      } else if constexpr (n.op == OpKind::Div) {
+        if constexpr (n.va && n.vb)
+          tang[n.self] = (tang[n.a] * val[n.b] - val[n.a] * tang[n.b]) / (val[n.b] * val[n.b]);
+        else if constexpr (n.va)    tang[n.self] = tang[n.a] / val[n.b];
+        else                        tang[n.self] = -val[n.a] * tang[n.b] / (val[n.b] * val[n.b]);
+      } else if constexpr (n.op == OpKind::Select) {
+        if constexpr (n.va && n.vb) tang[n.self] = (val[n.cond] != T{0}) ? tang[n.a] : tang[n.b];
+        else if constexpr (n.va)    tang[n.self] = (val[n.cond] != T{0}) ? tang[n.a] : T{0};
+        else                        tang[n.self] = (val[n.cond] != T{0}) ? T{0} : tang[n.b];
+      } else if constexpr (n.op == OpKind::Abs) {
+        tang[n.self] = (val[n.a] < T{0}) ? -tang[n.a] : tang[n.a];
+      } else if constexpr (n.op == OpKind::Max || n.op == OpKind::Min) {
+        // Both pass one operand through; they differ only in which way round.
+        const bool takes_b = (n.op == OpKind::Max) ? (val[n.a] < val[n.b])
+                                                  : (val[n.b] < val[n.a]);
+        if constexpr (n.va && n.vb) tang[n.self] = takes_b ? tang[n.b] : tang[n.a];
+        else if constexpr (n.va)    tang[n.self] = takes_b ? T{0} : tang[n.a];
+        else                        tang[n.self] = takes_b ? tang[n.b] : T{0};
+      } else {
+        tang[n.self] = T{0};   // any unhandled op
+      }
+    }
   }
 
   return tang[N - 1];
@@ -1428,14 +1401,102 @@ constexpr std::array<T, sizeof...(Args)> gradient_reverse(Args... args) {
 
   // Forward (primal) sweep: compute the values the adjoint rules will read.
   template for (constexpr auto n : nodes) {
-    detail::eval_primal<n, T>(val, in);
+    if constexpr (n.nself) {
+      // A guarded node belongs to a branch; skip it unless that branch is taken.
+      if constexpr (n.guard != UNGUARDED) {
+        if (!(val[n.guard] != T{0}))
+          continue;
+      }
+      if constexpr (n.op == OpKind::Input)       val[n.self] = in[n.self];
+      else if constexpr (n.op == OpKind::Const)  val[n.self] = static_cast<T>([: n.leaf :]);
+      else if constexpr (n.op == OpKind::Output) val[n.self] = val[n.a];
+      else if constexpr (n.op == OpKind::Add)    val[n.self] = val[n.a] + val[n.b];
+      else if constexpr (n.op == OpKind::Sub)    val[n.self] = val[n.a] - val[n.b];
+      else if constexpr (n.op == OpKind::Mul)    val[n.self] = val[n.a] * val[n.b];
+      else if constexpr (n.op == OpKind::Div)    val[n.self] = val[n.a] / val[n.b];
+      else if constexpr (n.op == OpKind::Neg)    val[n.self] = -val[n.a];
+      else if constexpr (n.op == OpKind::Sin)    val[n.self] = std::sin(val[n.a]);
+      else if constexpr (n.op == OpKind::Cos)    val[n.self] = std::cos(val[n.a]);
+      else if constexpr (n.op == OpKind::Exp)    val[n.self] = std::exp(val[n.a]);
+      else if constexpr (n.op == OpKind::Log)    val[n.self] = std::log(val[n.a]);
+      else if constexpr (n.op == OpKind::Sqrt)   val[n.self] = std::sqrt(val[n.a]);
+      else if constexpr (n.op == OpKind::Erfc)   val[n.self] = std::erfc(val[n.a]);
+      else if constexpr (n.op == OpKind::Lt)     val[n.self] = (val[n.a] <  val[n.b]) ? T{1} : T{0};
+      else if constexpr (n.op == OpKind::Le)     val[n.self] = (val[n.a] <= val[n.b]) ? T{1} : T{0};
+      else if constexpr (n.op == OpKind::Gt)     val[n.self] = (val[n.a] >  val[n.b]) ? T{1} : T{0};
+      else if constexpr (n.op == OpKind::Ge)     val[n.self] = (val[n.a] >= val[n.b]) ? T{1} : T{0};
+      else if constexpr (n.op == OpKind::Eq)     val[n.self] = (val[n.a] == val[n.b]) ? T{1} : T{0};
+      else if constexpr (n.op == OpKind::Ne)     val[n.self] = (val[n.a] != val[n.b]) ? T{1} : T{0};
+      else if constexpr (n.op == OpKind::Not)    val[n.self] = (val[n.a] != T{0}) ? T{0} : T{1};
+      // Reads val[b] only when val[a] leaves it undecided -- exactly when the
+      // right operand was lowered as reachable, so its slot is written.
+      else if constexpr (n.op == OpKind::And)
+        val[n.self] = (val[n.a] != T{0} && val[n.b] != T{0}) ? T{1} : T{0};
+      else if constexpr (n.op == OpKind::Or)
+        val[n.self] = (val[n.a] != T{0} || val[n.b] != T{0}) ? T{1} : T{0};
+      // Select likewise reads only the branch it takes.
+      else if constexpr (n.op == OpKind::Select)
+        val[n.self] = (val[n.cond] != T{0}) ? val[n.a] : val[n.b];
+      else if constexpr (n.op == OpKind::Abs)
+        val[n.self] = (val[n.a] < T{0}) ? -val[n.a] : val[n.a];
+      else if constexpr (n.op == OpKind::Max)
+        val[n.self] = (val[n.a] < val[n.b]) ? val[n.b] : val[n.a];
+      else if constexpr (n.op == OpKind::Min)
+        val[n.self] = (val[n.b] < val[n.a]) ? val[n.b] : val[n.a];
+    }
   }
 
   // Seed the output adjoint, then sweep the DAG in reverse, pushing each node's
   // adjoint to its operands via the local VJP (accumulating with +=).
   adj[N - 1] = T{1};
   template for (constexpr auto n : rnodes) {
-    detail::eval_adjoint<n, T>(adj, val);
+    if constexpr (n.va || n.vb) {
+      if constexpr (n.guard != UNGUARDED) {
+        if (!(val[n.guard] != T{0}))
+          continue;
+      }
+      if constexpr (n.op == OpKind::Output) {
+        if constexpr (n.va) adj[n.a] += adj[n.self];
+      } else if constexpr (n.op == OpKind::Add) {
+        if constexpr (n.va) adj[n.a] += adj[n.self];
+        if constexpr (n.vb) adj[n.b] += adj[n.self];
+      } else if constexpr (n.op == OpKind::Sub) {
+        if constexpr (n.va) adj[n.a] += adj[n.self];
+        if constexpr (n.vb) adj[n.b] -= adj[n.self];
+      } else if constexpr (n.op == OpKind::Mul) {
+        if constexpr (n.va) adj[n.a] += adj[n.self] * val[n.b];
+        if constexpr (n.vb) adj[n.b] += adj[n.self] * val[n.a];
+      } else if constexpr (n.op == OpKind::Div) {
+        if constexpr (n.va) adj[n.a] += adj[n.self] / val[n.b];
+        if constexpr (n.vb) adj[n.b] -= adj[n.self] * val[n.a] / (val[n.b] * val[n.b]);
+      } else if constexpr (n.op == OpKind::Neg) {
+        if constexpr (n.va) adj[n.a] -= adj[n.self];
+      } else if constexpr (n.op == OpKind::Sin) {
+        if constexpr (n.va) adj[n.a] += adj[n.self] * std::cos(val[n.a]);
+      } else if constexpr (n.op == OpKind::Cos) {
+        if constexpr (n.va) adj[n.a] += -adj[n.self] * std::sin(val[n.a]);
+      } else if constexpr (n.op == OpKind::Exp) {
+        if constexpr (n.va) adj[n.a] += adj[n.self] * val[n.self];
+      } else if constexpr (n.op == OpKind::Log) {
+        if constexpr (n.va) adj[n.a] += adj[n.self] / val[n.a];
+      } else if constexpr (n.op == OpKind::Sqrt) {
+        if constexpr (n.va) adj[n.a] += adj[n.self] / (T{2} * val[n.self]);
+      } else if constexpr (n.op == OpKind::Erfc) {
+        if constexpr (n.va)
+          adj[n.a] += adj[n.self] * -1 * two_over_root_pi * (std::exp(-1 * (val[n.a] * val[n.a])));
+      } else if constexpr (n.op == OpKind::Select) {
+        // The adjoint flows only down the branch that was taken.
+        if constexpr (n.va) { if (val[n.cond] != T{0})    adj[n.a] += adj[n.self]; }
+        if constexpr (n.vb) { if (!(val[n.cond] != T{0})) adj[n.b] += adj[n.self]; }
+      } else if constexpr (n.op == OpKind::Abs) {
+        if constexpr (n.va) adj[n.a] += (val[n.a] < T{0}) ? -adj[n.self] : adj[n.self];
+      } else if constexpr (n.op == OpKind::Max || n.op == OpKind::Min) {
+        const bool takes_b = (n.op == OpKind::Max) ? (val[n.a] < val[n.b])
+                                                  : (val[n.b] < val[n.a]);
+        if constexpr (n.va) { if (!takes_b) adj[n.a] += adj[n.self]; }
+        if constexpr (n.vb) { if (takes_b)  adj[n.b] += adj[n.self]; }
+      }
+    }
   }
 
   // Input k's accumulated adjoint is the k-th partial derivative.

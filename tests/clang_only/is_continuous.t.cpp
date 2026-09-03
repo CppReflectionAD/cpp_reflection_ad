@@ -1,12 +1,12 @@
 #include "is_continuous.hpp"
-#include "test_simple_include.hpp"
+#include "../test_simple_include.hpp"
 
-#include "functions/1-poly.h"
-#include "functions/2-trig.h"
-#include "functions/3-two_arg.h"
-#include "functions/4-shared_intemediate.h"
-#include "functions/5-black_scholes.h"
-#include "functions/6-piecewise.h"
+#include "../functions/1-poly.h"
+#include "../functions/2-trig.h"
+#include "../functions/3-two_arg.h"
+#include "../functions/4-shared_intemediate.h"
+#include "../functions/5-black_scholes.h"
+#include "../functions/6-piecewise.h"
 
 #include <cmath>
 

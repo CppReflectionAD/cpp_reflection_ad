@@ -1,5 +1,4 @@
 {
     "cmake.buildDirectory": "${workspaceFolder}/build/cmake",
-    "cmakeExplorer.debugConfig": "lldb",
-    "lldb.displayFormat": "auto"
+    "cmake.ctest.debugLaunchTarget": "lldb test"
 }
