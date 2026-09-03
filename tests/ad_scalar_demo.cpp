@@ -13,6 +13,7 @@
 #include "functions/2-trig.h"
 #include "functions/3-two_arg.h"
 #include "functions/4-shared_intemediate.h"
+#include "functions/5-black_scholes.h"
 
 #include <cmath>
 
@@ -110,6 +111,45 @@ int main() {
     EXPECT_NEAR_ABS(der01, der10, 1e-8); // mixed partials commute
     double const der11 = ad::partial_derivative<^^shared, 1, 1>(x, y);
     EXPECT_NEAR_ABS(der11, x * x * (2 * std::cos(p) - p * std::sin(p)), 1e-8);
+  }
+
+  {
+    double S = 104.25;
+    double K = 98.5;
+    double v = 0.22;
+    double T = 1.20;
+
+    // d/dS
+    auto const result_s = ad::partial_derivative<^^call_price, 0>(S, K, v, T);
+    EXPECT_NEAR_ABS(result_s, 0.63904872167822369, 1e-8);
+
+    // d/dK
+    auto const result_k = ad::partial_derivative<^^call_price, 1>(S, K, v, T);
+    EXPECT_NEAR_ABS(result_k, -0.54574545575331679, 1e-8);
+
+    // d/dv
+    auto const result_v = ad::partial_derivative<^^call_price, 2>(S, K, v, T);
+    EXPECT_NEAR_ABS(result_v, 42.763099555399286, 1e-8);
+
+    // d/dT
+    auto const result_d = ad::partial_derivative<^^call_price, 3>(S, K, v, T);
+    EXPECT_NEAR_ABS(result_d, 3.919950792578268, 1e-8);
+
+    // Second/third order greeks.
+    auto const gamma = ad::partial_derivative<^^call_price, 0, 0>(S, K, v, T);
+    EXPECT_NEAR_ABS(gamma, 0.014904352796079870, 1e-8);
+
+    auto const vanna = ad::partial_derivative<^^call_price, 0, 2>(S, K, v, T);
+    EXPECT_NEAR_ABS(vanna, -0.19560176746082423, 1e-8);
+
+    auto const speed =
+        ad::partial_derivative<^^call_price, 0, 0, 0>(S, K, v, T);
+    EXPECT_NEAR_ABS(speed, -0.00035410850313191595, 1e-8);
+
+    // mixed partials commute
+    auto const vanna_swapped =
+        ad::partial_derivative<^^call_price, 2, 0>(S, K, v, T);
+    EXPECT_NEAR_ABS(vanna_swapped, vanna, 1e-8);
   }
 
   // primitive/namespace collisions (inlined, not mistaken for a primitive)
