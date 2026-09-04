@@ -16,6 +16,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 TESTS_DIR = ROOT / "tests"
+BENCHMARKS_DIR = ROOT / "benchmarks"
 BUILD_ROOT = ROOT / "build"
 ARTIFACTS_DIR = BUILD_ROOT / "artifacts"
 CLANG_ONLY_DIR = "clang_only"
@@ -105,7 +106,10 @@ class CompilerSpec:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Build reflection compilers and compile tests under tests/."
+        description=(
+            "Build reflection compilers and compile tests under tests/ "
+            "(or benchmarks under benchmarks/)."
+        )
     )
     parser.add_argument(
         "--compiler",
@@ -128,6 +132,12 @@ def parse_args() -> argparse.Namespace:
         nargs="*",
         metavar="PATTERN",
         help="Optional glob patterns relative to tests/, for example '*.cpp' or 'expr/*.cpp'.",
+    )
+    parser.add_argument(
+        "--benchmarks",
+        nargs="*",
+        metavar="PATTERN",
+        help="Optional glob patterns relative to benchmarks/, for example '*.cpp' or 'expr/*.cpp'.",
     )
     parser.add_argument(
         "--std",
@@ -325,6 +335,20 @@ def selected_compilers(args: argparse.Namespace) -> list[str]:
     return [args.compiler]
 
 
+def selected_sources(args: argparse.Namespace) -> list[tuple[Path, list[str] | None]]:
+    """Source directories to compile from, paired with their glob patterns.
+
+    Tests are the default; --benchmarks on its own switches to benchmarks/, and
+    passing both flags runs both directories.
+    """
+    sources: list[tuple[Path, list[str] | None]] = []
+    if args.tests is not None or args.benchmarks is None:
+        sources.append((TESTS_DIR, args.tests))
+    if args.benchmarks is not None:
+        sources.append((BENCHMARKS_DIR, args.benchmarks))
+    return sources
+
+
 def macos_sdk_path(verbose: bool) -> str:
     """Resolve the active macOS SDK path via xcrun."""
     result = run_command(["xcrun", "--show-sdk-path"], cwd=ROOT, verbose=verbose)
@@ -405,8 +429,8 @@ def build_specs(args: argparse.Namespace) -> dict[str, CompilerSpec]:
     }
 
 
-def is_test_applicable(test_file: Path, compiler_name: str) -> bool:
-    relative_path = test_file.relative_to(TESTS_DIR)
+def is_test_applicable(test_file: Path, base_dir: Path, compiler_name: str) -> bool:
+    relative_path = test_file.relative_to(base_dir)
     if not relative_path.parts:
         return True
 
@@ -418,17 +442,19 @@ def is_test_applicable(test_file: Path, compiler_name: str) -> bool:
     return True
 
 
-def discover_tests(patterns: list[str] | None, compiler_name: str) -> list[Path]:
-    if not TESTS_DIR.is_dir():
-        raise SystemExit(f"Tests directory not found: {TESTS_DIR}")
+def discover_tests(
+    patterns: list[str] | None, base_dir: Path, compiler_name: str
+) -> list[Path]:
+    if not base_dir.is_dir():
+        raise SystemExit(f"Source directory not found: {base_dir}")
 
     if not patterns:
-        candidates = sorted(TESTS_DIR.rglob("*.cpp"))
+        candidates = sorted(base_dir.rglob("*.cpp"))
     else:
         seen: set[Path] = set()
         candidates = []
         for pattern in patterns:
-            for test_file in sorted(TESTS_DIR.glob(pattern)):
+            for test_file in sorted(base_dir.glob(pattern)):
                 if (
                     test_file.is_file()
                     and test_file.suffix == ".cpp"
@@ -440,13 +466,14 @@ def discover_tests(patterns: list[str] | None, compiler_name: str) -> list[Path]
     tests = [
         test_file
         for test_file in candidates
-        if test_file.is_file() and is_test_applicable(test_file, compiler_name)
+        if test_file.is_file() and is_test_applicable(test_file, base_dir, compiler_name)
     ]
 
     if not tests:
         requested = ", ".join(patterns or ["*.cpp"])
         raise SystemExit(
-            f"No test files found for compiler {compiler_name} and pattern(s): {requested}"
+            f"No files found under {base_dir.name}/ for compiler {compiler_name} "
+            f"and pattern(s): {requested}"
         )
     return tests
 
@@ -829,19 +856,25 @@ def validate_compiler_executable(spec: CompilerSpec) -> None:
 def compile_and_maybe_run(
     spec: CompilerSpec,
     test_file: Path,
+    base_dir: Path,
     args: argparse.Namespace,
 ) -> TestResult:
-    compiler_artifacts_dir = ARTIFACTS_DIR / spec.name
+    compiler_artifacts_dir = ARTIFACTS_DIR / spec.name / base_dir.name
     ensure_directory(compiler_artifacts_dir)
 
-    output_name = test_file.relative_to(TESTS_DIR).with_suffix("")
+    output_name = test_file.relative_to(base_dir).with_suffix("")
     output_path = compiler_artifacts_dir / output_name
     ensure_directory(output_path.parent)
+
+    # Benchmarks pull in the shared headers from tests/ (mirrors the include
+    # directories in benchmarks/CMakeLists.txt).
+    include_flags = ["-I", str(TESTS_DIR)] if base_dir == BENCHMARKS_DIR else []
 
     compile_command = [
         str(spec.executable),
         f"-std={args.std}",
         *spec.cxxflags,
+        *include_flags,
         *parse_test_flags(test_file),
         *args.extra_cxxflag,
         str(test_file),
@@ -894,6 +927,13 @@ def print_test_result(result: TestResult) -> None:
     phase = "compile+run" if result.run_result is not None else "compile"
     print(f"[PASS][{result.compiler}][{phase}] {relative_path}")
 
+    # A benchmark is run for its output (timings), so show it; tests only
+    # report pass/fail, and their output is already shown on failure.
+    if result.run_result is not None and result.test_file.is_relative_to(BENCHMARKS_DIR):
+        output = result.run_result.stdout.rstrip()
+        if output:
+            print(indent_block(output))
+
 
 def indent_block(text: str) -> str:
     return "\n".join(f"  {line}" for line in text.splitlines())
@@ -934,13 +974,17 @@ def main() -> int:
     results: list[TestResult] = []
     for compiler_name in selected_compilers(args):
         spec = specs[compiler_name]
-        tests = discover_tests(args.tests, compiler_name)
         validate_compiler_executable(spec)
-        log(f"[{spec.name}] compiling {len(tests)} test(s) with {spec.executable}")
-        for test_file in tests:
-            result = compile_and_maybe_run(spec, test_file, args)
-            results.append(result)
-            print_test_result(result)
+        for base_dir, patterns in selected_sources(args):
+            tests = discover_tests(patterns, base_dir, compiler_name)
+            log(
+                f"[{spec.name}] compiling {len(tests)} file(s) from "
+                f"{base_dir.name}/ with {spec.executable}"
+            )
+            for test_file in tests:
+                result = compile_and_maybe_run(spec, test_file, base_dir, args)
+                results.append(result)
+                print_test_result(result)
 
     failures = summarize(results, ran_executables=args.run_executables)
     return 1 if failures else 0
