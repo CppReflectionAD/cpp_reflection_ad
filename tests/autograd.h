@@ -5,19 +5,23 @@
 // P2996 (body_of / statements_of / return_value_of / ... plus the existing
 // expression reflection).
 //
-// Design (see docs/ + plan): reflection -> SSA/let-DAG IR -> array-tape codegen.
-// Each statement of the body becomes SSA nodes; sweeps over runtime arrays are
-// unrolled with an expansion statement, indexing the in-scope arrays directly
-// (only literal leaves are spliced).
+// Design (see docs/ + plan): reflection -> SSA/let-DAG IR -> array-tape
+// codegen. Each statement of the body becomes SSA nodes; sweeps over runtime
+// arrays are unrolled with an expansion statement, indexing the in-scope arrays
+// directly (only literal leaves are spliced).
 //
 // Modes:
 //   - forward_derivative<^^f, Wrt>(args...)  — forward mode (JVP), one partial.
-//   - gradient_of<^^f>(args...)              — full gradient via P forward passes.
-//   - gradient_reverse<^^f>(args...)         — full gradient in ONE reverse pass
+//   - gradient_of<^^f>(args...)              — full gradient via P forward
+//   passes.
+//   - gradient_reverse<^^f>(args...)         — full gradient in ONE reverse
+//   pass
 //       (primal sweep + adjoint sweep over the reversed DAG with accumulation);
 //       the efficient path for scalar-output, many-input functions.
-//   - partial_derivative<^^f, Wrt...>(args...) - Calculate the partial_derivative of `f`, with respect to each index in `Wrt...`
-//        e.g. partial_derivative<^^f, 0, 0, 1>(args...) will differentiate `f` twice w.r.t the 0th argument, and once w.r.t. the first.
+//   - partial_derivative<^^f, Wrt...>(args...) - Calculate the
+//   partial_derivative of `f`, with respect to each index in `Wrt...`
+//        e.g. partial_derivative<^^f, 0, 0, 1>(args...) will differentiate `f`
+//        twice w.r.t the 0th argument, and once w.r.t. the first.
 //
 // Activity analysis (mark_activity) runs on the DAG before codegen: it marks
 // which values are "varied" (depend on a differentiated input) and which are
@@ -43,15 +47,15 @@
 #ifndef REFLECT_DEMO_AUTOGRAD_H
 #define REFLECT_DEMO_AUTOGRAD_H
 
-#include <meta>
-#include <vector>
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <meta>
 #include <numbers>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace ad {
 using std::meta::info;
@@ -64,16 +68,41 @@ constexpr double two_over_root_pi = 2. * std::numbers::inv_sqrtpi_v<double>;
 // IR
 // ---------------------------------------------------------------------------
 enum class OpKind {
-  Input, Const, Output,
-  Add, Sub, Mul, Div, Neg,
-  Sin, Cos, Exp, Log, Sqrt, Erfc,
+  Input,
+  Const,
+  Output,
+  Add,
+  Sub,
+  Mul,
+  Div,
+  Neg,
+  Sin,
+  Cos,
+  Exp,
+  Log,
+  Sqrt,
+  Erfc,
   // Conditions and their combinators. Piecewise constant, so never "varied";
   // valued 0 or 1 in the same array as everything else.
-  Lt, Le, Gt, Ge, Eq, Ne, And, Or, Not,
+  Lt,
+  Le,
+  Gt,
+  Ge,
+  Eq,
+  Ne,
+  And,
+  Or,
+  Not,
   // Select is `c ? a : b`; Abs/Max/Min are the kinks.
-  Select, Abs, Max, Min,
+  Select,
+  Abs,
+  Max,
+  Min,
   // Tensor ops (recognised as named calls; VJPs live in the tensor engine).
-  Matmul, Transpose, Sum, Relu,
+  Matmul,
+  Transpose,
+  Sum,
+  Relu,
 };
 
 // Node::guard value meaning "always run". A guard is a slot index and slot 0
@@ -88,11 +117,12 @@ inline constexpr std::size_t UNGUARDED = static_cast<std::size_t>(-1);
 //   template <> struct ad::primitive<^^nn::relu> {
 //     static constexpr ad::OpKind op = ad::OpKind::Relu;
 //   };
-template <info F> struct primitive;   // declared, never defined
+template <info F> struct primitive; // declared, never defined
 
 // `^^f` is ill-formed when `f` names an overload set, so a specific overload is
 // selected by signature:
-//   template <> struct ad::primitive<ad::overload_of(^^nn, "sum", ^^Tensor(const Tensor &))>
+//   template <> struct ad::primitive<ad::overload_of(^^nn, "sum",
+//   ^^Tensor(const Tensor &))>
 consteval info overload_of(info scope, std::string_view name, info fnType) {
   for (info mem : m::members_of(scope, m::access_context::current()))
     if (m::has_identifier(mem) && m::identifier_of(mem) == name &&
@@ -103,9 +133,9 @@ consteval info overload_of(info scope, std::string_view name, info fnType) {
 
 struct Node {
   OpKind op = OpKind::Input;
-  std::size_t self = 0;      // this node's SSA slot (== its index)
-  std::size_t a = 0, b = 0;  // operand slots
-  info leaf = ^^int;         // Const only: reflection of the literal expression
+  std::size_t self = 0;     // this node's SSA slot (== its index)
+  std::size_t a = 0, b = 0; // operand slots
+  info leaf = ^^int;        // Const only: reflection of the literal expression
   // Select only. After `leaf` so positional aggregate inits still hold.
   std::size_t cond = 0;
   // Condition gating this node; UNGUARDED means "always". Honoured by every
@@ -129,12 +159,10 @@ consteval bool op_has_a(OpKind op) {
   return op != OpKind::Input && op != OpKind::Const;
 }
 consteval bool op_has_b(OpKind op) {
-  return op == OpKind::Add || op == OpKind::Sub ||
-         op == OpKind::Mul || op == OpKind::Div ||
-         op == OpKind::Lt || op == OpKind::Le ||
-         op == OpKind::Gt || op == OpKind::Ge ||
-         op == OpKind::Eq || op == OpKind::Ne ||
-         op == OpKind::And || op == OpKind::Or ||
+  return op == OpKind::Add || op == OpKind::Sub || op == OpKind::Mul ||
+         op == OpKind::Div || op == OpKind::Lt || op == OpKind::Le ||
+         op == OpKind::Gt || op == OpKind::Ge || op == OpKind::Eq ||
+         op == OpKind::Ne || op == OpKind::And || op == OpKind::Or ||
          op == OpKind::Select || op == OpKind::Max || op == OpKind::Min ||
          op == OpKind::Matmul;
 }
@@ -142,9 +170,8 @@ consteval bool op_has_cond(OpKind op) { return op == OpKind::Select; }
 
 // Ops valued 0/1. Derivative identically zero, so never varied.
 consteval bool op_is_boolean(OpKind op) {
-  return op == OpKind::Lt || op == OpKind::Le ||
-         op == OpKind::Gt || op == OpKind::Ge ||
-         op == OpKind::Eq || op == OpKind::Ne ||
+  return op == OpKind::Lt || op == OpKind::Le || op == OpKind::Gt ||
+         op == OpKind::Ge || op == OpKind::Eq || op == OpKind::Ne ||
          op == OpKind::And || op == OpKind::Or || op == OpKind::Not;
 }
 
@@ -152,9 +179,9 @@ namespace detail {
 
 struct Ctx {
   std::vector<Node> nodes;
-  std::vector<info> envDecl;      // decl -> slot environment
+  std::vector<info> envDecl; // decl -> slot environment
   std::vector<std::size_t> envSlot;
-  std::vector<info> callStack;    // callees currently being inlined (cycle guard)
+  std::vector<info> callStack; // callees currently being inlined (cycle guard)
   // The guard in force while lowering. UNGUARDED at the top level; a ternary
   // narrows it for the duration of each branch.
   std::size_t curGuard = UNGUARDED;
@@ -176,8 +203,8 @@ consteval std::size_t narrow_guard(Ctx &c, std::size_t outer, std::size_t p) {
   return emit(c, OpKind::And, outer, p);
 }
 
-// Forward decls: lower / lower_body / inline_call are mutually recursive (a call
-// site inlines its callee's body, which may contain further calls).
+// Forward decls: lower / lower_body / inline_call are mutually recursive (a
+// call site inlines its callee's body, which may contain further calls).
 consteval std::size_t lower(Ctx &c, info e);
 consteval std::size_t lower_body(Ctx &c, info body);
 consteval std::size_t inline_call(Ctx &c, info call);
@@ -185,10 +212,11 @@ consteval std::size_t inline_call(Ctx &c, info call);
 // Resolve a referenced variable to its SSA slot by identifier name. We match by
 // name (unique within a straight-line body) rather than reflection identity
 // because parameters_of yields ReflectionKind::Parameter while a decl_ref's
-// declaration_of yields ReflectionKind::Declaration — different kinds that never
-// compare equal. Last-wins so a local shadowing an outer name resolves to the
-// most recent binding. An unresolved name (e.g. a global) has no slot; erroring
-// beats returning a sentinel that would index the node array out of bounds.
+// declaration_of yields ReflectionKind::Declaration — different kinds that
+// never compare equal. Last-wins so a local shadowing an outer name resolves to
+// the most recent binding. An unresolved name (e.g. a global) has no slot;
+// erroring beats returning a sentinel that would index the node array out of
+// bounds.
 consteval std::size_t findSlot(const Ctx &c, std::string_view name) {
   for (std::size_t i = c.envDecl.size(); i-- > 0;)
     if (m::identifier_of(c.envDecl[i]) == name)
@@ -199,18 +227,30 @@ consteval std::size_t findSlot(const Ctx &c, std::string_view name) {
 // Erroring beats a plausible default: falling back to Add would turn `x < y`
 // into `x + y` -- a wrong derivative with no diagnostic.
 consteval OpKind binOp(m::operators op) {
-  if (op == m::operators::op_plus)  return OpKind::Add;
-  if (op == m::operators::op_minus) return OpKind::Sub;
-  if (op == m::operators::op_star)  return OpKind::Mul;
-  if (op == m::operators::op_slash) return OpKind::Div;
-  if (op == m::operators::op_less)               return OpKind::Lt;
-  if (op == m::operators::op_less_equals)        return OpKind::Le;
-  if (op == m::operators::op_greater)            return OpKind::Gt;
-  if (op == m::operators::op_greater_equals)     return OpKind::Ge;
-  if (op == m::operators::op_equals_equals)      return OpKind::Eq;
-  if (op == m::operators::op_exclamation_equals) return OpKind::Ne;
-  if (op == m::operators::op_ampersand_ampersand) return OpKind::And;
-  if (op == m::operators::op_pipe_pipe)           return OpKind::Or;
+  if (op == m::operators::op_plus)
+    return OpKind::Add;
+  if (op == m::operators::op_minus)
+    return OpKind::Sub;
+  if (op == m::operators::op_star)
+    return OpKind::Mul;
+  if (op == m::operators::op_slash)
+    return OpKind::Div;
+  if (op == m::operators::op_less)
+    return OpKind::Lt;
+  if (op == m::operators::op_less_equals)
+    return OpKind::Le;
+  if (op == m::operators::op_greater)
+    return OpKind::Gt;
+  if (op == m::operators::op_greater_equals)
+    return OpKind::Ge;
+  if (op == m::operators::op_equals_equals)
+    return OpKind::Eq;
+  if (op == m::operators::op_exclamation_equals)
+    return OpKind::Ne;
+  if (op == m::operators::op_ampersand_ampersand)
+    return OpKind::And;
+  if (op == m::operators::op_pipe_pipe)
+    return OpKind::Or;
   throw "reflection AD: unsupported binary operator";
 }
 
@@ -245,23 +285,26 @@ consteval info probe_callee(info fn) {
 // user-defined `sin` is a different reflection and is inlined instead. One
 // instantiation per real floating-point overload; an integral argument selects
 // <cmath>'s integral template, which is not covered.
-template <class T> inline T p_sin (T x) { return std::sin(x); }
-template <class T> inline T p_cos (T x) { return std::cos(x); }
-template <class T> inline T p_exp (T x) { return std::exp(x); }
-template <class T> inline T p_log (T x) { return std::log(x); }
+template <class T> inline T p_sin(T x) { return std::sin(x); }
+template <class T> inline T p_cos(T x) { return std::cos(x); }
+template <class T> inline T p_exp(T x) { return std::exp(x); }
+template <class T> inline T p_log(T x) { return std::log(x); }
 template <class T> inline T p_sqrt(T x) { return std::sqrt(x); }
 template <class T> inline T p_erfc(T x) { return std::erfc(x); }
 // The kinks. Real ops rather than desugared Selects, so `is_continuous_on`
 // can see that |x| is continuous across zero. Max/Min follow std::max
 // (`a < b ? b : a`), so a tie yields the first operand.
 template <class T> inline T p_fabs(T x) { return std::fabs(x); }
-template <class T> inline T p_abs (T x) { return std::abs(x); }
+template <class T> inline T p_abs(T x) { return std::abs(x); }
 template <class T> inline T p_fmax(T x, T y) { return std::fmax(x, y); }
 template <class T> inline T p_fmin(T x, T y) { return std::fmin(x, y); }
-template <class T> inline T p_max (T x, T y) { return std::max(x, y); }
-template <class T> inline T p_min (T x, T y) { return std::min(x, y); }
+template <class T> inline T p_max(T x, T y) { return std::max(x, y); }
+template <class T> inline T p_min(T x, T y) { return std::min(x, y); }
 
-struct Prim { bool found; OpKind op; };
+struct Prim {
+  bool found;
+  OpKind op;
+};
 
 // Does `callee` match the float / double / long double instantiations of a
 // probe template?
@@ -273,29 +316,35 @@ consteval bool is_std_fn(info callee, info pf, info pd, info pl) {
 // Is `callee` a primitive? Checks the built-in std math set, then the
 // user-extensible ad::primitive registry.
 consteval Prim find_primitive(info callee) {
-  if (is_std_fn(callee, ^^p_sin<float>,  ^^p_sin<double>,  ^^p_sin<long double>))
+  if (is_std_fn(callee, ^^p_sin<float>, ^^p_sin<double>, ^^p_sin<long double>))
     return {true, OpKind::Sin};
-  if (is_std_fn(callee, ^^p_cos<float>,  ^^p_cos<double>,  ^^p_cos<long double>))
+  if (is_std_fn(callee, ^^p_cos<float>, ^^p_cos<double>, ^^p_cos<long double>))
     return {true, OpKind::Cos};
-  if (is_std_fn(callee, ^^p_exp<float>,  ^^p_exp<double>,  ^^p_exp<long double>))
+  if (is_std_fn(callee, ^^p_exp<float>, ^^p_exp<double>, ^^p_exp<long double>))
     return {true, OpKind::Exp};
-  if (is_std_fn(callee, ^^p_log<float>,  ^^p_log<double>,  ^^p_log<long double>))
+  if (is_std_fn(callee, ^^p_log<float>, ^^p_log<double>, ^^p_log<long double>))
     return {true, OpKind::Log};
-  if (is_std_fn(callee, ^^p_sqrt<float>, ^^p_sqrt<double>, ^^p_sqrt<long double>))
+  if (is_std_fn(callee, ^^p_sqrt<float>, ^^p_sqrt<double>,
+                ^^p_sqrt<long double>))
     return {true, OpKind::Sqrt};
-  if (is_std_fn(callee, ^^p_erfc<float>, ^^p_erfc<double>, ^^p_erfc<long double>))
+  if (is_std_fn(callee, ^^p_erfc<float>, ^^p_erfc<double>,
+                ^^p_erfc<long double>))
     return {true, OpKind::Erfc};
-  if (is_std_fn(callee, ^^p_fabs<float>, ^^p_fabs<double>, ^^p_fabs<long double>) ||
-      is_std_fn(callee, ^^p_abs<float>,  ^^p_abs<double>,  ^^p_abs<long double>))
+  if (is_std_fn(callee, ^^p_fabs<float>, ^^p_fabs<double>,
+                ^^p_fabs<long double>) ||
+      is_std_fn(callee, ^^p_abs<float>, ^^p_abs<double>, ^^p_abs<long double>))
     return {true, OpKind::Abs};
-  if (is_std_fn(callee, ^^p_fmax<float>, ^^p_fmax<double>, ^^p_fmax<long double>) ||
-      is_std_fn(callee, ^^p_max<float>,  ^^p_max<double>,  ^^p_max<long double>))
+  if (is_std_fn(callee, ^^p_fmax<float>, ^^p_fmax<double>,
+                ^^p_fmax<long double>) ||
+      is_std_fn(callee, ^^p_max<float>, ^^p_max<double>, ^^p_max<long double>))
     return {true, OpKind::Max};
-  if (is_std_fn(callee, ^^p_fmin<float>, ^^p_fmin<double>, ^^p_fmin<long double>) ||
-      is_std_fn(callee, ^^p_min<float>,  ^^p_min<double>,  ^^p_min<long double>))
+  if (is_std_fn(callee, ^^p_fmin<float>, ^^p_fmin<double>,
+                ^^p_fmin<long double>) ||
+      is_std_fn(callee, ^^p_min<float>, ^^p_min<double>, ^^p_min<long double>))
     return {true, OpKind::Min};
 
-  info spec = m::substitute(^^primitive, {m::reflect_constant(callee)});
+  info spec = m::substitute(^^primitive, {
+                                             m::reflect_constant(callee)});
   if (m::is_complete_type(spec))
     for (info mem : m::members_of(spec, m::access_context::current()))
       if (m::has_identifier(mem) && m::identifier_of(mem) == "op")
@@ -320,7 +369,7 @@ consteval std::size_t lower(Ctx &c, info e) {
     m::operators op = m::expression_operator_of(e);
     std::size_t a = lower(c, m::operands_of(e).front());
     if (op == m::operators::op_plus)
-      return a;  // unary plus is a no-op
+      return a; // unary plus is a no-op
     if (op == m::operators::op_minus)
       return emit(c, OpKind::Neg, a);
     if (op == m::operators::op_exclamation)
@@ -370,15 +419,15 @@ consteval std::size_t lower(Ctx &c, info e) {
     // operands_of(call) = [callee, arg0, arg1, ...].
     auto ops = m::operands_of(e);
     Prim p = find_primitive(m::callee_of(e));
-    if (!p.found)                         // user helper -> inline its body
+    if (!p.found) // user helper -> inline its body
       return inline_call(c, e);
     OpKind op = p.op;
-    if (op_has_b(op)) {                    // binary call, e.g. matmul(a, b)
+    if (op_has_b(op)) { // binary call, e.g. matmul(a, b)
       std::size_t a = lower(c, ops[1]);
       std::size_t b = lower(c, ops[2]);
       return emit(c, op, a, b);
     }
-    std::size_t a = lower(c, ops[ops.size() - 1]);   // unary call
+    std::size_t a = lower(c, ops[ops.size() - 1]); // unary call
     return emit(c, op, a);
   }
 
@@ -386,12 +435,12 @@ consteval std::size_t lower(Ctx &c, info e) {
   return emit(c, OpKind::Const, 0, 0, m::constant_of(e));
 }
 
-// Lower the statements of a straight-line body into `c`, resolving names against
-// the current environment; returns the slot of the (single) return value. Shared
-// by build_nodes (top-level function) and inline_call (inlined callee).
-// Anything outside that shape (control flow, assignment, a second return, no
-// return at all) is rejected: skipping it would silently build a DAG that does
-// not match the source, i.e. a wrong derivative with no diagnostic.
+// Lower the statements of a straight-line body into `c`, resolving names
+// against the current environment; returns the slot of the (single) return
+// value. Shared by build_nodes (top-level function) and inline_call (inlined
+// callee). Anything outside that shape (control flow, assignment, a second
+// return, no return at all) is rejected: skipping it would silently build a DAG
+// that does not match the source, i.e. a wrong derivative with no diagnostic.
 consteval std::size_t lower_body(Ctx &c, info body) {
   std::size_t root = 0;
   bool sawReturn = false;
@@ -403,7 +452,8 @@ consteval std::size_t lower_body(Ctx &c, info body) {
       c.envSlot.push_back(slot);
     } else if (m::is_return_statement(s)) {
       if (sawReturn)
-        throw "reflection AD: multiple return statements (straight-line bodies only)";
+        throw "reflection AD: multiple return statements (straight-line bodies "
+              "only)";
       root = lower(c, m::return_value_of(s));
       sawReturn = true;
     } else {
@@ -420,10 +470,10 @@ consteval std::size_t lower_body(Ctx &c, info body) {
 // scope, bind the callee's parameters to those argument slots, and lower the
 // callee's body into the SAME DAG. The result is the callee's return slot, so
 // the whole helper expands to primitive nodes with no new IR kinds -- activity
-// analysis and codegen are unaffected, and arguments are evaluated once (a param
-// used N times reuses its one slot).
+// analysis and codegen are unaffected, and arguments are evaluated once (a
+// param used N times reuses its one slot).
 consteval std::size_t inline_call(Ctx &c, info call) {
-  auto ops = m::operands_of(call);          // [callee, arg0, arg1, ...]
+  auto ops = m::operands_of(call); // [callee, arg0, arg1, ...]
   info callee = m::callee_of(call);
 
   // Cycle guard: recursive helpers are out of scope (would not terminate here).
@@ -435,7 +485,8 @@ consteval std::size_t inline_call(Ctx &c, info call) {
   // silent constant would give a wrong derivative, so reject it explicitly.
   info body = m::body_of(callee);
   if (m::statements_of(body).empty())
-    throw "reflection AD: cannot inline a call whose callee has no visible body";
+    throw "reflection AD: cannot inline a call whose callee has no visible "
+          "body";
 
   // (a) lower argument expressions in the CALLER scope -> slots.
   std::vector<std::size_t> argSlots;
@@ -450,7 +501,8 @@ consteval std::size_t inline_call(Ctx &c, info call) {
     c.envSlot.push_back(argSlots[i]);
   }
 
-  // (c) lower the callee body into the same DAG (nested calls inline via lower).
+  // (c) lower the callee body into the same DAG (nested calls inline via
+  // lower).
   c.callStack.push_back(callee);
   std::size_t ret = lower_body(c, body);
   c.callStack.pop_back();
@@ -461,12 +513,11 @@ consteval std::size_t inline_call(Ctx &c, info call) {
   return ret;
 }
 
-}  // namespace detail
+} // namespace detail
 
 // Build the SSA node list for a reflected function. The last node is the root
 // (an Output node forwarding the return value).
-template <info Fn>
-consteval std::vector<Node> build_nodes() {
+template <info Fn> consteval std::vector<Node> build_nodes() {
   detail::Ctx c;
   for (info p : m::parameters_of(Fn)) {
     std::size_t s = c.nodes.size();
@@ -491,19 +542,20 @@ consteval std::vector<Node> build_nodes() {
 // is elided by the codegen, which removes e.g. the `x * 0` from a constant
 // factor's derivative.
 // Ops whose derivative rule reads the primal value of an operand / of itself.
-consteval bool deriv_reads_operand_vals(OpKind op) {  // reads val[a] (and val[b])
-  return op == OpKind::Mul || op == OpKind::Div ||
-         op == OpKind::Sin || op == OpKind::Cos || op == OpKind::Log ||
-         op == OpKind::Erfc ||
+consteval bool
+deriv_reads_operand_vals(OpKind op) { // reads val[a] (and val[b])
+  return op == OpKind::Mul || op == OpKind::Div || op == OpKind::Sin ||
+         op == OpKind::Cos || op == OpKind::Log || op == OpKind::Erfc ||
          // pick an operand's tangent at runtime, so read the operands
          op == OpKind::Abs || op == OpKind::Max || op == OpKind::Min;
 }
-consteval bool deriv_reads_self_val(OpKind op) {       // reads val[self]
+consteval bool deriv_reads_self_val(OpKind op) { // reads val[self]
   return op == OpKind::Exp || op == OpKind::Sqrt;
 }
 
 // `active_mask` bit i set => input i is differentiated w.r.t. (~0ull = all).
-consteval void mark_activity(std::vector<Node> &ns, unsigned long long active_mask) {
+consteval void mark_activity(std::vector<Node> &ns,
+                             unsigned long long active_mask) {
   const std::size_t N = ns.size();
 
   // 1. varied: forward reachability from the differentiated input(s).
@@ -513,7 +565,7 @@ consteval void mark_activity(std::vector<Node> &ns, unsigned long long active_ma
     if (n.op == OpKind::Input)
       varied = (active_mask >> n.self) & 1ull;
     else if (n.op == OpKind::Const || op_is_boolean(n.op))
-      varied = false;   // a predicate is piecewise constant: zero derivative
+      varied = false; // a predicate is piecewise constant: zero derivative
     else
       // Select: v[a] || v[b]. The condition contributes no tangent.
       varied = (op_has_a(n.op) && v[n.a]) || (op_has_b(n.op) && v[n.b]);
@@ -537,8 +589,10 @@ consteval void mark_activity(std::vector<Node> &ns, unsigned long long active_ma
     if (!n.vself)
       continue;
     if (deriv_reads_operand_vals(n.op)) {
-      if (op_has_a(n.op)) need[n.a] = 1;
-      if (op_has_b(n.op)) need[n.b] = 1;
+      if (op_has_a(n.op))
+        need[n.a] = 1;
+      if (op_has_b(n.op))
+        need[n.b] = 1;
     }
     if (deriv_reads_self_val(n.op))
       need[n.self] = 1;
@@ -546,14 +600,18 @@ consteval void mark_activity(std::vector<Node> &ns, unsigned long long active_ma
     if (op_has_cond(n.op))
       need[n.cond] = 1;
   }
-  for (std::size_t i = N; i-- > 0;) {   // backward: needed val pulls in operands
+  for (std::size_t i = N; i-- > 0;) { // backward: needed val pulls in operands
     if (!need[i])
       continue;
     const Node &n = ns[i];
-    if (op_has_a(n.op)) need[n.a] = 1;
-    if (op_has_b(n.op)) need[n.b] = 1;
-    if (op_has_cond(n.op)) need[n.cond] = 1;
-    if (n.guard != UNGUARDED) need[n.guard] = 1;
+    if (op_has_a(n.op))
+      need[n.a] = 1;
+    if (op_has_b(n.op))
+      need[n.b] = 1;
+    if (op_has_cond(n.op))
+      need[n.cond] = 1;
+    if (n.guard != UNGUARDED)
+      need[n.guard] = 1;
   }
   for (Node &n : ns)
     n.nself = need[n.self];
@@ -578,6 +636,6 @@ consteval std::vector<Node> build_marked_nodes_reversed() {
   return rev;
 }
 
-}  // namespace ad
+} // namespace ad
 
-#endif  // REFLECT_DEMO_AUTOGRAD_H
+#endif // REFLECT_DEMO_AUTOGRAD_H

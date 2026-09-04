@@ -3,9 +3,7 @@
 
 #include <cmath>
 
-inline double total_vol(double v, double T) {
-    return v * std::sqrt(T);
-}
+inline double total_vol(double v, double T) { return v * std::sqrt(T); }
 
 inline double cfd(double value) {
   return 0.5 * std::erfc(value * -0.70710678118654746);
