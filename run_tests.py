@@ -36,13 +36,13 @@ DEFAULT_CLANG_RUNTIMES_DIR = str(BUILD_ROOT / "libcxx")
 DEFAULT_GCC_TOOLCHAIN = os.environ.get(
     "REFLECT_GCC_TOOLCHAIN", ("/opt/rh/gcc-toolset-13/root/usr" if os.path.exists("/opt/rh/gcc-toolset-13/root/usr") else "/usr")
 )
+DEFAULT_GCC_BUILD_DIR = os.environ.get(
+    "REFLECT_GCC_BUILD_DIR", str(BUILD_ROOT / "gcc-p2996")
+)
 
 if sys.platform == "darwin":
     DEFAULT_GCC_SOURCE_DIR = os.environ.get(
         "REFLECT_GCC_SOURCE_DIR", str(ROOT / "gcc-darwin-reflect")
-    )
-    DEFAULT_GCC_BUILD_DIR = os.environ.get(
-        "REFLECT_GCC_BUILD_DIR", str(BUILD_ROOT / "gcc-darwin-reflect")
     )
     DEFAULT_GCC_PATCHES_DIR = os.environ.get(
         "REFLECT_GCC_PATCHES_DIR", "/tmp/gcc-reflect-patches"
@@ -53,9 +53,6 @@ if sys.platform == "darwin":
 else:
     DEFAULT_GCC_SOURCE_DIR = os.environ.get(
         "REFLECT_GCC_SOURCE_DIR", str(ROOT / "gcc-mirror")
-    )
-    DEFAULT_GCC_BUILD_DIR = os.environ.get(
-        "REFLECT_GCC_BUILD_DIR", str(BUILD_ROOT / "gcc-mirror")
     )
     DEFAULT_GCC_PATCHES_DIR = os.environ.get("REFLECT_GCC_PATCHES_DIR", "")
     DEFAULT_GCC_SYNC_FROM = os.environ.get("REFLECT_GCC_SYNC_FROM", "")
