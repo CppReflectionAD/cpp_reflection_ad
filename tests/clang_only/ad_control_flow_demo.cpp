@@ -13,6 +13,9 @@
 #include "../test_simple_include.hpp"
 
 #include "../autograd.h"
+#include "../forward_derivative.h"
+#include "../recursive_higher_order_derivative.h"
+#include "../reverse_derivative.h"
 
 #include "../functions/6-piecewise.h"
 

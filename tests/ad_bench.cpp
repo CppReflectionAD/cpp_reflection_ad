@@ -23,6 +23,9 @@
 // Build at -O2 (see `make run-bench`).
 
 #include "autograd.h"
+#include "forward_derivative.h"
+#include "reverse_derivative.h"
+
 #include <array>
 #include <chrono>
 #include <cmath>
