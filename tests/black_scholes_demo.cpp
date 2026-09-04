@@ -1,6 +1,8 @@
 #include "test_simple_include.hpp"
 
 #include "autograd.h"
+#include "forward_derivative.h"
+
 #include "functions/5-black_scholes.h"
 
 int main() {
