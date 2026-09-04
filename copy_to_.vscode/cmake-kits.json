@@ -8,18 +8,10 @@
     "isTrusted": true
   },
   {
-    "name": "GCC reflection (macOS)",
+    "name": "GCC reflection",
     "compilers": {
-      "C": "${workspaceFolder}/build/gcc-darwin-reflect/artifacts/bin/gcc",
-      "CXX": "${workspaceFolder}/build/gcc-darwin-reflect/artifacts/bin/g++"
-    },
-    "isTrusted": true
-  },
-  {
-    "name": "GCC reflection (Linux)",
-    "compilers": {
-      "C": "${workspaceFolder}/build/gcc-mirror/artifacts/bin/gcc",
-      "CXX": "${workspaceFolder}/build/gcc-mirror/artifacts/bin/g++"
+      "C": "${workspaceFolder}/build/gcc-p2996/artifacts/bin/gcc",
+      "CXX": "${workspaceFolder}/build/gcc-p2996/artifacts/bin/g++"
     },
     "isTrusted": true
   }

@@ -63,10 +63,7 @@ Each demo prints its own `ALL CHECKS PASSED` / `ALL MATCH` on success.
     - `python3 run_tests.py --compiler gcc --build-compilers`
 4. In VS Code CMake Tools, select one of these kits:
     - `Clang reflection`
-    - `GCC reflection (macOS)`
-    - `GCC reflection (Linux)`
-
-Use the kit that matches your host OS: macOS -> `GCC reflection (macOS)`, Linux -> `GCC reflection (Linux)`.
+    - `GCC reflection`
 
 You should now be able to build and debug the tests in VSCode.
 
