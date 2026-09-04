@@ -34,7 +34,12 @@ DEFAULT_CLANG_ROOT = os.environ.get("CLANG_P2996_ROOT", str(BUILD_ROOT / "clang-
 # LLVM_BINARY_DIR (see build_clang_runtimes).
 DEFAULT_CLANG_RUNTIMES_DIR = str(BUILD_ROOT / "libcxx")
 DEFAULT_GCC_TOOLCHAIN = os.environ.get(
-    "REFLECT_GCC_TOOLCHAIN", ("/opt/rh/gcc-toolset-13/root/usr" if os.path.exists("/opt/rh/gcc-toolset-13/root/usr") else "/usr")
+    "REFLECT_GCC_TOOLCHAIN",
+    (
+        "/opt/rh/gcc-toolset-13/root/usr"
+        if os.path.exists("/opt/rh/gcc-toolset-13/root/usr")
+        else "/usr"
+    ),
 )
 DEFAULT_GCC_BUILD_DIR = os.environ.get(
     "REFLECT_GCC_BUILD_DIR", str(BUILD_ROOT / "gcc-p2996")
@@ -463,7 +468,8 @@ def discover_tests(
     tests = [
         test_file
         for test_file in candidates
-        if test_file.is_file() and is_test_applicable(test_file, base_dir, compiler_name)
+        if test_file.is_file()
+        and is_test_applicable(test_file, base_dir, compiler_name)
     ]
 
     if not tests:
@@ -714,6 +720,35 @@ def maybe_sync_gcc_sources_for_macos(
             "Clone the darwin fork first, or point --gcc-source-dir at a git checkout."
         )
 
+    # Guard against retry loops: if a previous `git am` stopped on conflicts,
+    # attempting a new `git am` will fail immediately with rebase-apply present.
+    am_state_path = require_git_output(
+        sync_to, ["git", "rev-parse", "--git-path", "rebase-apply"], args.verbose
+    )
+    am_state_dir = Path(am_state_path)
+    if not am_state_dir.is_absolute():
+        am_state_dir = sync_to / am_state_dir
+    if am_state_dir.exists():
+        raise SystemExit(
+            "gcc sync cannot start: an earlier 'git am' session is still in progress in "
+            f"{sync_to}.\n"
+            "Finish it with 'git am --continue' after resolving conflicts, or run "
+            "'git am --abort' to discard it.\n"
+            "You can inspect the current patch with 'git am --show-current-patch=diff'.\n"
+            "To bypass sync for this build, pass --no-gcc-sync."
+        )
+
+    target_status = run_command(
+        ["git", "status", "--porcelain"], cwd=sync_to, verbose=args.verbose
+    )
+    require_success(target_status, f"git status failed in {sync_to}")
+    if target_status.stdout.strip():
+        raise SystemExit(
+            "gcc sync target has local changes; refusing to apply patch stack on a dirty "
+            f"tree: {sync_to}.\n"
+            "Commit/stash/clean the target tree, then retry, or pass --no-gcc-sync."
+        )
+
     ensure_directory(
         Path(args.gcc_patches_dir)
         if args.gcc_patches_dir
@@ -790,10 +825,27 @@ def maybe_sync_gcc_sources_for_macos(
         verbose=args.verbose,
     )
     if apply_result.returncode != 0:
-        raise SystemExit(
-            "gcc sync failed while applying patches. Resolve conflicts in "
-            f"{sync_to} then run 'git am --continue', or abort with 'git am --abort'."
-        )
+        auto_resolved = try_auto_resolve_git_am_conflicts(sync_to, args.verbose)
+        if auto_resolved:
+            log("[gcc-sync] auto-resolved patch conflicts and completed git am")
+        else:
+            abort_result = run_command(
+                ["git", "am", "--abort"], cwd=sync_to, verbose=args.verbose
+            )
+            if abort_result.returncode != 0:
+                abort_details = render_command_failure(abort_result)
+                raise SystemExit(
+                    "gcc sync failed while applying patches, and automatic rollback also "
+                    f"failed in {sync_to}.\n\n{abort_details}"
+                )
+            raise SystemExit(
+                "gcc sync failed while applying patches, and the in-progress 'git am' "
+                "session was rolled back automatically to keep the tree clean.\n"
+                f"Target: {sync_to}\n"
+                f"Exported patch stack: {patches_dir}\n"
+                "Fix the source/target divergence, then retry. Use --no-gcc-sync to skip "
+                "this step for a build."
+            )
 
     ensure_directory(state_file.parent)
     state_file.write_text(
@@ -820,6 +872,63 @@ def require_git_output(repo: Path, command: list[str], verbose: bool) -> str:
             f"git command returned empty output in {repo}: {shlex.join(command)}"
         )
     return value
+
+
+def try_auto_resolve_git_am_conflicts(repo: Path, verbose: bool) -> bool:
+    """Attempt to finish an in-progress git am by auto-resolving merge conflicts.
+
+    Strategy: for each conflict stop, take the incoming patch side ("theirs")
+    for unmerged paths, stage, and continue. If the sequence completes, return
+    True; otherwise return False so caller can roll back.
+    """
+    max_rounds = 200
+    for _ in range(max_rounds):
+        am_state = run_command(
+            ["git", "rev-parse", "--git-path", "rebase-apply"],
+            cwd=repo,
+            verbose=verbose,
+        )
+        if am_state.returncode != 0:
+            return False
+        am_state_path = am_state.stdout.strip()
+        if not am_state_path:
+            return False
+        state_dir = Path(am_state_path)
+        if not state_dir.is_absolute():
+            state_dir = repo / state_dir
+        if not state_dir.exists():
+            return True
+
+        unmerged = run_command(
+            ["git", "diff", "--name-only", "--diff-filter=U"],
+            cwd=repo,
+            verbose=verbose,
+        )
+        if unmerged.returncode != 0:
+            return False
+        files = [line.strip() for line in unmerged.stdout.splitlines() if line.strip()]
+        if not files:
+            return False
+
+        checkout_theirs = run_command(
+            ["git", "checkout", "--theirs", "--", *files],
+            cwd=repo,
+            verbose=verbose,
+        )
+        if checkout_theirs.returncode != 0:
+            return False
+
+        add_result = run_command(
+            ["git", "add", "--", *files], cwd=repo, verbose=verbose
+        )
+        if add_result.returncode != 0:
+            return False
+
+        cont = run_command(["git", "am", "--continue"], cwd=repo, verbose=verbose)
+        if cont.returncode == 0:
+            continue
+
+    return False
 
 
 def build_selected_compilers(
@@ -926,7 +1035,9 @@ def print_test_result(result: TestResult) -> None:
 
     # A benchmark is run for its output (timings), so show it; tests only
     # report pass/fail, and their output is already shown on failure.
-    if result.run_result is not None and result.test_file.is_relative_to(BENCHMARKS_DIR):
+    if result.run_result is not None and result.test_file.is_relative_to(
+        BENCHMARKS_DIR
+    ):
         output = result.run_result.stdout.rstrip()
         if output:
             print(indent_block(output))
