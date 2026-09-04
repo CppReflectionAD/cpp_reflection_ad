@@ -51,12 +51,14 @@ jobs:
           echo "Run workflow 'Build Toolchains (Cache)' first to populate the cache."
           exit 1
 
-      - name: Install test runtime dependencies
+      - name: Configure CMake (gcc cached)
         run: |
-          sudo apt-get update
-          sudo apt-get install -y python3 git
+          cmake -S . -B build/cmake \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_COMPILER=/opt/toolchain-gcc/bin/g++
 
-      - name: Test AD (gcc cached)
-        run: |
-          python3 run_tests.py --compiler gcc --run-executables \
-            --gcc-executable /opt/toolchain-gcc/bin/g++
+      - name: Build tests (gcc cached)
+        run: cmake --build build/cmake --parallel
+
+      - name: Test AD with CTest
+        run: ctest --test-dir build/cmake --output-on-failure
