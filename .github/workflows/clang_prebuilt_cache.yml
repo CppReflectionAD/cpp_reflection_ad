@@ -51,13 +51,16 @@ jobs:
           echo "Run workflow 'Build Toolchains (Cache)' first to populate the cache."
           exit 1
 
-      - name: Install test runtime dependencies
+      - name: Configure CMake (clang cached)
         run: |
-          sudo apt-get update
-          sudo apt-get install -y python3 git
+          cmake -S . -B build/cmake \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_COMPILER=/opt/toolchain-clang/bin/clang++ \
+            -DCMAKE_CXX_FLAGS="-stdlib=libc++" \
+            -DCMAKE_EXE_LINKER_FLAGS="-stdlib=libc++ -L/opt/toolchain-clang/lib -Wl,-rpath,/opt/toolchain-clang/lib"
 
-      - name: Test AD (clang cached)
-        run: |
-          python3 run_tests.py --compiler clang --run-executables \
-            --clang-root /opt/toolchain-clang \
-            --gcc-toolchain /usr
+      - name: Build tests (clang cached)
+        run: cmake --build build/cmake --parallel
+
+      - name: Test AD with CTest
+        run: ctest --test-dir build/cmake --output-on-failure
