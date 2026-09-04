@@ -1,8 +1,6 @@
 // TEST-FLAGS: -O2
 
 #include "autograd.h"
-#include "forward_derivative.h"
-#include "reverse_derivative.h"
 
 #include "functions/5-black_scholes.h"
 
