@@ -51,7 +51,7 @@ struct Entry {
   int a, b;
   int ar, ac, br, bc;
   Tensor sa, sb;
-};                              // saved for backward
+}; // saved for backward
 static std::vector<Entry> tape; // reused across calls (clear keeps capacity)
 
 struct Var {

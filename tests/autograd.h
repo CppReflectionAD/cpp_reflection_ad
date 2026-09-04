@@ -636,6 +636,6 @@ consteval std::vector<Node> build_marked_nodes_reversed() {
   return rev;
 }
 
-}  // namespace ad
+} // namespace ad
 
 #endif // REFLECT_DEMO_AUTOGRAD_H

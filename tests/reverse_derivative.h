@@ -14,44 +14,68 @@ using std::meta::info;
 // path for scalar-output, many-input functions (the "autograd" case).
 template <info Fn, typename T = double, typename... Args>
 constexpr std::array<T, sizeof...(Args)> gradient_reverse(Args... args) {
-  static constexpr auto nodes = std::define_static_array(build_marked_nodes<Fn, ~0ull>());
-  static constexpr auto rnodes = std::define_static_array(build_marked_nodes_reversed<Fn, ~0ull>());
+  static constexpr auto nodes =
+      std::define_static_array(build_marked_nodes<Fn, ~0ull>());
+  static constexpr auto rnodes =
+      std::define_static_array(build_marked_nodes_reversed<Fn, ~0ull>());
   constexpr std::size_t N = nodes.size();
   constexpr std::size_t P = sizeof...(Args);
 
-  const T in[] = { static_cast<T>(args)... };
+  const T in[] = {static_cast<T>(args)...};
   T val[N] = {};
-  T adj[N] = {};   // adjoints, accumulated; zero-initialized
+  T adj[N] = {}; // adjoints, accumulated; zero-initialized
 
   // Forward (primal) sweep: compute the values the adjoint rules will read.
   template for (constexpr auto n : nodes) {
     if constexpr (n.nself) {
-      // A guarded node belongs to a branch; skip it unless that branch is taken.
+      // A guarded node belongs to a branch; skip it unless that branch is
+      // taken.
       if constexpr (n.guard != UNGUARDED) {
         if (!(val[n.guard] != T{0}))
           continue;
       }
-      if constexpr (n.op == OpKind::Input)       val[n.self] = in[n.self];
-      else if constexpr (n.op == OpKind::Const)  val[n.self] = static_cast<T>([: n.leaf :]);
-      else if constexpr (n.op == OpKind::Output) val[n.self] = val[n.a];
-      else if constexpr (n.op == OpKind::Add)    val[n.self] = val[n.a] + val[n.b];
-      else if constexpr (n.op == OpKind::Sub)    val[n.self] = val[n.a] - val[n.b];
-      else if constexpr (n.op == OpKind::Mul)    val[n.self] = val[n.a] * val[n.b];
-      else if constexpr (n.op == OpKind::Div)    val[n.self] = val[n.a] / val[n.b];
-      else if constexpr (n.op == OpKind::Neg)    val[n.self] = -val[n.a];
-      else if constexpr (n.op == OpKind::Sin)    val[n.self] = std::sin(val[n.a]);
-      else if constexpr (n.op == OpKind::Cos)    val[n.self] = std::cos(val[n.a]);
-      else if constexpr (n.op == OpKind::Exp)    val[n.self] = std::exp(val[n.a]);
-      else if constexpr (n.op == OpKind::Log)    val[n.self] = std::log(val[n.a]);
-      else if constexpr (n.op == OpKind::Sqrt)   val[n.self] = std::sqrt(val[n.a]);
-      else if constexpr (n.op == OpKind::Erfc)   val[n.self] = std::erfc(val[n.a]);
-      else if constexpr (n.op == OpKind::Lt)     val[n.self] = (val[n.a] <  val[n.b]) ? T{1} : T{0};
-      else if constexpr (n.op == OpKind::Le)     val[n.self] = (val[n.a] <= val[n.b]) ? T{1} : T{0};
-      else if constexpr (n.op == OpKind::Gt)     val[n.self] = (val[n.a] >  val[n.b]) ? T{1} : T{0};
-      else if constexpr (n.op == OpKind::Ge)     val[n.self] = (val[n.a] >= val[n.b]) ? T{1} : T{0};
-      else if constexpr (n.op == OpKind::Eq)     val[n.self] = (val[n.a] == val[n.b]) ? T{1} : T{0};
-      else if constexpr (n.op == OpKind::Ne)     val[n.self] = (val[n.a] != val[n.b]) ? T{1} : T{0};
-      else if constexpr (n.op == OpKind::Not)    val[n.self] = (val[n.a] != T{0}) ? T{0} : T{1};
+      if constexpr (n.op == OpKind::Input)
+        val[n.self] = in[n.self];
+      else if constexpr (n.op == OpKind::Const)
+        val[n.self] = static_cast<T>([:n.leaf:]);
+      else if constexpr (n.op == OpKind::Output)
+        val[n.self] = val[n.a];
+      else if constexpr (n.op == OpKind::Add)
+        val[n.self] = val[n.a] + val[n.b];
+      else if constexpr (n.op == OpKind::Sub)
+        val[n.self] = val[n.a] - val[n.b];
+      else if constexpr (n.op == OpKind::Mul)
+        val[n.self] = val[n.a] * val[n.b];
+      else if constexpr (n.op == OpKind::Div)
+        val[n.self] = val[n.a] / val[n.b];
+      else if constexpr (n.op == OpKind::Neg)
+        val[n.self] = -val[n.a];
+      else if constexpr (n.op == OpKind::Sin)
+        val[n.self] = std::sin(val[n.a]);
+      else if constexpr (n.op == OpKind::Cos)
+        val[n.self] = std::cos(val[n.a]);
+      else if constexpr (n.op == OpKind::Exp)
+        val[n.self] = std::exp(val[n.a]);
+      else if constexpr (n.op == OpKind::Log)
+        val[n.self] = std::log(val[n.a]);
+      else if constexpr (n.op == OpKind::Sqrt)
+        val[n.self] = std::sqrt(val[n.a]);
+      else if constexpr (n.op == OpKind::Erfc)
+        val[n.self] = std::erfc(val[n.a]);
+      else if constexpr (n.op == OpKind::Lt)
+        val[n.self] = (val[n.a] < val[n.b]) ? T{1} : T{0};
+      else if constexpr (n.op == OpKind::Le)
+        val[n.self] = (val[n.a] <= val[n.b]) ? T{1} : T{0};
+      else if constexpr (n.op == OpKind::Gt)
+        val[n.self] = (val[n.a] > val[n.b]) ? T{1} : T{0};
+      else if constexpr (n.op == OpKind::Ge)
+        val[n.self] = (val[n.a] >= val[n.b]) ? T{1} : T{0};
+      else if constexpr (n.op == OpKind::Eq)
+        val[n.self] = (val[n.a] == val[n.b]) ? T{1} : T{0};
+      else if constexpr (n.op == OpKind::Ne)
+        val[n.self] = (val[n.a] != val[n.b]) ? T{1} : T{0};
+      else if constexpr (n.op == OpKind::Not)
+        val[n.self] = (val[n.a] != T{0}) ? T{0} : T{1};
       // Reads val[b] only when val[a] leaves it undecided -- exactly when the
       // right operand was lowered as reachable, so its slot is written.
       else if constexpr (n.op == OpKind::And)
@@ -80,45 +104,74 @@ constexpr std::array<T, sizeof...(Args)> gradient_reverse(Args... args) {
           continue;
       }
       if constexpr (n.op == OpKind::Output) {
-        if constexpr (n.va) adj[n.a] += adj[n.self];
+        if constexpr (n.va)
+          adj[n.a] += adj[n.self];
       } else if constexpr (n.op == OpKind::Add) {
-        if constexpr (n.va) adj[n.a] += adj[n.self];
-        if constexpr (n.vb) adj[n.b] += adj[n.self];
+        if constexpr (n.va)
+          adj[n.a] += adj[n.self];
+        if constexpr (n.vb)
+          adj[n.b] += adj[n.self];
       } else if constexpr (n.op == OpKind::Sub) {
-        if constexpr (n.va) adj[n.a] += adj[n.self];
-        if constexpr (n.vb) adj[n.b] -= adj[n.self];
+        if constexpr (n.va)
+          adj[n.a] += adj[n.self];
+        if constexpr (n.vb)
+          adj[n.b] -= adj[n.self];
       } else if constexpr (n.op == OpKind::Mul) {
-        if constexpr (n.va) adj[n.a] += adj[n.self] * val[n.b];
-        if constexpr (n.vb) adj[n.b] += adj[n.self] * val[n.a];
+        if constexpr (n.va)
+          adj[n.a] += adj[n.self] * val[n.b];
+        if constexpr (n.vb)
+          adj[n.b] += adj[n.self] * val[n.a];
       } else if constexpr (n.op == OpKind::Div) {
-        if constexpr (n.va) adj[n.a] += adj[n.self] / val[n.b];
-        if constexpr (n.vb) adj[n.b] -= adj[n.self] * val[n.a] / (val[n.b] * val[n.b]);
+        if constexpr (n.va)
+          adj[n.a] += adj[n.self] / val[n.b];
+        if constexpr (n.vb)
+          adj[n.b] -= adj[n.self] * val[n.a] / (val[n.b] * val[n.b]);
       } else if constexpr (n.op == OpKind::Neg) {
-        if constexpr (n.va) adj[n.a] -= adj[n.self];
+        if constexpr (n.va)
+          adj[n.a] -= adj[n.self];
       } else if constexpr (n.op == OpKind::Sin) {
-        if constexpr (n.va) adj[n.a] += adj[n.self] * std::cos(val[n.a]);
+        if constexpr (n.va)
+          adj[n.a] += adj[n.self] * std::cos(val[n.a]);
       } else if constexpr (n.op == OpKind::Cos) {
-        if constexpr (n.va) adj[n.a] += -adj[n.self] * std::sin(val[n.a]);
+        if constexpr (n.va)
+          adj[n.a] += -adj[n.self] * std::sin(val[n.a]);
       } else if constexpr (n.op == OpKind::Exp) {
-        if constexpr (n.va) adj[n.a] += adj[n.self] * val[n.self];
+        if constexpr (n.va)
+          adj[n.a] += adj[n.self] * val[n.self];
       } else if constexpr (n.op == OpKind::Log) {
-        if constexpr (n.va) adj[n.a] += adj[n.self] / val[n.a];
+        if constexpr (n.va)
+          adj[n.a] += adj[n.self] / val[n.a];
       } else if constexpr (n.op == OpKind::Sqrt) {
-        if constexpr (n.va) adj[n.a] += adj[n.self] / (T{2} * val[n.self]);
+        if constexpr (n.va)
+          adj[n.a] += adj[n.self] / (T{2} * val[n.self]);
       } else if constexpr (n.op == OpKind::Erfc) {
         if constexpr (n.va)
-          adj[n.a] += adj[n.self] * -1 * two_over_root_pi * (std::exp(-1 * (val[n.a] * val[n.a])));
+          adj[n.a] += adj[n.self] * -1 * two_over_root_pi *
+                      (std::exp(-1 * (val[n.a] * val[n.a])));
       } else if constexpr (n.op == OpKind::Select) {
         // The adjoint flows only down the branch that was taken.
-        if constexpr (n.va) { if (val[n.cond] != T{0})    adj[n.a] += adj[n.self]; }
-        if constexpr (n.vb) { if (!(val[n.cond] != T{0})) adj[n.b] += adj[n.self]; }
+        if constexpr (n.va) {
+          if (val[n.cond] != T{0})
+            adj[n.a] += adj[n.self];
+        }
+        if constexpr (n.vb) {
+          if (!(val[n.cond] != T{0}))
+            adj[n.b] += adj[n.self];
+        }
       } else if constexpr (n.op == OpKind::Abs) {
-        if constexpr (n.va) adj[n.a] += (val[n.a] < T{0}) ? -adj[n.self] : adj[n.self];
+        if constexpr (n.va)
+          adj[n.a] += (val[n.a] < T{0}) ? -adj[n.self] : adj[n.self];
       } else if constexpr (n.op == OpKind::Max || n.op == OpKind::Min) {
         const bool takes_b = (n.op == OpKind::Max) ? (val[n.a] < val[n.b])
-                                                  : (val[n.b] < val[n.a]);
-        if constexpr (n.va) { if (!takes_b) adj[n.a] += adj[n.self]; }
-        if constexpr (n.vb) { if (takes_b)  adj[n.b] += adj[n.self]; }
+                                                   : (val[n.b] < val[n.a]);
+        if constexpr (n.va) {
+          if (!takes_b)
+            adj[n.a] += adj[n.self];
+        }
+        if constexpr (n.vb) {
+          if (takes_b)
+            adj[n.b] += adj[n.self];
+        }
       }
     }
   }
@@ -130,6 +183,6 @@ constexpr std::array<T, sizeof...(Args)> gradient_reverse(Args... args) {
   return g;
 }
 
-}  // namespace ad
+} // namespace ad
 
-#endif  // REFLECT_DEMO_REVERSE_DERIVATIVE_H
+#endif // REFLECT_DEMO_REVERSE_DERIVATIVE_H
