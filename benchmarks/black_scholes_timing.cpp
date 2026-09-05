@@ -1,4 +1,8 @@
-#include "autograd.h"
+// TEST-FLAGS: -O2
+
+#include "../tests/forward_derivative.h"
+#include "../tests/reverse_derivative.h"
+
 #include "functions/5-black_scholes.h"
 
 #include <array>
@@ -22,9 +26,10 @@ int main() {
     return 1;
   }
 
-  // Accumulators: [price, dS, dK, dv, dT]
-  std::array<double, 5> fwd_avg{};
-  std::array<double, 5> rev_avg{};
+  // Accumulators: [dS, dK, dv, dT]
+  std::array<double, 4> fwd_avg{};
+  std::array<double, 4> rev_avg{};
+  double price_avg = 0;
 
   // -----------------------------------------------------------------------
   // Forward-mode benchmark: gradient_of (4 forward passes per iteration)
@@ -36,12 +41,11 @@ int main() {
     double v = vol_distr(generator);
     double T = time_distr(generator);
 
-    fwd_avg[0] += call_price(S, K, v, T);
     auto grad = ad::gradient_of<^^call_price>(S, K, v, T);
-    fwd_avg[1] += grad[0]; // dS
-    fwd_avg[2] += grad[1]; // dK
-    fwd_avg[3] += grad[2]; // dv
-    fwd_avg[4] += grad[3]; // dT
+    fwd_avg[0] += grad[0]; // dS
+    fwd_avg[1] += grad[1]; // dK
+    fwd_avg[2] += grad[2]; // dv
+    fwd_avg[3] += grad[3]; // dT
   }
   auto t1 = std::chrono::high_resolution_clock::now();
   auto ms_fwd =
@@ -59,16 +63,33 @@ int main() {
     double v = vol_distr(generator);
     double T = time_distr(generator);
 
-    rev_avg[0] += call_price(S, K, v, T);
     auto grad = ad::gradient_reverse<^^call_price>(S, K, v, T);
-    rev_avg[1] += grad[0]; // dS
-    rev_avg[2] += grad[1]; // dK
-    rev_avg[3] += grad[2]; // dv
-    rev_avg[4] += grad[3]; // dT
+    rev_avg[0] += grad[0]; // dS
+    rev_avg[1] += grad[1]; // dK
+    rev_avg[2] += grad[2]; // dv
+    rev_avg[3] += grad[3]; // dT
   }
   auto t3 = std::chrono::high_resolution_clock::now();
   auto ms_rev =
       std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count();
+
+  // -----------------------------------------------------------------------
+  // Benchmark the function call itself
+  // -----------------------------------------------------------------------
+  // Re-seed so both benchmarks see the same inputs.
+  generator.seed(123);
+  auto t4 = std::chrono::high_resolution_clock::now();
+  for (std::size_t j = 0; j < iters; ++j) {
+    double S = stock_distr(generator);
+    double K = stock_distr(generator);
+    double v = vol_distr(generator);
+    double T = time_distr(generator);
+
+    price_avg += call_price(S, K, v, T);
+  }
+  auto t5 = std::chrono::high_resolution_clock::now();
+  auto ms_fn =
+      std::chrono::duration_cast<std::chrono::milliseconds>(t5 - t4).count();
 
   // -----------------------------------------------------------------------
   // Report
@@ -78,21 +99,24 @@ int main() {
 
   std::cout << "=== Forward mode (gradient_of, " << iters
             << " iters) ===" << std::endl;
-  std::cout << "  price  = " << fwd_avg[0] / n << std::endl;
-  std::cout << "  dS     = " << fwd_avg[1] / n << std::endl;
-  std::cout << "  dK     = " << fwd_avg[2] / n << std::endl;
-  std::cout << "  dv     = " << fwd_avg[3] / n << std::endl;
-  std::cout << "  dT     = " << fwd_avg[4] / n << std::endl;
+  std::cout << "  dS     = " << fwd_avg[0] / n << std::endl;
+  std::cout << "  dK     = " << fwd_avg[1] / n << std::endl;
+  std::cout << "  dv     = " << fwd_avg[2] / n << std::endl;
+  std::cout << "  dT     = " << fwd_avg[3] / n << std::endl;
   std::cout << "  time   = " << ms_fwd << " ms" << std::endl;
 
   std::cout << "=== Reverse mode (gradient_reverse, " << iters
             << " iters) ===" << std::endl;
-  std::cout << "  price  = " << rev_avg[0] / n << std::endl;
-  std::cout << "  dS     = " << rev_avg[1] / n << std::endl;
-  std::cout << "  dK     = " << rev_avg[2] / n << std::endl;
-  std::cout << "  dv     = " << rev_avg[3] / n << std::endl;
-  std::cout << "  dT     = " << rev_avg[4] / n << std::endl;
+  std::cout << "  dS     = " << rev_avg[0] / n << std::endl;
+  std::cout << "  dK     = " << rev_avg[1] / n << std::endl;
+  std::cout << "  dv     = " << rev_avg[2] / n << std::endl;
+  std::cout << "  dT     = " << rev_avg[3] / n << std::endl;
   std::cout << "  time   = " << ms_rev << " ms" << std::endl;
+
+  std::cout << "=== Evaluation of the primary function (" << iters
+            << " iters) ===" << std::endl;
+  std::cout << "  Price  = " << price_avg / n << std::endl;
+  std::cout << "  time   = " << ms_fn << " ms" << std::endl;
 
   return 0;
 }

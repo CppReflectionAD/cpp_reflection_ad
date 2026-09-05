@@ -43,6 +43,9 @@ python3 run_tests.py --compiler clang --run-executables
 # a single test; --verbose prints the exact compile commands
 python3 run_tests.py --compiler clang --tests 'ad_scalar_demo.cpp' --run-executables
 
+# a single benchmark (ITERATIONS=... tunes the workload)
+ITERATIONS=1000000 python3 run_tests.py --compiler clang --benchmarks 'black_scholes_timing.cpp' --run-executables
+
 # use a clang built elsewhere (or set CLANG_P2996_ROOT)
 python3 run_tests.py --compiler clang --clang-root /path/to/clang-p2996 --run-executables
 ```
@@ -60,10 +63,7 @@ Each demo prints its own `ALL CHECKS PASSED` / `ALL MATCH` on success.
     - `python3 run_tests.py --compiler gcc --build-compilers`
 4. In VS Code CMake Tools, select one of these kits:
     - `Clang reflection`
-    - `GCC reflection (macOS)`
-    - `GCC reflection (Linux)`
-
-Use the kit that matches your host OS: macOS -> `GCC reflection (macOS)`, Linux -> `GCC reflection (Linux)`.
+    - `GCC reflection`
 
 You should now be able to build and debug the tests in VSCode.
 

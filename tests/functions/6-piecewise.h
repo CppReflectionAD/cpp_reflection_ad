@@ -25,8 +25,7 @@ inline double blend(double flag, double x, double y) {
 // Nested ternaries, so the inner branches carry a conjoined predicate
 // (`And(outer, inner)`) rather than a bare one.
 inline double staircase(double x) {
-  return x < 1.0 ? x * x
-                 : (x < 2.0 ? 2.0 * x - 1.0 : std::exp(x - 2.0) + 2.0);
+  return x < 1.0 ? x * x : (x < 2.0 ? 2.0 * x - 1.0 : std::exp(x - 2.0) + 2.0);
 }
 
 // A branch inside a larger expression, sharing subexpressions with it, so the
@@ -62,8 +61,6 @@ inline double window(double x) { return (x < 0.0 || x > 1.0) ? 0.0 : x; }
 // a mis-mapping (`<=` lowered as `<`) would otherwise go unnoticed.
 inline double ramp_le(double x) { return x <= 1.0 ? x * x : 2.0 * x - 1.0; }
 inline double ramp_ge(double x) { return x >= 0.0 ? x : -x; }
-inline double pick_eq(double x, double y) {
-  return x == 2.0 ? x * y : x + y;
-}
+inline double pick_eq(double x, double y) { return x == 2.0 ? x * y : x + y; }
 
 #endif

@@ -267,10 +267,11 @@ check_continuity(const std::array<Interval, P> &input_bounds) {
       guard = truth[n.guard];
 
     if (guard == Tri::False) {
-      // Unreachable. False (not Unknown) propagates deadness into nested guards.
+      // Unreachable. False (not Unknown) propagates deadness into nested
+      // guards.
       ranges[n.self] = detail_cont::failed();
       truth[n.self] = Tri::False;
-      poisoned[n.self] = false;   // never read: nothing live consumes a dead node
+      poisoned[n.self] = false; // never read: nothing live consumes a dead node
 
     } else {
       // Only a node we can prove runs has its preconditions enforced; under an
@@ -278,10 +279,9 @@ check_continuity(const std::array<Interval, P> &input_bounds) {
       const bool certainly_runs = (guard == Tri::True);
 
       // Inherited; the decision points (comparisons, Select, Output) refuse it.
-      const bool operand_poisoned =
-          (op_has_a(n.op) && poisoned[n.a]) ||
-          (op_has_b(n.op) && poisoned[n.b]) ||
-          (op_has_cond(n.op) && poisoned[n.cond]);
+      const bool operand_poisoned = (op_has_a(n.op) && poisoned[n.a]) ||
+                                    (op_has_b(n.op) && poisoned[n.b]) ||
+                                    (op_has_cond(n.op) && poisoned[n.cond]);
       poisoned[n.self] = operand_poisoned;
 
       Interval a = op_has_a(n.op) ? ranges[n.a] : detail_cont::failed();
@@ -357,7 +357,7 @@ check_continuity(const std::array<Interval, P> &input_bounds) {
       } else if constexpr (n.op == OpKind::Erfc) {
         ranges[n.self] = detail_cont::erfc_range(a);
 
-      // --- the kinks: continuous everywhere, no precondition ---------------
+        // --- the kinks: continuous everywhere, no precondition ---------------
       } else if constexpr (n.op == OpKind::Abs) {
         ranges[n.self] = detail_cont::abs_range(a);
 
@@ -367,29 +367,36 @@ check_continuity(const std::array<Interval, P> &input_bounds) {
       } else if constexpr (n.op == OpKind::Min) {
         ranges[n.self] = detail_cont::min_range(a, b);
 
-      // --- conditions: carry a truth value rather than a useful range ------
+        // --- conditions: carry a truth value rather than a useful range ------
       } else if constexpr (n.op == OpKind::Lt) {
-        truth[n.self] = operand_poisoned ? Tri::Unknown : detail_cont::tri_lt(a, b);
+        truth[n.self] =
+            operand_poisoned ? Tri::Unknown : detail_cont::tri_lt(a, b);
         ranges[n.self] = {0.0, 1.0};
 
       } else if constexpr (n.op == OpKind::Le) {
-        truth[n.self] = operand_poisoned ? Tri::Unknown : detail_cont::tri_le(a, b);
+        truth[n.self] =
+            operand_poisoned ? Tri::Unknown : detail_cont::tri_le(a, b);
         ranges[n.self] = {0.0, 1.0};
 
       } else if constexpr (n.op == OpKind::Gt) {
-        truth[n.self] = operand_poisoned ? Tri::Unknown : detail_cont::tri_lt(b, a);
+        truth[n.self] =
+            operand_poisoned ? Tri::Unknown : detail_cont::tri_lt(b, a);
         ranges[n.self] = {0.0, 1.0};
 
       } else if constexpr (n.op == OpKind::Ge) {
-        truth[n.self] = operand_poisoned ? Tri::Unknown : detail_cont::tri_le(b, a);
+        truth[n.self] =
+            operand_poisoned ? Tri::Unknown : detail_cont::tri_le(b, a);
         ranges[n.self] = {0.0, 1.0};
 
       } else if constexpr (n.op == OpKind::Eq) {
-        truth[n.self] = operand_poisoned ? Tri::Unknown : detail_cont::tri_eq(a, b);
+        truth[n.self] =
+            operand_poisoned ? Tri::Unknown : detail_cont::tri_eq(a, b);
         ranges[n.self] = {0.0, 1.0};
 
       } else if constexpr (n.op == OpKind::Ne) {
-        truth[n.self] = operand_poisoned ? Tri::Unknown : detail_cont::tri_not(detail_cont::tri_eq(a, b));
+        truth[n.self] = operand_poisoned
+                            ? Tri::Unknown
+                            : detail_cont::tri_not(detail_cont::tri_eq(a, b));
         ranges[n.self] = {0.0, 1.0};
 
       } else if constexpr (n.op == OpKind::And) {

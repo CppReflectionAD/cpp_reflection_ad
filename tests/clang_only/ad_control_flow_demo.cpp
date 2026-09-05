@@ -13,6 +13,9 @@
 #include "../test_simple_include.hpp"
 
 #include "../autograd.h"
+#include "../forward_derivative.h"
+#include "../recursive_higher_order_derivative.h"
+#include "../reverse_derivative.h"
 
 #include "../functions/6-piecewise.h"
 
@@ -36,7 +39,7 @@ template <std::meta::info Fn> consteval bool lowers_to(ad::OpKind op) {
   return false;
 }
 
-}  // namespace
+} // namespace
 
 // <algorithm>'s max/min, as opposed to <cmath>'s fmax/fmin.
 inline double algo_max(double x, double y) { return std::max(x, y); }
@@ -86,11 +89,11 @@ int main() {
   {
     double const x = 1.7, y = 2.3;
 
-    auto const on = ad::gradient_reverse<^^blend>(1.0, x, y);   // x*y
+    auto const on = ad::gradient_reverse<^^blend>(1.0, x, y); // x*y
     EXPECT_NEAR_ABS(on[1], y, 1e-12);
     EXPECT_NEAR_ABS(on[2], x, 1e-12);
 
-    auto const off = ad::gradient_reverse<^^blend>(0.0, x, y);  // x+y
+    auto const off = ad::gradient_reverse<^^blend>(0.0, x, y); // x+y
     EXPECT_NEAR_ABS(off[1], 1.0, 1e-12);
     EXPECT_NEAR_ABS(off[2], 1.0, 1e-12);
 
@@ -101,7 +104,8 @@ int main() {
 
   // --- nested ternaries: each inner branch carries a conjoined predicate ---
   {
-    EXPECT_NEAR_ABS((ad::forward_derivative<^^staircase, 0>(0.5)), 2 * 0.5, 1e-12);
+    EXPECT_NEAR_ABS((ad::forward_derivative<^^staircase, 0>(0.5)), 2 * 0.5,
+                    1e-12);
     EXPECT_NEAR_ABS((ad::forward_derivative<^^staircase, 0>(1.5)), 2.0, 1e-12);
     EXPECT_NEAR_ABS((ad::forward_derivative<^^staircase, 0>(3.0)),
                     std::exp(3.0 - 2.0), 1e-12);
@@ -110,8 +114,8 @@ int main() {
     // function, taken inside each piece. Both sides must involve the
     // differentiator, or this checks nothing about it.
     for (double x : {0.5, 1.5, 3.0}) {
-      EXPECT_NEAR_ABS(ad::gradient_reverse<^^staircase>(x)[0],
-                      fd(staircase, x), 1e-6);
+      EXPECT_NEAR_ABS(ad::gradient_reverse<^^staircase>(x)[0], fd(staircase, x),
+                      1e-6);
     }
   }
 
@@ -130,17 +134,24 @@ int main() {
 
   // --- abs / min / max -----------------------------------------------------
   {
-    EXPECT_NEAR_ABS((ad::forward_derivative<^^abs_scaled, 0>(3.0, 2.0)), 2.0, 1e-12);
-    EXPECT_NEAR_ABS((ad::forward_derivative<^^abs_scaled, 0>(-3.0, 2.0)), -2.0, 1e-12);
+    EXPECT_NEAR_ABS((ad::forward_derivative<^^abs_scaled, 0>(3.0, 2.0)), 2.0,
+                    1e-12);
+    EXPECT_NEAR_ABS((ad::forward_derivative<^^abs_scaled, 0>(-3.0, 2.0)), -2.0,
+                    1e-12);
     // d/ds |x| * s = |x|
-    EXPECT_NEAR_ABS((ad::forward_derivative<^^abs_scaled, 1>(-3.0, 2.0)), 3.0, 1e-12);
+    EXPECT_NEAR_ABS((ad::forward_derivative<^^abs_scaled, 1>(-3.0, 2.0)), 3.0,
+                    1e-12);
 
     // clamp: 1 strictly inside the window, 0 outside it.
-    EXPECT_NEAR_ABS((ad::forward_derivative<^^clamp_to, 0>(0.5, 0.0, 1.0)), 1.0, 1e-12);
-    EXPECT_NEAR_ABS((ad::forward_derivative<^^clamp_to, 0>(-1.0, 0.0, 1.0)), 0.0, 1e-12);
-    EXPECT_NEAR_ABS((ad::forward_derivative<^^clamp_to, 0>(2.0, 0.0, 1.0)), 0.0, 1e-12);
+    EXPECT_NEAR_ABS((ad::forward_derivative<^^clamp_to, 0>(0.5, 0.0, 1.0)), 1.0,
+                    1e-12);
+    EXPECT_NEAR_ABS((ad::forward_derivative<^^clamp_to, 0>(-1.0, 0.0, 1.0)),
+                    0.0, 1e-12);
+    EXPECT_NEAR_ABS((ad::forward_derivative<^^clamp_to, 0>(2.0, 0.0, 1.0)), 0.0,
+                    1e-12);
     // ...and below the window the gradient flows to `lo` instead.
-    EXPECT_NEAR_ABS((ad::forward_derivative<^^clamp_to, 1>(-1.0, 0.0, 1.0)), 1.0, 1e-12);
+    EXPECT_NEAR_ABS((ad::forward_derivative<^^clamp_to, 1>(-1.0, 0.0, 1.0)),
+                    1.0, 1e-12);
   }
 
   // --- short-circuit: `&&` must not evaluate 1/x at x == 0 -----------------
@@ -192,21 +203,25 @@ int main() {
 
     auto const below = ad::gradient_reverse<^^clamp_to>(-1.0, 0.0, 1.0);
     EXPECT_NEAR_ABS(below[0], 0.0, 1e-12);
-    EXPECT_NEAR_ABS(below[1], 1.0, 1e-12);   // gradient flows to `lo`
+    EXPECT_NEAR_ABS(below[1], 1.0, 1e-12); // gradient flows to `lo`
 
     auto const above = ad::gradient_reverse<^^clamp_to>(2.0, 0.0, 1.0);
     EXPECT_NEAR_ABS(above[0], 0.0, 1e-12);
-    EXPECT_NEAR_ABS(above[2], 1.0, 1e-12);   // ...and to `hi`
+    EXPECT_NEAR_ABS(above[2], 1.0, 1e-12); // ...and to `hi`
 
     auto const g = ad::gradient_reverse<^^abs_scaled>(-3.0, 2.0);
     EXPECT_NEAR_ABS(g[0], -2.0, 1e-12);
     EXPECT_NEAR_ABS(g[1], 3.0, 1e-12);
 
     // second order: s*|x| is piecewise linear in x, and d2/dx ds = sign(x).
-    EXPECT_NEAR_ABS((ad::partial_derivative<^^abs_scaled, 0, 0>(-3.0, 2.0)), 0.0, 1e-12);
-    EXPECT_NEAR_ABS((ad::partial_derivative<^^abs_scaled, 0, 1>(-3.0, 2.0)), -1.0, 1e-12);
-    EXPECT_NEAR_ABS((ad::partial_derivative<^^abs_scaled, 0, 1>(3.0, 2.0)), 1.0, 1e-12);
-    EXPECT_NEAR_ABS((ad::partial_derivative<^^clamp_to, 0, 0>(0.5, 0.0, 1.0)), 0.0, 1e-12);
+    EXPECT_NEAR_ABS((ad::partial_derivative<^^abs_scaled, 0, 0>(-3.0, 2.0)),
+                    0.0, 1e-12);
+    EXPECT_NEAR_ABS((ad::partial_derivative<^^abs_scaled, 0, 1>(-3.0, 2.0)),
+                    -1.0, 1e-12);
+    EXPECT_NEAR_ABS((ad::partial_derivative<^^abs_scaled, 0, 1>(3.0, 2.0)), 1.0,
+                    1e-12);
+    EXPECT_NEAR_ABS((ad::partial_derivative<^^clamp_to, 0, 0>(0.5, 0.0, 1.0)),
+                    0.0, 1e-12);
   }
 
   // --- <algorithm>'s max/min differentiate like <cmath>'s -------------------
@@ -227,7 +242,8 @@ int main() {
     // x^2 below the switch (f'' = 2), linear above it (f'' = 0).
     EXPECT_NEAR_ABS((ad::partial_derivative<^^ramp_le, 0, 0>(0.5)), 2.0, 1e-12);
     EXPECT_NEAR_ABS((ad::partial_derivative<^^ramp_le, 0, 0>(3.0)), 0.0, 1e-12);
-    EXPECT_NEAR_ABS((ad::partial_derivative<^^ramp_ge, 0, 0>(-2.0)), 0.0, 1e-12);
+    EXPECT_NEAR_ABS((ad::partial_derivative<^^ramp_ge, 0, 0>(-2.0)), 0.0,
+                    1e-12);
     EXPECT_NEAR_ABS((ad::partial_derivative<^^window, 0, 0>(0.5)), 0.0, 1e-12);
   }
 
@@ -279,8 +295,10 @@ int main() {
     EXPECT_NEAR_ABS((ad::partial_derivative<^^relu, 0, 0>(-2.0)), 0.0, 1e-12);
 
     // staircase: x^2 below 1 (f'' = 2), exp(x-2) above 2 (f'' = exp(x-2)).
-    EXPECT_NEAR_ABS((ad::partial_derivative<^^staircase, 0, 0>(0.5)), 2.0, 1e-12);
-    EXPECT_NEAR_ABS((ad::partial_derivative<^^staircase, 0, 0>(1.5)), 0.0, 1e-12);
+    EXPECT_NEAR_ABS((ad::partial_derivative<^^staircase, 0, 0>(0.5)), 2.0,
+                    1e-12);
+    EXPECT_NEAR_ABS((ad::partial_derivative<^^staircase, 0, 0>(1.5)), 0.0,
+                    1e-12);
     EXPECT_NEAR_ABS((ad::partial_derivative<^^staircase, 0, 0>(3.0)),
                     std::exp(1.0), 1e-10);
 
@@ -312,8 +330,10 @@ int main() {
   static_assert((ad::forward_derivative<^^relu, 0, double>(-2.0)) == 0.0);
   static_assert((ad::gradient_reverse<^^relu, double>(2.0))[0] == 1.0);
   static_assert((ad::partial_derivative<^^relu, 0, 0>(2.0)) == 0.0);
-  static_assert((ad::gradient_reverse<^^blend, double>(1.0, 3.0, 5.0))[1] == 5.0);
-  static_assert((ad::gradient_reverse<^^blend, double>(0.0, 3.0, 5.0))[1] == 1.0);
+  static_assert((ad::gradient_reverse<^^blend, double>(1.0, 3.0, 5.0))[1] ==
+                5.0);
+  static_assert((ad::gradient_reverse<^^blend, double>(0.0, 3.0, 5.0))[1] ==
+                1.0);
 
   TEST_END;
 }
