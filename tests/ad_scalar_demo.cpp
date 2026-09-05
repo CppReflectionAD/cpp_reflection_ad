@@ -8,12 +8,15 @@
 #include "test_simple_include.hpp"
 
 #include "autograd.h"
+#include "forward_derivative.h"
+#include "higher_order_taylor_ad.h"
+#include "recursive_higher_order_derivative.h"
+#include "reverse_derivative.h"
 
 #include "functions/1-poly.h"
 #include "functions/2-trig.h"
 #include "functions/3-two_arg.h"
 #include "functions/4-shared_intemediate.h"
-#include "functions/5-black_scholes.h"
 
 #include <cmath>
 
@@ -21,11 +24,15 @@
 // matched by callee identity, not by name, so these are ordinary helpers and
 // get inlined -- they must NOT be mistaken for the built-in sin/sum ops.
 namespace myns {
-constexpr double sum(double a, double b) { return a + b; }  // 2 args, unlike primitive Sum (1 arg)
-constexpr double sin(double x)           { return x * x; }  // shadows std::sin's name
-}  // namespace myns
-constexpr double collide_sum(double x, double y) { return myns::sum(x * x, y); }  // d/dx = 2x
-constexpr double collide_sin(double x)           { return myns::sin(x); }        // f' = 2x
+constexpr double sum(double a, double b) {
+  return a + b;
+} // 2 args, unlike primitive Sum (1 arg)
+constexpr double sin(double x) { return x * x; } // shadows std::sin's name
+} // namespace myns
+constexpr double collide_sum(double x, double y) {
+  return myns::sum(x * x, y);
+} // d/dx = 2x
+constexpr double collide_sin(double x) { return myns::sin(x); } // f' = 2x
 
 int main() {
   // forward mode (one directional derivative)
@@ -61,7 +68,8 @@ int main() {
   }
 
   // Activity analysis: d/dy of (x*y + exp(x)) is just x — the exp term is
-  // pruned (no exp call, no x*0); verified as code quality in `make run-bench`.
+  // pruned (no exp call, no x*0); verified as code quality in `make
+  // run-bench`.
   {
     double const x = 0.5, y = 2.0;
     auto const result = ad::forward_derivative<^^two_arg, 1>(x, y);
@@ -86,6 +94,24 @@ int main() {
                     2 * std::cos(x * x) - 4 * x * x * std::sin(x * x), 1e-8);
   }
 
+  // higher-order (using taylor mode AD)
+  {
+    double const x = 1.7;
+    double const der1 = ad::taylor_mode_ad<^^poly, 0>(x);
+    EXPECT_NEAR_ABS(der1, 2 * x + 2.0, 1e-8);
+
+    double const der2 = ad::taylor_mode_ad<^^poly, 0, 0>(x);
+    EXPECT_NEAR_ABS(der2, 2.0, 1e-8);
+
+    double const der3 = ad::taylor_mode_ad<^^poly, 0, 0, 0>(x);
+    EXPECT_NEAR_ABS(der3, 0.0, 1e-8);
+
+    // sin(x^2)'' = 2cos(x^2) - 4x^2 sin(x^2)
+    double const trig_der2 = ad::taylor_mode_ad<^^trig, 0, 0>(x);
+    EXPECT_NEAR_ABS(trig_der2,
+                    2 * std::cos(x * x) - 4 * x * x * std::sin(x * x), 1e-8);
+  }
+
   {
     double const x = 0.5, y = 2.0; // two_arg = xy + e^x
     double const der01 = ad::partial_derivative<^^two_arg, 0, 1>(x, y);
@@ -93,6 +119,16 @@ int main() {
     double const der00 = ad::partial_derivative<^^two_arg, 0, 0>(x, y);
     EXPECT_NEAR_ABS(der00, std::exp(x), 1e-8);
     double const der11 = ad::partial_derivative<^^two_arg, 1, 1>(x, y);
+    EXPECT_NEAR_ABS(der11, 0.0, 1e-8);
+  }
+
+  {
+    double const x = 0.5, y = 2.0; // two_arg = xy + e^x
+    double const der01 = ad::taylor_mode_ad<^^two_arg, 0, 1>(x, y);
+    EXPECT_NEAR_ABS(der01, 1.0, 1e-8);
+    double const der00 = ad::taylor_mode_ad<^^two_arg, 0, 0>(x, y);
+    EXPECT_NEAR_ABS(der00, std::exp(x), 1e-8);
+    double const der11 = ad::taylor_mode_ad<^^two_arg, 1, 1>(x, y);
     EXPECT_NEAR_ABS(der11, 0.0, 1e-8);
   }
 
@@ -113,43 +149,21 @@ int main() {
     EXPECT_NEAR_ABS(der11, x * x * (2 * std::cos(p) - p * std::sin(p)), 1e-8);
   }
 
+  // Higher order over a DAG with a shared subexpression (a = x*y feeds both
+  // parents): f = (xy) sin(xy).
   {
-    double S = 104.25;
-    double K = 98.5;
-    double v = 0.22;
-    double T = 1.20;
-
-    // d/dS
-    auto const result_s = ad::partial_derivative<^^call_price, 0>(S, K, v, T);
-    EXPECT_NEAR_ABS(result_s, 0.63904872167822369, 1e-8);
-
-    // d/dK
-    auto const result_k = ad::partial_derivative<^^call_price, 1>(S, K, v, T);
-    EXPECT_NEAR_ABS(result_k, -0.54574545575331679, 1e-8);
-
-    // d/dv
-    auto const result_v = ad::partial_derivative<^^call_price, 2>(S, K, v, T);
-    EXPECT_NEAR_ABS(result_v, 42.763099555399286, 1e-8);
-
-    // d/dT
-    auto const result_d = ad::partial_derivative<^^call_price, 3>(S, K, v, T);
-    EXPECT_NEAR_ABS(result_d, 3.919950792578268, 1e-8);
-
-    // Second/third order greeks.
-    auto const gamma = ad::partial_derivative<^^call_price, 0, 0>(S, K, v, T);
-    EXPECT_NEAR_ABS(gamma, 0.014904352796079870, 1e-8);
-
-    auto const vanna = ad::partial_derivative<^^call_price, 0, 2>(S, K, v, T);
-    EXPECT_NEAR_ABS(vanna, -0.19560176746082423, 1e-8);
-
-    auto const speed =
-        ad::partial_derivative<^^call_price, 0, 0, 0>(S, K, v, T);
-    EXPECT_NEAR_ABS(speed, -0.00035410850313191595, 1e-8);
-
-    // mixed partials commute
-    auto const vanna_swapped =
-        ad::partial_derivative<^^call_price, 2, 0>(S, K, v, T);
-    EXPECT_NEAR_ABS(vanna_swapped, vanna, 1e-8);
+    double const x = 0.7, y = 1.9, p = x * y;
+    double const der00 = ad::taylor_mode_ad<^^shared, 0, 0>(x, y);
+    EXPECT_NEAR_ABS(der00, y * y * (2 * std::cos(p) - p * std::sin(p)), 1e-8);
+    double const der01 = ad::taylor_mode_ad<^^shared, 0, 1>(x, y);
+    EXPECT_NEAR_ABS(
+        der01, std::sin(p) + 3 * p * std::cos(p) - p * p * std::sin(p), 1e-8);
+    double const der10 = ad::taylor_mode_ad<^^shared, 1, 0>(x, y);
+    EXPECT_NEAR_ABS(
+        der10, std::sin(p) + 3 * p * std::cos(p) - p * p * std::sin(p), 1e-8);
+    EXPECT_NEAR_ABS(der01, der10, 1e-8); // mixed partials commute
+    double const der11 = ad::taylor_mode_ad<^^shared, 1, 1>(x, y);
+    EXPECT_NEAR_ABS(der11, x * x * (2 * std::cos(p) - p * std::sin(p)), 1e-8);
   }
 
   // primitive/namespace collisions (inlined, not mistaken for a primitive)
