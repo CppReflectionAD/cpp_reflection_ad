@@ -1,5 +1,5 @@
 #include "is_invertible.hpp"
-#include "../test_simple_include.hpp"
+#include "test_simple_include.hpp"
 
 #include <cmath>
 
@@ -56,7 +56,7 @@ int main() {
   {
     constexpr auto r = ad::invertibility_result<^^fn_square>();
     EXPECT_FALSE(r.invertible);
-    EXPECT_EQUAL(r.failing_op, ad::OpKind::Output);
+    EXPECT_EQUAL(r.failing_op, ad::OpKind::Mul);
   }
 
   {
