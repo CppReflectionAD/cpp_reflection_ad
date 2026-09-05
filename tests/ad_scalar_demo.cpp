@@ -9,6 +9,8 @@
 
 #include "autograd.h"
 #include "forward_derivative.h"
+#include "higher_order_taylor_ad.h"
+
 #include "recursive_higher_order_derivative.h"
 #include "reverse_derivative.h"
 
@@ -93,6 +95,24 @@ int main() {
                     2 * std::cos(x * x) - 4 * x * x * std::sin(x * x), 1e-8);
   }
 
+  // higher-order (using taylor mode AD)
+  {
+    double const x = 1.7;
+    double const der1 = ad::taylor_mode_ad<^^poly, 0>(x);
+    EXPECT_NEAR_ABS(der1, 2 * x + 2.0, 1e-8);
+
+    double const der2 = ad::taylor_mode_ad<^^poly, 0, 0>(x);
+    EXPECT_NEAR_ABS(der2, 2.0, 1e-8);
+
+    double const der3 = ad::taylor_mode_ad<^^poly, 0, 0, 0>(x);
+    EXPECT_NEAR_ABS(der3, 0.0, 1e-8);
+
+    // sin(x^2)'' = 2cos(x^2) - 4x^2 sin(x^2)
+    double const trig_der2 = ad::taylor_mode_ad<^^trig, 0, 0>(x);
+    EXPECT_NEAR_ABS(trig_der2,
+                    2 * std::cos(x * x) - 4 * x * x * std::sin(x * x), 1e-8);
+  }
+
   {
     double const x = 0.5, y = 2.0; // two_arg = xy + e^x
     double const der01 = ad::partial_derivative<^^two_arg, 0, 1>(x, y);
@@ -100,6 +120,16 @@ int main() {
     double const der00 = ad::partial_derivative<^^two_arg, 0, 0>(x, y);
     EXPECT_NEAR_ABS(der00, std::exp(x), 1e-8);
     double const der11 = ad::partial_derivative<^^two_arg, 1, 1>(x, y);
+    EXPECT_NEAR_ABS(der11, 0.0, 1e-8);
+  }
+
+  {
+    double const x = 0.5, y = 2.0; // two_arg = xy + e^x
+    double const der01 = ad::taylor_mode_ad<^^two_arg, 0, 1>(x, y);
+    EXPECT_NEAR_ABS(der01, 1.0, 1e-8);
+    double const der00 = ad::taylor_mode_ad<^^two_arg, 0, 0>(x, y);
+    EXPECT_NEAR_ABS(der00, std::exp(x), 1e-8);
+    double const der11 = ad::taylor_mode_ad<^^two_arg, 1, 1>(x, y);
     EXPECT_NEAR_ABS(der11, 0.0, 1e-8);
   }
 
@@ -117,6 +147,23 @@ int main() {
         der10, std::sin(p) + 3 * p * std::cos(p) - p * p * std::sin(p), 1e-8);
     EXPECT_NEAR_ABS(der01, der10, 1e-8); // mixed partials commute
     double const der11 = ad::partial_derivative<^^shared, 1, 1>(x, y);
+    EXPECT_NEAR_ABS(der11, x * x * (2 * std::cos(p) - p * std::sin(p)), 1e-8);
+  }
+
+  // Higher order over a DAG with a shared subexpression (a = x*y feeds both
+  // parents): f = (xy) sin(xy).
+  {
+    double const x = 0.7, y = 1.9, p = x * y;
+    double const der00 = ad::taylor_mode_ad<^^shared, 0, 0>(x, y);
+    EXPECT_NEAR_ABS(der00, y * y * (2 * std::cos(p) - p * std::sin(p)), 1e-8);
+    double const der01 = ad::taylor_mode_ad<^^shared, 0, 1>(x, y);
+    EXPECT_NEAR_ABS(
+        der01, std::sin(p) + 3 * p * std::cos(p) - p * p * std::sin(p), 1e-8);
+    double const der10 = ad::taylor_mode_ad<^^shared, 1, 0>(x, y);
+    EXPECT_NEAR_ABS(
+        der10, std::sin(p) + 3 * p * std::cos(p) - p * p * std::sin(p), 1e-8);
+    EXPECT_NEAR_ABS(der01, der10, 1e-8); // mixed partials commute
+    double const der11 = ad::taylor_mode_ad<^^shared, 1, 1>(x, y);
     EXPECT_NEAR_ABS(der11, x * x * (2 * std::cos(p) - p * std::sin(p)), 1e-8);
   }
 
