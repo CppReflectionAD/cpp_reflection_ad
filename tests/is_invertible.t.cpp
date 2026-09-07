@@ -1,6 +1,8 @@
 #include "is_invertible.hpp"
 #include <test_simple_include.hpp>
 
+#include "mc_sim/normal_distribution.hpp"
+
 #include <cmath>
 
 // ---------------------------------------------------------------------------
@@ -15,7 +17,10 @@ inline double fn_log_exp(double x) { return std::log(std::exp(x)); }
 inline double fn_constant(double x) { return 0.0 * x + 1.0; }
 inline double fn_reciprocal(double x) { return 1.0 / x; }
 inline double fn_sine(double x) { return std::sin(x); }
+inline double fn_arcsine(double y) { return std::asin(y); }
 inline double fn_two_arg(double x, double y) { return x + y; }
+
+using user_sine_pair = ad::inverse_pair<^^fn_sine, fn_arcsine>;
 
 // ---------------------------------------------------------------------------
 // Compile-time assertions (primary tests)
@@ -46,6 +51,13 @@ static_assert(!ad::is_invertible<^^fn_sine>());
 // Multivariate functions are currently out of scope for this checker.
 static_assert(!ad::is_invertible<^^fn_two_arg>());
 
+// Registered special-case inverse pair for normal CDF.
+static_assert(ad::is_invertible<^^mcsim::CDF>());
+static_assert(ad::is_invertible<^^mcsim::CDF_inverse>());
+
+// User can inject custom inverse pairs directly via variadic template args.
+static_assert(ad::is_invertible<^^fn_sine, user_sine_pair>());
+
 int main() {
   {
     constexpr auto r = ad::invertibility_result<^^fn_affine>();
@@ -63,6 +75,24 @@ int main() {
     constexpr auto r = ad::invertibility_result<^^fn_two_arg>();
     EXPECT_FALSE(r.invertible);
     EXPECT_EQUAL(r.failing_op, ad::OpKind::Input);
+  }
+
+  {
+    constexpr auto r = ad::invertibility_result<^^mcsim::CDF>();
+    EXPECT_TRUE(r.invertible);
+    EXPECT_EQUAL(r.failing_node, -1);
+  }
+
+  {
+    constexpr auto r = ad::invertibility_result<^^mcsim::CDF_inverse>();
+    EXPECT_TRUE(r.invertible);
+    EXPECT_EQUAL(r.failing_node, -1);
+  }
+
+  {
+    constexpr auto r = ad::invertibility_result<^^fn_sine, user_sine_pair>();
+    EXPECT_TRUE(r.invertible);
+    EXPECT_EQUAL(r.failing_node, -1);
   }
 
   TEST_END;

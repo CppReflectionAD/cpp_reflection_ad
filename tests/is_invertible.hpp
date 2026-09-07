@@ -8,12 +8,55 @@
 // used: if no explicit inverse plan is found, is_invertible returns false.
 
 #include "autograd.h" // for ad::Node, ad::OpKind, ad::build_nodes<>
+#include "mc_sim/normal_distribution.hpp"
 
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <type_traits>
 
 namespace ad {
+
+template <info Fn, auto InvFn> struct inverse_pair {
+  static constexpr auto function = Fn;
+  static constexpr auto inverse = InvFn;
+};
+
+using default_cdf_pair = inverse_pair<^^mcsim::CDF, mcsim::CDF_inverse>;
+using default_cdf_inverse_pair = inverse_pair<^^mcsim::CDF_inverse, mcsim::CDF>;
+
+template <info QueryFn, typename Pair> struct pair_matches : std::false_type {};
+
+template <info QueryFn, info Fn, auto InvFn>
+struct pair_matches<QueryFn, inverse_pair<Fn, InvFn>>
+    : std::bool_constant<(QueryFn == Fn)> {};
+
+template <info QueryFn, typename... Pairs>
+consteval bool has_registered_inverse() {
+  return (pair_matches<QueryFn, Pairs>::value || ...);
+}
+
+template <typename T, info Fn, auto InvFn>
+constexpr T apply_pair_inverse(inverse_pair<Fn, InvFn>, T y) {
+  if constexpr (requires { InvFn(y); })
+    return static_cast<T>(InvFn(y));
+  else
+    return static_cast<T>(InvFn(static_cast<double>(y)));
+}
+
+template <info Fn, typename T, typename FirstPair, typename... RestPairs>
+constexpr T apply_registered_inverse(T y) {
+  if constexpr (pair_matches<Fn, FirstPair>::value)
+    return apply_pair_inverse(FirstPair{}, y);
+  else
+    return apply_registered_inverse<Fn, T, RestPairs...>(y);
+}
+
+template <info Fn, typename T> constexpr T apply_registered_inverse(T) {
+  static_assert(Fn != Fn,
+                "No inverse pair registered for this function in this call");
+  return T{};
+}
 
 namespace detail_inv {
 
@@ -147,170 +190,187 @@ constexpr T apply_inverse_step(const InverseStep &step, T y) {
   return y;
 }
 
-template <info Fn> consteval auto build_inverse_plan() {
-  static constexpr auto nodes = std::define_static_array(build_nodes<Fn>());
-  constexpr std::size_t N = nodes.size();
+template <info Fn, typename... RegisteredPairs>
+consteval auto build_inverse_plan() {
+  constexpr std::size_t PlanStepCapacity = [] {
+    if constexpr (has_registered_inverse<Fn, RegisteredPairs...>()) {
+      return std::size_t{56};
+    } else {
+      static constexpr auto nodes_for_size =
+          std::define_static_array(build_nodes<Fn>());
+      return nodes_for_size.size();
+    }
+  }();
 
   struct InversePlan {
     bool ok;
     int failing_node;
     OpKind failing_op;
     std::size_t step_count;
-    std::array<InverseStep, N> steps;
+    std::array<InverseStep, PlanStepCapacity> steps;
   };
 
   auto fail = [](int node, OpKind op) {
     return InversePlan{false, node, op, 0, {}};
   };
 
-  NodeInfo info[N];
-  for (std::size_t i = 0; i < N; ++i)
-    info[i] = NodeInfo{};
+  if constexpr (has_registered_inverse<Fn, RegisteredPairs...>()) {
+    return InversePlan{true, -1, OpKind::Input, 0, {}};
+  } else {
+    static constexpr auto nodes = std::define_static_array(build_nodes<Fn>());
+    constexpr std::size_t N = nodes.size();
 
-  std::size_t input_count = 0;
-  int output_idx = -1;
+    NodeInfo info[N];
+    for (std::size_t i = 0; i < N; ++i)
+      info[i] = NodeInfo{};
 
-  template for (constexpr auto n : nodes) {
-    if constexpr (n.op == OpKind::Input) {
-      ++input_count;
-      info[n.self] = make_input();
-    } else if constexpr (n.op == OpKind::Const) {
-      constexpr double v = static_cast<double>([:n.leaf:]);
-      info[n.self] = make_const(v);
-    } else if constexpr (n.op == OpKind::Output) {
-      output_idx = static_cast<int>(n.self);
-      info[n.self] = info[n.a];
-    } else if constexpr (n.op == OpKind::Add) {
-      info[n.self] = combine_add(info[n.a], info[n.b], false);
-    } else if constexpr (n.op == OpKind::Sub) {
-      info[n.self] = combine_add(info[n.a], info[n.b], true);
-    } else if constexpr (n.op == OpKind::Mul) {
-      info[n.self] = combine_mul(info[n.a], info[n.b]);
-    } else if constexpr (n.op == OpKind::Div) {
-      info[n.self] = combine_div(info[n.a], info[n.b]);
-    } else if constexpr (n.op == OpKind::Neg || n.op == OpKind::Exp ||
-                         n.op == OpKind::Log || n.op == OpKind::Sqrt ||
-                         n.op == OpKind::Erfc) {
-      info[n.self].depends_input = info[n.a].depends_input;
-      info[n.self].is_constant = info[n.a].is_constant;
-      info[n.self].constant_value = info[n.a].constant_value;
-      if constexpr (n.op == OpKind::Neg && info[n.a].is_affine) {
-        info[n.self].is_affine = true;
-        info[n.self].slope = -info[n.a].slope;
-        info[n.self].intercept = -info[n.a].intercept;
-      }
-    } else {
-      info[n.self] = NodeInfo{};
-    }
-  }
+    std::size_t input_count = 0;
+    int output_idx = -1;
 
-  if (input_count != 1)
-    return fail(-1, OpKind::Input);
-
-  if (output_idx < 0)
-    return fail(-1, OpKind::Output);
-
-  const auto &out = nodes[static_cast<std::size_t>(output_idx)];
-  if (out.op != OpKind::Output)
-    return fail(output_idx, out.op);
-
-  if (!info[out.a].depends_input)
-    return fail(output_idx, OpKind::Output);
-
-  // If the whole function is affine with nonzero slope, we can always emit an
-  // explicit symbolic inverse: x = (y - b) / a.
-  if (info[out.a].is_affine && is_nonzero(info[out.a].slope)) {
-    std::array<InverseStep, N> affine_steps{};
-    std::size_t affine_step_count = 0;
-    affine_steps[affine_step_count++] =
-        InverseStep{InverseStepKind::AddConst, info[out.a].intercept};
-    affine_steps[affine_step_count++] =
-        InverseStep{InverseStepKind::MulConst, info[out.a].slope};
-    return InversePlan{true, -1, OpKind::Input, affine_step_count,
-                       affine_steps};
-  }
-
-  std::array<InverseStep, N> steps{};
-  std::size_t step_count = 0;
-  std::size_t cur = out.a;
-
-  while (true) {
-    const auto &n = nodes[cur];
-
-    if (n.op == OpKind::Input)
-      break;
-
-    if (n.op == OpKind::Neg) {
-      steps[step_count++] = InverseStep{InverseStepKind::Neg, 0.0};
-      cur = n.a;
-      continue;
-    }
-
-    if (n.op == OpKind::Exp) {
-      steps[step_count++] = InverseStep{InverseStepKind::Exp, 0.0};
-      cur = n.a;
-      continue;
-    }
-
-    if (n.op == OpKind::Log) {
-      steps[step_count++] = InverseStep{InverseStepKind::Log, 0.0};
-      cur = n.a;
-      continue;
-    }
-
-    if (n.op == OpKind::Sqrt) {
-      steps[step_count++] = InverseStep{InverseStepKind::Sqrt, 0.0};
-      cur = n.a;
-      continue;
-    }
-
-    if (n.op == OpKind::Erfc)
-      return fail(static_cast<int>(cur), n.op);
-
-    if (n.op == OpKind::Add || n.op == OpKind::Sub || n.op == OpKind::Mul ||
-        n.op == OpKind::Div) {
-      const bool a_dep = info[n.a].depends_input;
-      const bool b_dep = info[n.b].depends_input;
-      if (a_dep == b_dep)
-        return fail(static_cast<int>(cur), n.op);
-
-      const std::size_t dep_idx = a_dep ? n.a : n.b;
-      const std::size_t cst_idx = a_dep ? n.b : n.a;
-      if (!info[cst_idx].is_constant)
-        return fail(static_cast<int>(cur), n.op);
-
-      const double c = info[cst_idx].constant_value;
-
-      if (n.op == OpKind::Add) {
-        steps[step_count++] = InverseStep{InverseStepKind::AddConst, c};
-      } else if (n.op == OpKind::Sub) {
-        steps[step_count++] = a_dep
-                                  ? InverseStep{InverseStepKind::SubConst, c}
-                                  : InverseStep{InverseStepKind::ConstMinus, c};
-      } else if (n.op == OpKind::Mul) {
-        if (!is_nonzero(c))
-          return fail(static_cast<int>(cur), n.op);
-        steps[step_count++] = InverseStep{InverseStepKind::MulConst, c};
-      } else {
-        if (a_dep) {
-          if (!is_nonzero(c))
-            return fail(static_cast<int>(cur), n.op);
-          steps[step_count++] = InverseStep{InverseStepKind::DivConst, c};
-        } else {
-          if (!is_nonzero(c))
-            return fail(static_cast<int>(cur), n.op);
-          steps[step_count++] = InverseStep{InverseStepKind::ConstDiv, c};
+    template for (constexpr auto n : nodes) {
+      if constexpr (n.op == OpKind::Input) {
+        ++input_count;
+        info[n.self] = make_input();
+      } else if constexpr (n.op == OpKind::Const) {
+        constexpr double v = static_cast<double>([:n.leaf:]);
+        info[n.self] = make_const(v);
+      } else if constexpr (n.op == OpKind::Output) {
+        output_idx = static_cast<int>(n.self);
+        info[n.self] = info[n.a];
+      } else if constexpr (n.op == OpKind::Add) {
+        info[n.self] = combine_add(info[n.a], info[n.b], false);
+      } else if constexpr (n.op == OpKind::Sub) {
+        info[n.self] = combine_add(info[n.a], info[n.b], true);
+      } else if constexpr (n.op == OpKind::Mul) {
+        info[n.self] = combine_mul(info[n.a], info[n.b]);
+      } else if constexpr (n.op == OpKind::Div) {
+        info[n.self] = combine_div(info[n.a], info[n.b]);
+      } else if constexpr (n.op == OpKind::Neg || n.op == OpKind::Exp ||
+                           n.op == OpKind::Log || n.op == OpKind::Sqrt ||
+                           n.op == OpKind::Erfc) {
+        info[n.self].depends_input = info[n.a].depends_input;
+        info[n.self].is_constant = info[n.a].is_constant;
+        info[n.self].constant_value = info[n.a].constant_value;
+        if constexpr (n.op == OpKind::Neg) {
+          if (info[n.a].is_affine) {
+            info[n.self].is_affine = true;
+            info[n.self].slope = -info[n.a].slope;
+            info[n.self].intercept = -info[n.a].intercept;
+          }
         }
+      } else {
+        info[n.self] = NodeInfo{};
       }
-
-      cur = dep_idx;
-      continue;
     }
 
-    return fail(static_cast<int>(cur), n.op);
-  }
+    if (input_count != 1)
+      return fail(-1, OpKind::Input);
 
-  return InversePlan{true, -1, OpKind::Input, step_count, steps};
+    if (output_idx < 0)
+      return fail(-1, OpKind::Output);
+
+    const auto &out = nodes[static_cast<std::size_t>(output_idx)];
+    if (out.op != OpKind::Output)
+      return fail(output_idx, out.op);
+
+    if (!info[out.a].depends_input)
+      return fail(output_idx, OpKind::Output);
+
+    // If the whole function is affine with nonzero slope, we can always emit an
+    // explicit symbolic inverse: x = (y - b) / a.
+    if (info[out.a].is_affine && is_nonzero(info[out.a].slope)) {
+      std::array<InverseStep, N> affine_steps{};
+      std::size_t affine_step_count = 0;
+      affine_steps[affine_step_count++] =
+          InverseStep{InverseStepKind::AddConst, info[out.a].intercept};
+      affine_steps[affine_step_count++] =
+          InverseStep{InverseStepKind::MulConst, info[out.a].slope};
+      return InversePlan{true, -1, OpKind::Input, affine_step_count,
+                         affine_steps};
+    }
+
+    std::array<InverseStep, N> steps{};
+    std::size_t step_count = 0;
+    std::size_t cur = out.a;
+
+    while (true) {
+      const auto &n = nodes[cur];
+
+      if (n.op == OpKind::Input)
+        break;
+
+      if (n.op == OpKind::Neg) {
+        steps[step_count++] = InverseStep{InverseStepKind::Neg, 0.0};
+        cur = n.a;
+        continue;
+      }
+
+      if (n.op == OpKind::Exp) {
+        steps[step_count++] = InverseStep{InverseStepKind::Exp, 0.0};
+        cur = n.a;
+        continue;
+      }
+
+      if (n.op == OpKind::Log) {
+        steps[step_count++] = InverseStep{InverseStepKind::Log, 0.0};
+        cur = n.a;
+        continue;
+      }
+
+      if (n.op == OpKind::Sqrt) {
+        steps[step_count++] = InverseStep{InverseStepKind::Sqrt, 0.0};
+        cur = n.a;
+        continue;
+      }
+
+      if (n.op == OpKind::Erfc)
+        return fail(static_cast<int>(cur), n.op);
+
+      if (n.op == OpKind::Add || n.op == OpKind::Sub || n.op == OpKind::Mul ||
+          n.op == OpKind::Div) {
+        const bool a_dep = info[n.a].depends_input;
+        const bool b_dep = info[n.b].depends_input;
+        if (a_dep == b_dep)
+          return fail(static_cast<int>(cur), n.op);
+
+        const std::size_t dep_idx = a_dep ? n.a : n.b;
+        const std::size_t cst_idx = a_dep ? n.b : n.a;
+        if (!info[cst_idx].is_constant)
+          return fail(static_cast<int>(cur), n.op);
+
+        const double c = info[cst_idx].constant_value;
+
+        if (n.op == OpKind::Add) {
+          steps[step_count++] = InverseStep{InverseStepKind::AddConst, c};
+        } else if (n.op == OpKind::Sub) {
+          steps[step_count++] =
+              a_dep ? InverseStep{InverseStepKind::SubConst, c}
+                    : InverseStep{InverseStepKind::ConstMinus, c};
+        } else if (n.op == OpKind::Mul) {
+          if (!is_nonzero(c))
+            return fail(static_cast<int>(cur), n.op);
+          steps[step_count++] = InverseStep{InverseStepKind::MulConst, c};
+        } else {
+          if (a_dep) {
+            if (!is_nonzero(c))
+              return fail(static_cast<int>(cur), n.op);
+            steps[step_count++] = InverseStep{InverseStepKind::DivConst, c};
+          } else {
+            if (!is_nonzero(c))
+              return fail(static_cast<int>(cur), n.op);
+            steps[step_count++] = InverseStep{InverseStepKind::ConstDiv, c};
+          }
+        }
+
+        cur = dep_idx;
+        continue;
+      }
+
+      return fail(static_cast<int>(cur), n.op);
+    }
+
+    return InversePlan{true, -1, OpKind::Input, step_count, steps};
+  }
 }
 
 } // namespace detail_inv
@@ -321,23 +381,36 @@ struct InvertibilityResult {
   OpKind failing_op;
 };
 
-template <info Fn> consteval InvertibilityResult invertibility_result() {
-  constexpr auto plan = detail_inv::build_inverse_plan<Fn>();
+template <info Fn, typename... RegisteredPairs>
+consteval InvertibilityResult invertibility_result() {
+  constexpr auto plan =
+      detail_inv::build_inverse_plan<Fn, RegisteredPairs..., default_cdf_pair,
+                                     default_cdf_inverse_pair>();
   return {plan.ok, plan.failing_node, plan.failing_op};
 }
 
-template <info Fn> consteval bool is_invertible() {
-  return invertibility_result<Fn>().invertible;
+template <info Fn, typename... RegisteredPairs> consteval bool is_invertible() {
+  return invertibility_result<Fn, RegisteredPairs...>().invertible;
 }
 
-template <info Fn> struct inverse {
+template <info Fn, typename... RegisteredPairs> struct inverse {
   static_assert(
-      is_invertible<Fn>(),
+      is_invertible<Fn, RegisteredPairs...>(),
       "ad::inverse requires an explicit inverse plan; if the inverse "
       "is not constructible symbolically, ad::is_invertible<Fn>() is false");
 
   template <typename T = double> constexpr T operator()(T y) const {
-    constexpr auto plan = detail_inv::build_inverse_plan<Fn>();
+    if constexpr (has_registered_inverse<Fn, RegisteredPairs...,
+                                         default_cdf_pair,
+                                         default_cdf_inverse_pair>()) {
+      return apply_registered_inverse<Fn, T, RegisteredPairs...,
+                                      default_cdf_pair,
+                                      default_cdf_inverse_pair>(y);
+    }
+
+    constexpr auto plan =
+        detail_inv::build_inverse_plan<Fn, RegisteredPairs..., default_cdf_pair,
+                                       default_cdf_inverse_pair>();
     T x = y;
     for (std::size_t i = 0; i < plan.step_count; ++i)
       x = detail_inv::apply_inverse_step(plan.steps[i], x);
@@ -345,8 +418,9 @@ template <info Fn> struct inverse {
   }
 };
 
-template <info Fn, typename T = double> constexpr T inverse_of(T y) {
-  return inverse<Fn>{}(y);
+template <info Fn, typename T = double, typename... RegisteredPairs>
+constexpr T inverse_of(T y) {
+  return inverse<Fn, RegisteredPairs...>{}(y);
 }
 
 } // namespace ad
