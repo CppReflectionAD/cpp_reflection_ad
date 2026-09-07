@@ -52,22 +52,37 @@ inline double CDF_inverse(double u) {
 
   const double p = clamp_open_01(u);
 
-  if (p < p_low) {
-    const double q = std::sqrt(-2.0 * std::log(p));
-    return (((((c1 * q + c2) * q + c3) * q + c4) * q + c5) * q + c6) /
+  auto acklam_approx = [=](double x) {
+    if (x < p_low) {
+      const double q = std::sqrt(-2.0 * std::log(x));
+      return (((((c1 * q + c2) * q + c3) * q + c4) * q + c5) * q + c6) /
+             ((((d1 * q + d2) * q + d3) * q + d4) * q + 1.0);
+    }
+
+    if (x <= p_high) {
+      const double q = x - 0.5;
+      const double r = q * q;
+      return (((((a1 * r + a2) * r + a3) * r + a4) * r + a5) * r + a6) * q /
+             (((((b1 * r + b2) * r + b3) * r + b4) * r + b5) * r + 1.0);
+    }
+
+    const double q = std::sqrt(-2.0 * std::log(1.0 - x));
+    return -(((((c1 * q + c2) * q + c3) * q + c4) * q + c5) * q + c6) /
            ((((d1 * q + d2) * q + d3) * q + d4) * q + 1.0);
+  };
+
+  double z = acklam_approx(p);
+
+  // One Halley refinement strongly improves round-trip precision.
+  constexpr double one_over_sqrt_two_pi = 0.39894228040143267794;
+  const double pdf = one_over_sqrt_two_pi * std::exp(-0.5 * z * z);
+  if (pdf > 0.0) {
+    const double err = CDF(z) - p;
+    const double t = err / pdf;
+    z -= t / (1.0 + 0.5 * z * t);
   }
 
-  if (p <= p_high) {
-    const double q = p - 0.5;
-    const double r = q * q;
-    return (((((a1 * r + a2) * r + a3) * r + a4) * r + a5) * r + a6) * q /
-           (((((b1 * r + b2) * r + b3) * r + b4) * r + b5) * r + 1.0);
-  }
-
-  const double q = std::sqrt(-2.0 * std::log(1.0 - p));
-  return -(((((c1 * q + c2) * q + c3) * q + c4) * q + c5) * q + c6) /
-         ((((d1 * q + d2) * q + d3) * q + d4) * q + 1.0);
+  return z;
 }
 
 } // namespace mcsim

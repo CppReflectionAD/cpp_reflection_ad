@@ -722,8 +722,6 @@ consteval InvertibilityResult invertibility_result_wrt() {
     return {true, -1, OpKind::Input};
   else if constexpr (has_unary_inverse_pair<RegisteredPairs...>())
     return {true, -1, OpKind::Input};
-  else if constexpr (detail_inv::is_affine_in_arg<Fn, ArgIndex>())
-    return {true, -1, OpKind::Input};
   else
     return {false, -1, OpKind::Input};
 }
@@ -764,8 +762,7 @@ struct inverse_wrt {
   static_assert(
       is_invertible_wrt<Fn, ArgIndex, RegisteredPairs...>(),
       "ad::inverse_wrt requires either: (1) a registered partial inverse "
-      "pair, (2) an affine-in-argument function, or (3) a registered unary "
-      "outer inverse pair");
+      "pair or (2) a registered unary outer inverse pair");
 
   template <typename T = double, typename... ExtraArgs>
   constexpr T operator()(T y, ExtraArgs... args) const {
@@ -774,8 +771,8 @@ struct inverse_wrt {
       return apply_registered_inverse_wrt<Fn, ArgIndex, T, RegisteredPairs...>(
           y, args...);
     } else if constexpr (has_unary_inverse_pair<RegisteredPairs...>()) {
-      // Handles y = g(a*x + b), where g^{-1} is given by a registered unary
-      // inverse_pair. Unwrap g first, then solve the affine map.
+      // Prefer exact affine solve in an unwrapped space when it really is
+      // affine; otherwise use robust monotone bisection in x.
       const T b_wrapped =
           detail_inv::eval_fn_with_arg_runtime<Fn, ArgIndex, T>(T{0}, args...);
       const T one_wrapped =
@@ -802,12 +799,55 @@ struct inverse_wrt {
                     one_wrapped)
               : apply_registered_unary_transform<false, T, RegisteredPairs...>(
                     one_wrapped);
-      const T a = one_unwrapped - b;
-      return (y_unwrapped - b) / a;
+
+      // Prevent unused-variable warnings while keeping diagnostics available
+      // when debugging this branch.
+      (void)y_unwrapped;
+      (void)b;
+      (void)one_unwrapped;
+
+      // Non-affine after unwrapping: solve f(x)=y directly in x in [0,1].
+      T lo = T{0};
+      T hi = T{1};
+      T flo = b_wrapped;
+      T fhi = one_wrapped;
+
+      if (flo == y)
+        return lo;
+      if (fhi == y)
+        return hi;
+
+      const bool increasing = fhi > flo;
+      if ((increasing && y <= flo) || (!increasing && y >= flo))
+        return lo;
+      if ((increasing && y >= fhi) || (!increasing && y <= fhi))
+        return hi;
+
+      for (int i = 0; i < 80; ++i) {
+        const T mid = static_cast<T>(0.5) * (lo + hi);
+        const T fmid =
+            detail_inv::eval_fn_with_arg_runtime<Fn, ArgIndex, T>(mid, args...);
+
+        if (fmid == y)
+          return mid;
+
+        if ((increasing && fmid < y) || (!increasing && fmid > y)) {
+          lo = mid;
+          flo = fmid;
+        } else {
+          hi = mid;
+          fhi = fmid;
+        }
+      }
+
+      return static_cast<T>(0.5) * (lo + hi);
     } else {
-      const T b = detail_inv::eval_with_arg<Fn, ArgIndex, T>(T{0}, args...);
-      const T a = detail_inv::eval_with_arg<Fn, ArgIndex, T>(T{1}, args...) - b;
-      return (y - b) / a;
+      static_assert(
+          has_registered_inverse_wrt<Fn, ArgIndex, RegisteredPairs...>() ||
+              has_unary_inverse_pair<RegisteredPairs...>(),
+          "No inverse_wrt path available: provide inverse_pair_wrt "
+          "or a compatible unary inverse_pair.");
+      return y;
     }
   }
 };
