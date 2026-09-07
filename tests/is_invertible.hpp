@@ -13,7 +13,9 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <limits>
 #include <type_traits>
+#include <utility>
 
 namespace ad {
 
@@ -22,18 +24,56 @@ template <info Fn, auto InvFn> struct inverse_pair {
   static constexpr auto inverse = InvFn;
 };
 
+template <info Fn, std::size_t ArgIndex, auto InvFn> struct inverse_pair_wrt {
+  static constexpr auto function = Fn;
+  static constexpr std::size_t arg_index = ArgIndex;
+  static constexpr auto inverse = InvFn;
+};
+
 using default_cdf_pair = inverse_pair<^^mcsim::CDF, mcsim::CDF_inverse>;
 using default_cdf_inverse_pair = inverse_pair<^^mcsim::CDF_inverse, mcsim::CDF>;
 
 template <info QueryFn, typename Pair> struct pair_matches : std::false_type {};
 
+template <typename Pair> struct is_unary_inverse_pair : std::false_type {};
+
+template <info QueryFn, auto Candidate> consteval bool query_fn_value_equals() {
+  constexpr auto query_value = [:QueryFn:];
+  if constexpr (std::is_same_v<decltype(query_value), decltype(Candidate)>)
+    return query_value == Candidate;
+  else
+    return false;
+}
+
 template <info QueryFn, info Fn, auto InvFn>
 struct pair_matches<QueryFn, inverse_pair<Fn, InvFn>>
-    : std::bool_constant<(QueryFn == Fn)> {};
+    : std::bool_constant<(QueryFn == Fn ||
+                          query_fn_value_equals<QueryFn, InvFn>())> {};
+
+template <info Fn, auto InvFn>
+struct is_unary_inverse_pair<inverse_pair<Fn, InvFn>> : std::true_type {};
+
+template <info QueryFn, std::size_t QueryArgIndex, typename Pair>
+struct pair_matches_wrt : std::false_type {};
+
+template <info QueryFn, std::size_t QueryArgIndex, info Fn,
+          std::size_t ArgIndex, auto InvFn>
+struct pair_matches_wrt<QueryFn, QueryArgIndex,
+                        inverse_pair_wrt<Fn, ArgIndex, InvFn>>
+    : std::bool_constant<(QueryFn == Fn && QueryArgIndex == ArgIndex)> {};
 
 template <info QueryFn, typename... Pairs>
 consteval bool has_registered_inverse() {
   return (pair_matches<QueryFn, Pairs>::value || ...);
+}
+
+template <info QueryFn, std::size_t QueryArgIndex, typename... Pairs>
+consteval bool has_registered_inverse_wrt() {
+  return (pair_matches_wrt<QueryFn, QueryArgIndex, Pairs>::value || ...);
+}
+
+template <typename... Pairs> consteval bool has_unary_inverse_pair() {
+  return (is_unary_inverse_pair<Pairs>::value || ...);
 }
 
 template <typename T, info Fn, auto InvFn>
@@ -44,10 +84,42 @@ constexpr T apply_pair_inverse(inverse_pair<Fn, InvFn>, T y) {
     return static_cast<T>(InvFn(static_cast<double>(y)));
 }
 
+template <typename T, info Fn, auto InvFn>
+constexpr T apply_pair_forward(inverse_pair<Fn, InvFn>, T y) {
+  if constexpr (requires { [:Fn:](y); })
+    return static_cast<T>([:Fn:](y));
+  else
+    return static_cast<T>([:Fn:](static_cast<double>(y)));
+}
+
+template <info QueryFn, typename T, info Fn, auto InvFn>
+constexpr T apply_pair_inverse_for(inverse_pair<Fn, InvFn>, T y) {
+  if constexpr (QueryFn == Fn)
+    return apply_pair_inverse(inverse_pair<Fn, InvFn>{}, y);
+  else if constexpr (query_fn_value_equals<QueryFn, InvFn>())
+    return apply_pair_forward(inverse_pair<Fn, InvFn>{}, y);
+  else {
+    static_assert(QueryFn == Fn || query_fn_value_equals<QueryFn, InvFn>(),
+                  "Pair does not match queried function");
+    return T{};
+  }
+}
+
+template <typename T, info Fn, std::size_t ArgIndex, auto InvFn,
+          typename... ExtraArgs>
+constexpr T apply_pair_inverse_wrt(inverse_pair_wrt<Fn, ArgIndex, InvFn>, T y,
+                                   ExtraArgs... args) {
+  if constexpr (requires { InvFn(y, args...); })
+    return static_cast<T>(InvFn(y, args...));
+  else
+    return static_cast<T>(
+        InvFn(static_cast<double>(y), static_cast<double>(args)...));
+}
+
 template <info Fn, typename T, typename FirstPair, typename... RestPairs>
 constexpr T apply_registered_inverse(T y) {
   if constexpr (pair_matches<Fn, FirstPair>::value)
-    return apply_pair_inverse(FirstPair{}, y);
+    return apply_pair_inverse_for<Fn>(FirstPair{}, y);
   else
     return apply_registered_inverse<Fn, T, RestPairs...>(y);
 }
@@ -58,7 +130,258 @@ template <info Fn, typename T> constexpr T apply_registered_inverse(T) {
   return T{};
 }
 
+template <typename T> constexpr T finite_abs_or_inf(T expected, T actual) {
+  const T err = std::abs(actual - expected);
+  if (std::isfinite(err))
+    return err;
+  return std::numeric_limits<T>::infinity();
+}
+
+template <bool UseInverseDirection, typename T, typename FirstPair,
+          typename... RestPairs>
+constexpr T apply_registered_unary_transform(T y) {
+  if constexpr (is_unary_inverse_pair<FirstPair>::value) {
+    if constexpr (UseInverseDirection)
+      return apply_pair_inverse(FirstPair{}, y);
+    else
+      return apply_pair_forward(FirstPair{}, y);
+  } else {
+    return apply_registered_unary_transform<UseInverseDirection, T,
+                                            RestPairs...>(y);
+  }
+}
+
+template <bool UseInverseDirection, typename T>
+constexpr T apply_registered_unary_transform(T) {
+  static_assert(!std::is_same_v<T, T>,
+                "No unary inverse pair available to unwrap output");
+  return T{};
+}
+
+template <typename T, typename FirstPair, typename... RestPairs>
+constexpr bool choose_unary_unwrap_inverse_direction(T y, T b_wrapped,
+                                                     T one_wrapped) {
+  if constexpr (is_unary_inverse_pair<FirstPair>::value) {
+    const T inv_y = apply_pair_inverse(FirstPair{}, y);
+    const T inv_b = apply_pair_inverse(FirstPair{}, b_wrapped);
+    const T inv_one = apply_pair_inverse(FirstPair{}, one_wrapped);
+    const T inv_err =
+        finite_abs_or_inf(y, apply_pair_forward(FirstPair{}, inv_y)) +
+        finite_abs_or_inf(b_wrapped, apply_pair_forward(FirstPair{}, inv_b)) +
+        finite_abs_or_inf(one_wrapped,
+                          apply_pair_forward(FirstPair{}, inv_one));
+
+    const T fwd_y = apply_pair_forward(FirstPair{}, y);
+    const T fwd_b = apply_pair_forward(FirstPair{}, b_wrapped);
+    const T fwd_one = apply_pair_forward(FirstPair{}, one_wrapped);
+    const T fwd_err =
+        finite_abs_or_inf(y, apply_pair_inverse(FirstPair{}, fwd_y)) +
+        finite_abs_or_inf(b_wrapped, apply_pair_inverse(FirstPair{}, fwd_b)) +
+        finite_abs_or_inf(one_wrapped,
+                          apply_pair_inverse(FirstPair{}, fwd_one));
+
+    return inv_err <= fwd_err;
+  } else {
+    return choose_unary_unwrap_inverse_direction<T, RestPairs...>(y, b_wrapped,
+                                                                  one_wrapped);
+  }
+}
+
+template <typename T>
+constexpr bool choose_unary_unwrap_inverse_direction(T, T, T) {
+  static_assert(!std::is_same_v<T, T>,
+                "No unary inverse pair available to unwrap output");
+  return true;
+}
+
+template <info Fn, std::size_t ArgIndex, typename T, typename FirstPair,
+          typename... RestPairs, typename... ExtraArgs>
+constexpr T apply_registered_inverse_wrt(T y, ExtraArgs... args) {
+  if constexpr (pair_matches_wrt<Fn, ArgIndex, FirstPair>::value)
+    return apply_pair_inverse_wrt(FirstPair{}, y, args...);
+  else
+    return apply_registered_inverse_wrt<Fn, ArgIndex, T, RestPairs...>(y,
+                                                                       args...);
+}
+
+template <info Fn, std::size_t ArgIndex, typename T, typename... ExtraArgs>
+constexpr T apply_registered_inverse_wrt(T, ExtraArgs...) {
+  static_assert(Fn != Fn,
+                "No partial inverse pair registered for this function/arg "
+                "index in this call");
+  return T{};
+}
+
 namespace detail_inv {
+
+template <info Fn> consteval std::size_t input_count_of() {
+  static constexpr auto nodes = std::define_static_array(build_nodes<Fn>());
+  std::size_t count = 0;
+  template for (constexpr auto n : nodes) {
+    if constexpr (n.op == OpKind::Input)
+      ++count;
+  }
+  return count;
+}
+
+template <info Fn, std::size_t ArgIndex> consteval bool is_affine_in_arg() {
+  static constexpr auto nodes = std::define_static_array(build_nodes<Fn>());
+  constexpr std::size_t N = nodes.size();
+  constexpr std::size_t InputCount = input_count_of<Fn>();
+  if constexpr (ArgIndex >= InputCount)
+    return false;
+
+  struct WrtInfo {
+    bool depends_target = false;
+    bool affine_target = false;
+  };
+
+  WrtInfo info[N];
+  for (std::size_t i = 0; i < N; ++i)
+    info[i] = WrtInfo{};
+
+  int output_idx = -1;
+
+  template for (constexpr auto n : nodes) {
+    if constexpr (n.op == OpKind::Input) {
+      info[n.self].depends_target = (n.self == ArgIndex);
+      info[n.self].affine_target = true;
+    } else if constexpr (n.op == OpKind::Const) {
+      info[n.self].depends_target = false;
+      info[n.self].affine_target = true;
+    } else if constexpr (n.op == OpKind::Output) {
+      output_idx = static_cast<int>(n.self);
+      info[n.self] = info[n.a];
+    } else if constexpr (n.op == OpKind::Add || n.op == OpKind::Sub) {
+      info[n.self].depends_target =
+          info[n.a].depends_target || info[n.b].depends_target;
+      info[n.self].affine_target =
+          info[n.a].affine_target && info[n.b].affine_target;
+    } else if constexpr (n.op == OpKind::Mul) {
+      const bool a_dep = info[n.a].depends_target;
+      const bool b_dep = info[n.b].depends_target;
+      info[n.self].depends_target = a_dep || b_dep;
+      info[n.self].affine_target = info[n.a].affine_target &&
+                                   info[n.b].affine_target && !(a_dep && b_dep);
+    } else if constexpr (n.op == OpKind::Div) {
+      const bool a_dep = info[n.a].depends_target;
+      const bool b_dep = info[n.b].depends_target;
+      info[n.self].depends_target = a_dep || b_dep;
+      info[n.self].affine_target =
+          info[n.a].affine_target && info[n.b].affine_target && !b_dep;
+    } else if constexpr (n.op == OpKind::Neg) {
+      info[n.self].depends_target = info[n.a].depends_target;
+      info[n.self].affine_target = info[n.a].affine_target;
+    } else if constexpr (n.op == OpKind::Exp || n.op == OpKind::Log ||
+                         n.op == OpKind::Sqrt || n.op == OpKind::Erfc ||
+                         n.op == OpKind::Sin || n.op == OpKind::Cos ||
+                         n.op == OpKind::Abs) {
+      info[n.self].depends_target = info[n.a].depends_target;
+      info[n.self].affine_target = !info[n.a].depends_target;
+    } else {
+      // Conservative fallback for unsupported ops.
+      bool dep = false;
+      bool aff = true;
+      if constexpr (op_has_a(n.op)) {
+        dep = dep || info[n.a].depends_target;
+        aff = aff && info[n.a].affine_target;
+      }
+      if constexpr (op_has_b(n.op)) {
+        dep = dep || info[n.b].depends_target;
+        aff = aff && info[n.b].affine_target;
+      }
+      if constexpr (op_has_cond(n.op))
+        dep = dep || info[n.cond].depends_target;
+      info[n.self].depends_target = dep;
+      info[n.self].affine_target = aff && !dep;
+    }
+  }
+
+  if (output_idx < 0)
+    return false;
+
+  const auto &out = nodes[static_cast<std::size_t>(output_idx)];
+  if (out.op != OpKind::Output)
+    return false;
+
+  return info[out.a].depends_target && info[out.a].affine_target;
+}
+
+template <info Fn, std::size_t ArgIndex, typename T, typename... ExtraArgs>
+constexpr T eval_with_arg(T target_x, ExtraArgs... extras) {
+  static constexpr auto nodes = std::define_static_array(build_nodes<Fn>());
+  constexpr std::size_t N = nodes.size();
+  constexpr std::size_t InputCount = input_count_of<Fn>();
+  static_assert(sizeof...(ExtraArgs) + 1 == InputCount,
+                "inverse_wrt expects all non-target arguments");
+
+  T in[InputCount] = {};
+  const T extra_vals[] = {static_cast<T>(extras)...};
+  std::size_t extra_i = 0;
+  for (std::size_t i = 0; i < InputCount; ++i) {
+    if (i == ArgIndex)
+      in[i] = target_x;
+    else
+      in[i] = extra_vals[extra_i++];
+  }
+
+  T val[N] = {};
+  template for (constexpr auto n : nodes) {
+    if constexpr (n.op == OpKind::Input)
+      val[n.self] = in[n.self];
+    else if constexpr (n.op == OpKind::Const)
+      val[n.self] = static_cast<T>([:n.leaf:]);
+    else if constexpr (n.op == OpKind::Output)
+      val[n.self] = val[n.a];
+    else if constexpr (n.op == OpKind::Add)
+      val[n.self] = val[n.a] + val[n.b];
+    else if constexpr (n.op == OpKind::Sub)
+      val[n.self] = val[n.a] - val[n.b];
+    else if constexpr (n.op == OpKind::Mul)
+      val[n.self] = val[n.a] * val[n.b];
+    else if constexpr (n.op == OpKind::Div)
+      val[n.self] = val[n.a] / val[n.b];
+    else if constexpr (n.op == OpKind::Neg)
+      val[n.self] = -val[n.a];
+    else if constexpr (n.op == OpKind::Sin)
+      val[n.self] = std::sin(val[n.a]);
+    else if constexpr (n.op == OpKind::Cos)
+      val[n.self] = std::cos(val[n.a]);
+    else if constexpr (n.op == OpKind::Exp)
+      val[n.self] = std::exp(val[n.a]);
+    else if constexpr (n.op == OpKind::Log)
+      val[n.self] = std::log(val[n.a]);
+    else if constexpr (n.op == OpKind::Sqrt)
+      val[n.self] = std::sqrt(val[n.a]);
+    else if constexpr (n.op == OpKind::Erfc)
+      val[n.self] = std::erfc(val[n.a]);
+    else
+      val[n.self] = T{};
+  }
+
+  return val[N - 1];
+}
+
+template <info Fn, std::size_t ArgIndex, typename T, typename... ExtraArgs>
+constexpr T eval_fn_with_arg_runtime(T target_x, ExtraArgs... extras) {
+  constexpr std::size_t InputCount = sizeof...(ExtraArgs) + 1;
+  T in[InputCount] = {};
+  const T extra_vals[] = {static_cast<T>(extras)...};
+  std::size_t extra_i = 0;
+  for (std::size_t i = 0; i < InputCount; ++i) {
+    if (i == ArgIndex)
+      in[i] = target_x;
+    else
+      in[i] = extra_vals[extra_i++];
+  }
+
+  return [&]<std::size_t... I>(std::index_sequence<I...>) {
+    if constexpr (requires { [:Fn:](in[I]...); })
+      return static_cast<T>([:Fn:](in[I]...));
+    else
+      return static_cast<T>([:Fn:](static_cast<double>(in[I])...));
+  }(std::make_index_sequence<InputCount>{});
+}
 
 struct NodeInfo {
   bool depends_input = false;
@@ -393,6 +716,24 @@ template <info Fn, typename... RegisteredPairs> consteval bool is_invertible() {
   return invertibility_result<Fn, RegisteredPairs...>().invertible;
 }
 
+template <info Fn, std::size_t ArgIndex, typename... RegisteredPairs>
+consteval InvertibilityResult invertibility_result_wrt() {
+  if constexpr (has_registered_inverse_wrt<Fn, ArgIndex, RegisteredPairs...>())
+    return {true, -1, OpKind::Input};
+  else if constexpr (has_unary_inverse_pair<RegisteredPairs...>())
+    return {true, -1, OpKind::Input};
+  else if constexpr (detail_inv::is_affine_in_arg<Fn, ArgIndex>())
+    return {true, -1, OpKind::Input};
+  else
+    return {false, -1, OpKind::Input};
+}
+
+template <info Fn, std::size_t ArgIndex, typename... RegisteredPairs>
+consteval bool is_invertible_wrt() {
+  return invertibility_result_wrt<Fn, ArgIndex, RegisteredPairs...>()
+      .invertible;
+}
+
 template <info Fn, typename... RegisteredPairs> struct inverse {
   static_assert(
       is_invertible<Fn, RegisteredPairs...>(),
@@ -418,9 +759,68 @@ template <info Fn, typename... RegisteredPairs> struct inverse {
   }
 };
 
+template <info Fn, std::size_t ArgIndex, typename... RegisteredPairs>
+struct inverse_wrt {
+  static_assert(
+      is_invertible_wrt<Fn, ArgIndex, RegisteredPairs...>(),
+      "ad::inverse_wrt requires either: (1) a registered partial inverse "
+      "pair, (2) an affine-in-argument function, or (3) a registered unary "
+      "outer inverse pair");
+
+  template <typename T = double, typename... ExtraArgs>
+  constexpr T operator()(T y, ExtraArgs... args) const {
+    if constexpr (has_registered_inverse_wrt<Fn, ArgIndex,
+                                             RegisteredPairs...>()) {
+      return apply_registered_inverse_wrt<Fn, ArgIndex, T, RegisteredPairs...>(
+          y, args...);
+    } else if constexpr (has_unary_inverse_pair<RegisteredPairs...>()) {
+      // Handles y = g(a*x + b), where g^{-1} is given by a registered unary
+      // inverse_pair. Unwrap g first, then solve the affine map.
+      const T b_wrapped =
+          detail_inv::eval_fn_with_arg_runtime<Fn, ArgIndex, T>(T{0}, args...);
+      const T one_wrapped =
+          detail_inv::eval_fn_with_arg_runtime<Fn, ArgIndex, T>(T{1}, args...);
+
+      const bool use_inverse_direction =
+          choose_unary_unwrap_inverse_direction<T, RegisteredPairs...>(
+              y, b_wrapped, one_wrapped);
+
+      const T y_unwrapped =
+          use_inverse_direction
+              ? apply_registered_unary_transform<true, T, RegisteredPairs...>(y)
+              : apply_registered_unary_transform<false, T, RegisteredPairs...>(
+                    y);
+      const T b =
+          use_inverse_direction
+              ? apply_registered_unary_transform<true, T, RegisteredPairs...>(
+                    b_wrapped)
+              : apply_registered_unary_transform<false, T, RegisteredPairs...>(
+                    b_wrapped);
+      const T one_unwrapped =
+          use_inverse_direction
+              ? apply_registered_unary_transform<true, T, RegisteredPairs...>(
+                    one_wrapped)
+              : apply_registered_unary_transform<false, T, RegisteredPairs...>(
+                    one_wrapped);
+      const T a = one_unwrapped - b;
+      return (y_unwrapped - b) / a;
+    } else {
+      const T b = detail_inv::eval_with_arg<Fn, ArgIndex, T>(T{0}, args...);
+      const T a = detail_inv::eval_with_arg<Fn, ArgIndex, T>(T{1}, args...) - b;
+      return (y - b) / a;
+    }
+  }
+};
+
 template <info Fn, typename T = double, typename... RegisteredPairs>
 constexpr T inverse_of(T y) {
   return inverse<Fn, RegisteredPairs...>{}(y);
+}
+
+template <info Fn, std::size_t ArgIndex, typename T = double,
+          typename... RegisteredPairs, typename... ExtraArgs>
+constexpr T inverse_of_wrt(T y, ExtraArgs... args) {
+  return inverse_wrt<Fn, ArgIndex, RegisteredPairs...>{}(y, args...);
 }
 
 } // namespace ad
