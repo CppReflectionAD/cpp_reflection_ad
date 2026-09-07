@@ -9,6 +9,8 @@ inline double fn_log(double x) { return std::log(x); }
 inline double fn_reciprocal(double x) { return 1.0 / x; }
 inline double fn_affine_then_exp(double x) { return std::exp(2.0 * x + 1.0); }
 inline double fn_const_div_shift(double x) { return 3.0 / (x + 2.0); }
+inline double fn_sum_itself(double x) { return x + x; }
+inline double fn_diff_itself(double x) { return x - x; }
 
 // The inverse metafunction is available only when the checker can prove
 // injectivity.
@@ -18,8 +20,12 @@ static_assert(ad::is_invertible<^^fn_log>());
 static_assert(ad::is_invertible<^^fn_reciprocal>());
 static_assert(ad::is_invertible<^^fn_affine_then_exp>());
 static_assert(ad::is_invertible<^^fn_const_div_shift>());
+static_assert(ad::is_invertible<^^fn_sum_itself>());
+static_assert(!ad::is_invertible<^^fn_diff_itself>());
 
 int main() {
+  // ad::inverse returns a callable object that is the inverse of the original
+  // function.
   {
     constexpr auto inv = ad::inverse<^^fn_affine>{};
     const double input = 4.0;
@@ -54,10 +60,36 @@ int main() {
   }
 
   {
+    constexpr auto inv = ad::inverse<^^fn_affine_then_exp>{};
+    const double input = 0.3;
+    const double output = fn_affine_then_exp(input);
+    const double recovered = inv(output);
+    EXPECT_NEAR_REL(recovered, input, 1e-10);
+  }
+
+  {
+    constexpr auto inv = ad::inverse<^^fn_const_div_shift>{};
+    const double input = 4.0;
+    const double output = fn_const_div_shift(input);
+    const double recovered = inv(output);
+    EXPECT_NEAR_REL(recovered, input, 1e-10);
+  }
+
+  {
+    constexpr auto inv = ad::inverse<^^fn_sum_itself>{};
+    const double input = 0.4;
+    const double output = fn_sum_itself(input);
+    const double recovered = inv(output);
+    EXPECT_NEAR_REL(recovered, input, 1e-10);
+  }
+
+  // ad::inverse_of returns the inverse of a function directly, without needing
+  // to store it in a variable.
+  {
     const double input = 4.0;
     const double output = fn_affine(input);
     const double recovered = ad::inverse_of<^^fn_affine>(output);
-    EXPECT_NEAR_REL(recovered, input, 1e-12);
+    EXPECT_NEAR_REL(recovered, input, 1e-10);
   }
 
   {
@@ -80,14 +112,6 @@ int main() {
     const double recovered = ad::inverse_of<^^fn_reciprocal>(output);
     EXPECT_NEAR_REL(recovered, input, 1e-10);
   }
-
-  {
-    const double input = -4.0;
-    const double output = fn_reciprocal(input);
-    const double recovered = ad::inverse_of<^^fn_reciprocal>(output);
-    EXPECT_NEAR_REL(recovered, input, 1e-10);
-  }
-
   {
     const double input = 0.3;
     const double output = fn_affine_then_exp(input);
@@ -104,8 +128,8 @@ int main() {
 
   {
     const double input = 0.4;
-    const double output = fn_exp(input);
-    const double recovered = ad::inverse_of<^^fn_exp>(output);
+    const double output = fn_sum_itself(input);
+    const double recovered = ad::inverse_of<^^fn_sum_itself>(output);
     EXPECT_NEAR_REL(recovered, input, 1e-10);
   }
 

@@ -194,6 +194,11 @@ template <info Fn> consteval auto build_inverse_plan() {
       info[n.self].depends_input = info[n.a].depends_input;
       info[n.self].is_constant = info[n.a].is_constant;
       info[n.self].constant_value = info[n.a].constant_value;
+      if constexpr (n.op == OpKind::Neg && info[n.a].is_affine) {
+        info[n.self].is_affine = true;
+        info[n.self].slope = -info[n.a].slope;
+        info[n.self].intercept = -info[n.a].intercept;
+      }
     } else {
       info[n.self] = NodeInfo{};
     }
@@ -211,6 +216,19 @@ template <info Fn> consteval auto build_inverse_plan() {
 
   if (!info[out.a].depends_input)
     return fail(output_idx, OpKind::Output);
+
+  // If the whole function is affine with nonzero slope, we can always emit an
+  // explicit symbolic inverse: x = (y - b) / a.
+  if (info[out.a].is_affine && is_nonzero(info[out.a].slope)) {
+    std::array<InverseStep, N> affine_steps{};
+    std::size_t affine_step_count = 0;
+    affine_steps[affine_step_count++] =
+        InverseStep{InverseStepKind::AddConst, info[out.a].intercept};
+    affine_steps[affine_step_count++] =
+        InverseStep{InverseStepKind::MulConst, info[out.a].slope};
+    return InversePlan{true, -1, OpKind::Input, affine_step_count,
+                       affine_steps};
+  }
 
   std::array<InverseStep, N> steps{};
   std::size_t step_count = 0;
