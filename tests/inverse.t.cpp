@@ -1,5 +1,5 @@
 #include "is_invertible.hpp"
-#include "test_simple_include.hpp"
+#include <test_simple_include.hpp>
 
 #include <cmath>
 

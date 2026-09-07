@@ -5,7 +5,7 @@
 //
 // Build/run: `make run-scalar`.
 
-#include "test_simple_include.hpp"
+#include <test_simple_include.hpp>
 
 #include "autograd.h"
 #include "forward_derivative.h"
