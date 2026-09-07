@@ -3,7 +3,7 @@
 #include "../tests/forward_derivative.h"
 #include "../tests/reverse_derivative.h"
 
-#include "../tests/mc_sim/balck_scholes.hpp"
+#include "../tests/mc_sim/black_scholes.hpp"
 
 #include <array>
 #include <chrono>

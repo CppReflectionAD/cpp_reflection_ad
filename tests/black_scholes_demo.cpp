@@ -3,7 +3,7 @@
 #include "autograd.h"
 #include "forward_derivative.h"
 
-#include "mc_sim/balck_scholes.hpp"
+#include "mc_sim/black_scholes.hpp"
 
 int main() {
   double S = 104.25;

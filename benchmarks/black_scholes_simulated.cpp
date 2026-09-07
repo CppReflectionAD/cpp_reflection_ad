@@ -6,7 +6,7 @@
 #include <random>
 #include <vector>
 
-#include "../tests/mc_sim/balck_scholes.hpp"
+#include "../tests/mc_sim/black_scholes.hpp"
 #include "../tests/mc_sim/normal_distribution.hpp"
 
 enum class OptionType { Call, Put };
@@ -90,7 +90,7 @@ int main() {
   const double mc_put_price = monte_carlo_option_price(
       OptionType::Put, spot0, strike, rate, vol, dates, num_paths, seed + 1);
 
-  // The helper in balck_scholes.hpp is written on forward variables.
+  // The helper in black_scholes.hpp is written on forward variables.
   const double forward = spot0 * std::exp(rate * maturity_years);
   const double discount = std::exp(-rate * maturity_years);
   const double closed_form_call =

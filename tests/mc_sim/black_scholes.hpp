@@ -1,5 +1,5 @@
-#ifndef BALCK_SCHOLES_HPP_INCLUDED
-#define BALCK_SCHOLES_HPP_INCLUDED
+#ifndef BLACK_SCHOLES_HPP_INCLUDED
+#define BLACK_SCHOLES_HPP_INCLUDED
 
 #include "normal_distribution.hpp"
 #include <cmath>
