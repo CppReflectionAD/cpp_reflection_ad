@@ -7,7 +7,7 @@
 #include <vector>
 
 #include "../tests/mc_sim/black_scholes.hpp"
-#include "../tests/mc_sim/normal_distribution.hpp"
+#include "../tests/mc_sim/evolve_black_scholes.hpp"
 
 enum class OptionType { Call, Put };
 
@@ -31,16 +31,6 @@ std::vector<TimePoint> build_date_grid(const TimePoint &start,
   if (dates.back() != end)
     dates.push_back(end);
   return dates;
-}
-
-// One Black-Scholes step over dt, driven by a single uniform U(0,1) random
-// variable.
-double evolve_black_scholes(double spot, double r, double vol, double dt,
-                            double uniform_u) {
-  const double z = mcsim::CDF_inverse(uniform_u);
-  const double drift = (r - 0.5 * vol * vol) * dt;
-  const double diffusion = vol * std::sqrt(dt) * z;
-  return spot * std::exp(drift + diffusion);
 }
 
 double monte_carlo_option_price(OptionType type, double spot0, double strike,
