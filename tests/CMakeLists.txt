@@ -12,6 +12,8 @@ else()
                         "Select a clang-p2996 or gcc-reflect kit.")
 endif()
 
+include("${CMAKE_SOURCE_DIR}/test_simple/test_simple_cmake.cmake")
+
 # ---------------------------------------------------------------------------
 # Reflection compile flags
 # ---------------------------------------------------------------------------
@@ -51,7 +53,10 @@ function(add_reflect_test name source)
         -std=c++2c
         ${_reflect_flags}
     )
-    target_include_directories(${name} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_include_directories(${name} PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+        "${CMAKE_SOURCE_DIR}/test_simple"
+    )
     add_test(NAME ${name} COMMAND ${name})
 endfunction()
 
@@ -61,6 +66,8 @@ endfunction()
 file(GLOB _common   CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
 file(GLOB _clang_only CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/clang_only/*.cpp")
 file(GLOB _gcc_only   CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/gcc_only/*.cpp")
+file(GLOB _static_fail CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/static_fail/*.cpp")
 
 foreach(_src IN LISTS _common)
     get_filename_component(_name "${_src}" NAME_WE)
@@ -81,4 +88,7 @@ if(_is_gcc)
     endforeach()
 endif()
 
+compile_check(reflection_ad "${_static_fail}" TRUE)
+
 message(STATUS "Compiler : ${CMAKE_CXX_COMPILER_ID} (${CMAKE_CXX_COMPILER})")
+message(STATUS "Static fail tests: ${_static_fail}")

@@ -1,5 +1,5 @@
 #include "is_continuous.hpp"
-#include "../test_simple_include.hpp"
+#include <test_simple_include.hpp>
 
 #include "../functions/1-poly.h"
 #include "../functions/2-trig.h"

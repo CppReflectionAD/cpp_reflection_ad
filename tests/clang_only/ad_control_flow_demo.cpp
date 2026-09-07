@@ -10,7 +10,7 @@
 // see `guarded_sqrt` below, which is the case that distinguishes this from an
 // eager select.
 
-#include "../test_simple_include.hpp"
+#include <test_simple_include.hpp>
 
 #include "../autograd.h"
 #include "../forward_derivative.h"
