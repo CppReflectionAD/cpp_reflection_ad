@@ -4,24 +4,15 @@
 #include <cmath>
 #include <limits>
 
-namespace black_scholes {
+namespace mcsim {
 
-inline double clamp_open_01(double u) {
-  const double eps = std::numeric_limits<double>::epsilon();
-  if (u <= eps)
-    return eps;
-  if (u >= 1.0 - eps)
-    return 1.0 - eps;
-  return u;
-}
-
-inline double normal_cdf(double x) {
+inline double CDF(double x) {
   constexpr double sqrt1_2 = 0.70710678118654752440;
   return 0.5 * std::erfc(-x * sqrt1_2);
 }
 
 // Approximation due to Peter J. Acklam, adapted to C++.
-inline double inverse_normal_cdf(double u) {
+inline double CDF_inverse(double u) {
   constexpr double a1 = -39.69683028665376;
   constexpr double a2 = 220.9460984245205;
   constexpr double a3 = -275.9285104469687;
@@ -50,6 +41,15 @@ inline double inverse_normal_cdf(double u) {
   constexpr double p_low = 0.02425;
   constexpr double p_high = 1.0 - p_low;
 
+  const auto clamp_open_01 = [](double x) {
+    const double eps = std::numeric_limits<double>::epsilon();
+    if (x <= eps)
+      return eps;
+    if (x >= 1.0 - eps)
+      return 1.0 - eps;
+    return x;
+  };
+
   const double p = clamp_open_01(u);
 
   if (p < p_low) {
@@ -70,6 +70,6 @@ inline double inverse_normal_cdf(double u) {
          ((((d1 * q + d2) * q + d3) * q + d4) * q + 1.0);
 }
 
-} // namespace black_scholes
+} // namespace mcsim
 
 #endif // BLACK_SCHOLES_INVERSE_NORMAL_CDF_HPP
