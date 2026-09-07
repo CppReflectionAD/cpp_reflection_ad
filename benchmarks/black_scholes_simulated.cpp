@@ -7,6 +7,8 @@
 #include <random>
 #include <vector>
 
+#include "../tests/functions/5-black_scholes.h"
+
 enum class OptionType { Call, Put };
 
 using TimePoint = std::chrono::system_clock::time_point;
@@ -140,14 +142,25 @@ int main() {
   const double vol = 0.20;
   const std::uint32_t num_paths = 200000;
   const std::uint32_t seed = 42;
+  const double maturity_years = year_fraction_act365(start, maturity);
 
-  const double call_price = monte_carlo_option_price(
+  const double mc_call_price = monte_carlo_option_price(
       OptionType::Call, spot0, strike, rate, vol, dates, num_paths, seed);
-  const double put_price = monte_carlo_option_price(
+  const double mc_put_price = monte_carlo_option_price(
       OptionType::Put, spot0, strike, rate, vol, dates, num_paths, seed + 1);
 
-  std::cout << "MC call price: " << call_price << "\n";
-  std::cout << "MC put price : " << put_price << "\n";
+  // The helper in 5-black_scholes.h is written on forward variables.
+  const double forward = spot0 * std::exp(rate * maturity_years);
+  const double discount = std::exp(-rate * maturity_years);
+  const double closed_form_call =
+      discount * call_price(forward, strike, vol, maturity_years);
+  const double closed_form_put =
+      discount * put_price(forward, strike, vol, maturity_years);
+
+  std::cout << "MC call price      : " << mc_call_price << "\n";
+  std::cout << "MC put price       : " << mc_put_price << "\n";
+  std::cout << "Closed-form (call) : " << closed_form_call << "\n";
+  std::cout << "Closed-form (put)  : " << closed_form_put << "\n";
 
   return 0;
 }

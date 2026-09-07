@@ -16,4 +16,11 @@ inline double call_price(double S, double K, double v, double T) {
   return S * cfd(d1) - K * cfd(d2);
 }
 
+inline double put_price(double S, double K, double v, double T) {
+  double totalvol = total_vol(v, T);
+  double d1 = std::log(S / K) / totalvol + totalvol * 0.5;
+  double d2 = d1 - totalvol;
+  return K * cfd(-d2) - S * cfd(-d1);
+}
+
 #endif
