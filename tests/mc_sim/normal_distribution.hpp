@@ -7,8 +7,8 @@
 namespace mcsim {
 
 inline double CDF(double x) {
-  constexpr double sqrt1_2 = 0.70710678118654752440;
-  return 0.5 * std::erfc(-x * sqrt1_2);
+  constexpr double m_sqrt1_2 = -0.70710678118654752440;
+  return 0.5 * std::erfc(x * m_sqrt1_2);
 }
 
 // Approximation due to Peter J. Acklam, adapted to C++.
