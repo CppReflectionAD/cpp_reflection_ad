@@ -16,6 +16,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 TESTS_DIR = ROOT / "tests"
+TEST_FRAMEWORK = ROOT / "test_simple"
 BENCHMARKS_DIR = ROOT / "benchmarks"
 BUILD_ROOT = ROOT / "build"
 ARTIFACTS_DIR = BUILD_ROOT / "artifacts"
@@ -972,9 +973,11 @@ def compile_and_maybe_run(
     output_path = compiler_artifacts_dir / output_name
     ensure_directory(output_path.parent)
 
+    include_flags = ["-I", str(TEST_FRAMEWORK)]
     # Benchmarks pull in the shared headers from tests/ (mirrors the include
     # directories in benchmarks/CMakeLists.txt).
-    include_flags = ["-I", str(TESTS_DIR)] if base_dir == BENCHMARKS_DIR else []
+    if base_dir == BENCHMARKS_DIR:
+        include_flags += ["-I", str(TESTS_DIR)]
 
     compile_command = [
         str(spec.executable),
