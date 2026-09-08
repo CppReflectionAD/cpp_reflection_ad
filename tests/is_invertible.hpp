@@ -65,7 +65,7 @@ template <typename... Pairs> consteval bool has_unary_inverse_pair() {
 }
 
 template <typename T, info Fn, info InvFn>
-constexpr T apply_pair_inverse(inverse_pair<Fn, InvFn>, T y) {
+constexpr T apply_pair_right(inverse_pair<Fn, InvFn>, T y) {
   if constexpr (requires { [:InvFn:](y); })
     return static_cast<T>([:InvFn:](y));
   else
@@ -73,7 +73,7 @@ constexpr T apply_pair_inverse(inverse_pair<Fn, InvFn>, T y) {
 }
 
 template <typename T, info Fn, info InvFn>
-constexpr T apply_pair_forward(inverse_pair<Fn, InvFn>, T y) {
+constexpr T apply_pair_left(inverse_pair<Fn, InvFn>, T y) {
   if constexpr (requires { [:Fn:](y); })
     return static_cast<T>([:Fn:](y));
   else
@@ -83,9 +83,9 @@ constexpr T apply_pair_forward(inverse_pair<Fn, InvFn>, T y) {
 template <info QueryFn, typename T, info Fn, info InvFn>
 constexpr T apply_pair_inverse_for(inverse_pair<Fn, InvFn>, T y) {
   if constexpr (QueryFn == Fn)
-    return apply_pair_inverse(inverse_pair<Fn, InvFn>{}, y);
+    return apply_pair_right(inverse_pair<Fn, InvFn>{}, y);
   else if constexpr (QueryFn == InvFn)
-    return apply_pair_forward(inverse_pair<Fn, InvFn>{}, y);
+    return apply_pair_left(inverse_pair<Fn, InvFn>{}, y);
   else {
     static_assert(QueryFn == Fn || QueryFn == InvFn,
                   "Pair does not match queried function");
@@ -130,9 +130,9 @@ template <bool UseInverseDirection, typename T, typename FirstPair,
 constexpr T apply_registered_unary_transform(T y) {
   if constexpr (is_unary_inverse_pair<FirstPair>::value) {
     if constexpr (UseInverseDirection)
-      return apply_pair_inverse(FirstPair{}, y);
+      return apply_pair_right(FirstPair{}, y);
     else
-      return apply_pair_forward(FirstPair{}, y);
+      return apply_pair_left(FirstPair{}, y);
   } else {
     return apply_registered_unary_transform<UseInverseDirection, T,
                                             RestPairs...>(y);
@@ -150,23 +150,21 @@ template <typename T, typename FirstPair, typename... RestPairs>
 constexpr bool choose_unary_unwrap_inverse_direction(T y, T b_wrapped,
                                                      T one_wrapped) {
   if constexpr (is_unary_inverse_pair<FirstPair>::value) {
-    const T inv_y = apply_pair_inverse(FirstPair{}, y);
-    const T inv_b = apply_pair_inverse(FirstPair{}, b_wrapped);
-    const T inv_one = apply_pair_inverse(FirstPair{}, one_wrapped);
+    const T inv_y = apply_pair_right(FirstPair{}, y);
+    const T inv_b = apply_pair_right(FirstPair{}, b_wrapped);
+    const T inv_one = apply_pair_right(FirstPair{}, one_wrapped);
     const T inv_err =
-        finite_abs_or_inf(y, apply_pair_forward(FirstPair{}, inv_y)) +
-        finite_abs_or_inf(b_wrapped, apply_pair_forward(FirstPair{}, inv_b)) +
-        finite_abs_or_inf(one_wrapped,
-                          apply_pair_forward(FirstPair{}, inv_one));
+        finite_abs_or_inf(y, apply_pair_left(FirstPair{}, inv_y)) +
+        finite_abs_or_inf(b_wrapped, apply_pair_left(FirstPair{}, inv_b)) +
+        finite_abs_or_inf(one_wrapped, apply_pair_left(FirstPair{}, inv_one));
 
-    const T fwd_y = apply_pair_forward(FirstPair{}, y);
-    const T fwd_b = apply_pair_forward(FirstPair{}, b_wrapped);
-    const T fwd_one = apply_pair_forward(FirstPair{}, one_wrapped);
+    const T fwd_y = apply_pair_left(FirstPair{}, y);
+    const T fwd_b = apply_pair_left(FirstPair{}, b_wrapped);
+    const T fwd_one = apply_pair_left(FirstPair{}, one_wrapped);
     const T fwd_err =
-        finite_abs_or_inf(y, apply_pair_inverse(FirstPair{}, fwd_y)) +
-        finite_abs_or_inf(b_wrapped, apply_pair_inverse(FirstPair{}, fwd_b)) +
-        finite_abs_or_inf(one_wrapped,
-                          apply_pair_inverse(FirstPair{}, fwd_one));
+        finite_abs_or_inf(y, apply_pair_right(FirstPair{}, fwd_y)) +
+        finite_abs_or_inf(b_wrapped, apply_pair_right(FirstPair{}, fwd_b)) +
+        finite_abs_or_inf(one_wrapped, apply_pair_right(FirstPair{}, fwd_one));
 
     return inv_err <= fwd_err;
   } else {
