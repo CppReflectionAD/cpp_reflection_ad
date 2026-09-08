@@ -39,6 +39,13 @@ constexpr double negate(double x) { return -x ;}
 
 static_assert(ad::forward_derivative<^^negate, 0, double>(4.0) == -1.0);
 
+constexpr std::meta::info negate_ret = ad::detail::stripCasts(
+    std::meta::return_value_of(
+        std::meta::statements_of(std::meta::body_of(^^negate))[0]));
+static_assert(std::meta::is_unary_operator(negate_ret));
+static_assert(std::meta::expression_operator_of(negate_ret) ==
+              std::meta::operators::op_minus);
+
 int main() {
   // forward mode (one directional derivative)
   {
