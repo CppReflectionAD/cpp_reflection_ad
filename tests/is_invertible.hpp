@@ -30,10 +30,6 @@ template <info Fn, std::size_t ArgIndex, auto InvFn> struct inverse_pair_wrt {
   static constexpr auto inverse = InvFn;
 };
 
-using default_cdf_pair = inverse_pair<^^mcsim::CDF, ^^mcsim::CDF_inverse>;
-using default_cdf_inverse_pair =
-    inverse_pair<^^mcsim::CDF_inverse, ^^mcsim::CDF>;
-
 template <info QueryFn, typename Pair> struct pair_matches : std::false_type {};
 
 template <typename Pair> struct is_unary_inverse_pair : std::false_type {};
@@ -76,7 +72,7 @@ constexpr T apply_pair_inverse(inverse_pair<Fn, InvFn>, T y) {
     return static_cast<T>([:InvFn:](static_cast<double>(y)));
 }
 
-template <typename T, info Fn, auto InvFn>
+template <typename T, info Fn, info InvFn>
 constexpr T apply_pair_forward(inverse_pair<Fn, InvFn>, T y) {
   if constexpr (requires { [:Fn:](y); })
     return static_cast<T>([:Fn:](y));
@@ -699,8 +695,7 @@ struct InvertibilityResult {
 template <info Fn, typename... RegisteredPairs>
 consteval InvertibilityResult invertibility_result() {
   constexpr auto plan =
-      detail_inv::build_inverse_plan<Fn, RegisteredPairs..., default_cdf_pair,
-                                     default_cdf_inverse_pair>();
+      detail_inv::build_inverse_plan<Fn, RegisteredPairs...>();
   return {plan.ok, plan.failing_node, plan.failing_op};
 }
 
@@ -731,17 +726,12 @@ template <info Fn, typename... RegisteredPairs> struct inverse {
       "is not constructible symbolically, ad::is_invertible<Fn>() is false");
 
   template <typename T = double> constexpr T operator()(T y) const {
-    if constexpr (has_registered_inverse<Fn, RegisteredPairs...,
-                                         default_cdf_pair,
-                                         default_cdf_inverse_pair>()) {
-      return apply_registered_inverse<Fn, T, RegisteredPairs...,
-                                      default_cdf_pair,
-                                      default_cdf_inverse_pair>(y);
+    if constexpr (has_registered_inverse<Fn, RegisteredPairs...>()) {
+      return apply_registered_inverse<Fn, T, RegisteredPairs...>(y);
     }
 
     constexpr auto plan =
-        detail_inv::build_inverse_plan<Fn, RegisteredPairs..., default_cdf_pair,
-                                       default_cdf_inverse_pair>();
+        detail_inv::build_inverse_plan<Fn, RegisteredPairs...>();
     T x = y;
     for (std::size_t i = 0; i < plan.step_count; ++i)
       x = detail_inv::apply_inverse_step(plan.steps[i], x);

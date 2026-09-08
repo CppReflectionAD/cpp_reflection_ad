@@ -21,6 +21,7 @@ inline double fn_arcsine(double y) { return std::asin(y); }
 inline double fn_two_arg(double x, double y) { return x + y; }
 
 using user_sine_pair = ad::inverse_pair<^^fn_sine, ^^fn_arcsine>;
+using user_CDF_pair = ad::inverse_pair<^^mcsim::CDF, ^^mcsim::CDF_inverse>;
 
 // ---------------------------------------------------------------------------
 // Compile-time assertions (primary tests)
@@ -52,8 +53,8 @@ static_assert(!ad::is_invertible<^^fn_sine>());
 static_assert(!ad::is_invertible<^^fn_two_arg>());
 
 // Registered special-case inverse pair for normal CDF.
-static_assert(ad::is_invertible<^^mcsim::CDF>());
-static_assert(ad::is_invertible<^^mcsim::CDF_inverse>());
+static_assert(ad::is_invertible<^^mcsim::CDF, user_CDF_pair>());
+static_assert(ad::is_invertible<^^mcsim::CDF_inverse, user_CDF_pair>());
 
 // User can inject custom inverse pairs directly via variadic template args.
 static_assert(ad::is_invertible<^^fn_sine, user_sine_pair>());
@@ -78,13 +79,14 @@ int main() {
   }
 
   {
-    constexpr auto r = ad::invertibility_result<^^mcsim::CDF>();
+    constexpr auto r = ad::invertibility_result<^^mcsim::CDF, user_CDF_pair>();
     EXPECT_TRUE(r.invertible);
     EXPECT_EQUAL(r.failing_node, -1);
   }
 
   {
-    constexpr auto r = ad::invertibility_result<^^mcsim::CDF_inverse>();
+    constexpr auto r =
+        ad::invertibility_result<^^mcsim::CDF_inverse, user_CDF_pair>();
     EXPECT_TRUE(r.invertible);
     EXPECT_EQUAL(r.failing_node, -1);
   }

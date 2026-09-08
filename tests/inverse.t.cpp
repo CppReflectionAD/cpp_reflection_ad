@@ -47,8 +47,8 @@ static_assert(ad::is_invertible<^^fn_reciprocal>());
 static_assert(ad::is_invertible<^^fn_affine_then_exp>());
 static_assert(ad::is_invertible<^^fn_const_div_shift>());
 static_assert(ad::is_invertible<^^fn_sum_itself>());
-static_assert(ad::is_invertible<^^mcsim::CDF>());
-static_assert(ad::is_invertible<^^mcsim::CDF_inverse>());
+static_assert(ad::is_invertible<^^mcsim::CDF, user_CDF_pair>());
+static_assert(ad::is_invertible<^^mcsim::CDF_inverse, user_CDF_pair>());
 static_assert(ad::is_invertible<^^fn_sine_custom, user_sine_pair>());
 static_assert(!ad::is_invertible<^^fn_diff_itself>());
 static_assert(
@@ -189,14 +189,16 @@ int main() {
   {
     const double input = 0.25;
     const double output = mcsim::CDF(input);
-    const double recovered = ad::inverse_of<^^mcsim::CDF>(output);
+    const double recovered =
+        ad::inverse_of<^^mcsim::CDF, double, user_CDF_pair>(output);
     EXPECT_NEAR_REL(recovered, input, 1e-7);
   }
 
   {
     const double input = 0.73;
     const double output = mcsim::CDF_inverse(input);
-    const double recovered = ad::inverse_of<^^mcsim::CDF_inverse>(output);
+    const double recovered =
+        ad::inverse_of<^^mcsim::CDF_inverse, double, user_CDF_pair>(output);
     EXPECT_NEAR_REL(recovered, input, 1e-7);
   }
 
