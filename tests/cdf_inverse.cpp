@@ -1,9 +1,7 @@
 #include "mc_sim/normal_distribution.hpp"
+#include <test_simple_include.hpp>
 
 #include <cmath>
-#include <iomanip>
-#include <iostream>
-#include <limits>
 #include <vector>
 
 namespace {
@@ -31,7 +29,8 @@ int main() {
   constexpr double kXtolWide = 2e-2;
 
   WorstCase worst_u;
-  WorstCase worst_x;
+  WorstCase worst_x_central;
+  WorstCase worst_x_wide;
 
   int u_failures = 0;
   int x_central_failures = 0;
@@ -76,7 +75,7 @@ int main() {
     const double x = x_central_min + (x_central_max - x_central_min) * t;
     const double roundtrip_x = mcsim::CDF_inverse(mcsim::CDF(x));
 
-    update_worst(worst_x, x, x, roundtrip_x);
+    update_worst(worst_x_central, x, x, roundtrip_x);
     if (std::abs(roundtrip_x - x) > kXtolCentral) {
       ++x_central_failures;
     }
@@ -91,32 +90,20 @@ int main() {
     const double x = x_min + (x_max - x_min) * t;
     const double roundtrip_x = mcsim::CDF_inverse(mcsim::CDF(x));
 
-    update_worst(worst_x, x, x, roundtrip_x);
+    update_worst(worst_x_wide, x, x, roundtrip_x);
     if (std::abs(roundtrip_x - x) > kXtolWide) {
       ++x_wide_failures;
     }
   }
 
-  std::cout << std::setprecision(17);
-  std::cout << "CDF(CDF_inverse(u)) quick check\n";
-  std::cout << "  tolerance: " << kUtol << "\n";
-  std::cout << "  max abs error: " << worst_u.abs_error
-            << " at u=" << worst_u.input << " (got " << worst_u.actual << ")\n";
-  std::cout << "  failures: " << u_failures << "\n\n";
+  EXPECT_TRUE(worst_u.abs_error <= kUtol);
+  EXPECT_EQUAL(u_failures, 0);
 
-  std::cout << "CDF_inverse(CDF(x)) quick check\n";
-  std::cout << "  central tolerance [-6,6]: " << kXtolCentral << "\n";
-  std::cout << "  wide tolerance [-8,8]: " << kXtolWide << "\n";
-  std::cout << "  max abs error: " << worst_x.abs_error
-            << " at x=" << worst_x.input << " (got " << worst_x.actual << ")\n";
-  std::cout << "  central failures: " << x_central_failures << "\n";
-  std::cout << "  wide failures: " << x_wide_failures << "\n";
+  EXPECT_TRUE(worst_x_central.abs_error <= kXtolCentral);
+  EXPECT_EQUAL(x_central_failures, 0);
 
-  if (u_failures == 0 && x_central_failures == 0 && x_wide_failures == 0) {
-    std::cout << "\nPASS\n";
-    return 0;
-  }
+  EXPECT_TRUE(worst_x_wide.abs_error <= kXtolWide);
+  EXPECT_EQUAL(x_wide_failures, 0);
 
-  std::cout << "\nFAIL\n";
-  return 1;
+  TEST_END;
 }
