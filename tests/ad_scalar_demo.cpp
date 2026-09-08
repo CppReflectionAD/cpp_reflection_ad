@@ -35,6 +35,10 @@ constexpr double collide_sum(double x, double y) {
 } // d/dx = 2x
 constexpr double collide_sin(double x) { return myns::sin(x); } // f' = 2x
 
+constexpr double negate(double x) { return -x ;}
+
+static_assert(ad::forward_derivative<^^negate, 0, double>(4.0) == -1.0);
+
 int main() {
   // forward mode (one directional derivative)
   {
