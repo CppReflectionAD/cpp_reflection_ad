@@ -35,8 +35,8 @@ inline double evolve_black_scholes2_inverse(double spot, double r, double vol,
   return mcsim::CDF(z);
 }
 
-using user_sine_pair = ad::inverse_pair<^^fn_sine_custom, fn_arcsine_custom>;
-using user_CDF_pair = ad::inverse_pair<^^mcsim::CDF, mcsim::CDF_inverse>;
+using user_sine_pair = ad::inverse_pair<^^fn_sine_custom, ^^fn_arcsine_custom>;
+using user_CDF_pair = ad::inverse_pair<^^mcsim::CDF, ^^mcsim::CDF_inverse>;
 
 // The inverse metafunction is available only when the checker can prove
 // injectivity.

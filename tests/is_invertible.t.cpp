@@ -20,7 +20,7 @@ inline double fn_sine(double x) { return std::sin(x); }
 inline double fn_arcsine(double y) { return std::asin(y); }
 inline double fn_two_arg(double x, double y) { return x + y; }
 
-using user_sine_pair = ad::inverse_pair<^^fn_sine, fn_arcsine>;
+using user_sine_pair = ad::inverse_pair<^^fn_sine, ^^fn_arcsine>;
 
 // ---------------------------------------------------------------------------
 // Compile-time assertions (primary tests)

@@ -19,7 +19,7 @@
 
 namespace ad {
 
-template <info Fn, auto InvFn> struct inverse_pair {
+template <info Fn, info InvFn> struct inverse_pair {
   static constexpr auto function = Fn;
   static constexpr auto inverse = InvFn;
 };
@@ -30,27 +30,19 @@ template <info Fn, std::size_t ArgIndex, auto InvFn> struct inverse_pair_wrt {
   static constexpr auto inverse = InvFn;
 };
 
-using default_cdf_pair = inverse_pair<^^mcsim::CDF, mcsim::CDF_inverse>;
-using default_cdf_inverse_pair = inverse_pair<^^mcsim::CDF_inverse, mcsim::CDF>;
+using default_cdf_pair = inverse_pair<^^mcsim::CDF, ^^mcsim::CDF_inverse>;
+using default_cdf_inverse_pair =
+    inverse_pair<^^mcsim::CDF_inverse, ^^mcsim::CDF>;
 
 template <info QueryFn, typename Pair> struct pair_matches : std::false_type {};
 
 template <typename Pair> struct is_unary_inverse_pair : std::false_type {};
 
-template <info QueryFn, auto Candidate> consteval bool query_fn_value_equals() {
-  constexpr auto query_value = [:QueryFn:];
-  if constexpr (std::is_same_v<decltype(query_value), decltype(Candidate)>)
-    return query_value == Candidate;
-  else
-    return false;
-}
-
-template <info QueryFn, info Fn, auto InvFn>
+template <info QueryFn, info Fn, info InvFn>
 struct pair_matches<QueryFn, inverse_pair<Fn, InvFn>>
-    : std::bool_constant<(QueryFn == Fn ||
-                          query_fn_value_equals<QueryFn, InvFn>())> {};
+    : std::bool_constant<(QueryFn == Fn || QueryFn == InvFn)> {};
 
-template <info Fn, auto InvFn>
+template <info Fn, info InvFn>
 struct is_unary_inverse_pair<inverse_pair<Fn, InvFn>> : std::true_type {};
 
 template <info QueryFn, std::size_t QueryArgIndex, typename Pair>
@@ -76,12 +68,12 @@ template <typename... Pairs> consteval bool has_unary_inverse_pair() {
   return (is_unary_inverse_pair<Pairs>::value || ...);
 }
 
-template <typename T, info Fn, auto InvFn>
+template <typename T, info Fn, info InvFn>
 constexpr T apply_pair_inverse(inverse_pair<Fn, InvFn>, T y) {
-  if constexpr (requires { InvFn(y); })
-    return static_cast<T>(InvFn(y));
+  if constexpr (requires { [:InvFn:](y); })
+    return static_cast<T>([:InvFn:](y));
   else
-    return static_cast<T>(InvFn(static_cast<double>(y)));
+    return static_cast<T>([:InvFn:](static_cast<double>(y)));
 }
 
 template <typename T, info Fn, auto InvFn>
@@ -92,14 +84,14 @@ constexpr T apply_pair_forward(inverse_pair<Fn, InvFn>, T y) {
     return static_cast<T>([:Fn:](static_cast<double>(y)));
 }
 
-template <info QueryFn, typename T, info Fn, auto InvFn>
+template <info QueryFn, typename T, info Fn, info InvFn>
 constexpr T apply_pair_inverse_for(inverse_pair<Fn, InvFn>, T y) {
   if constexpr (QueryFn == Fn)
     return apply_pair_inverse(inverse_pair<Fn, InvFn>{}, y);
-  else if constexpr (query_fn_value_equals<QueryFn, InvFn>())
+  else if constexpr (QueryFn == InvFn)
     return apply_pair_forward(inverse_pair<Fn, InvFn>{}, y);
   else {
-    static_assert(QueryFn == Fn || query_fn_value_equals<QueryFn, InvFn>(),
+    static_assert(QueryFn == Fn || QueryFn == InvFn,
                   "Pair does not match queried function");
     return T{};
   }
