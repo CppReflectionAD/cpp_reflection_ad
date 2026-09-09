@@ -24,22 +24,13 @@ consteval std::size_t emit_raw(std::vector<Node> &out, OpKind op, std::size_t a,
   return s;
 }
 
-// If we have an existing node in the DAG with the same operation and operands,
-// we can reuse it instead of bloating the DAG with duplicate nodes. Const nodes
-// carry their value in `leaf` rather than in operands, so they only match when
-// the leaf matches too. `cond` and `guard` are also keyed on since a value
-// computed under one guard must not be reused under another.
-consteval std::size_t emit_node(std::vector<Node> &out, OpKind op,
-                                std::size_t a, std::size_t b, info leaf = ^^int,
-                                std::size_t cond = 0,
-                                std::size_t guard = UNGUARDED) {
-  for (const Node &n : out) {
-    if (n.op == op && n.a == a && n.b == b && n.cond == cond &&
-        n.guard == guard && (op != OpKind::Const || n.leaf == leaf)) {
-      return n.self;
-    }
+consteval std::size_t node_hash(OpKind op, std::size_t a, std::size_t b,
+                                std::size_t cond, std::size_t guard) {
+  std::size_t h = 1469598103934665603ull;
+  for (std::size_t v : {static_cast<std::size_t>(op), a, b, cond, guard}) {
+    h = (h ^ v) * 1099511628211ull;
   }
-  return emit_raw(out, op, a, b, leaf, cond, guard);
+  return h;
 }
 
 // This struct represents the shape of a truncated taylor polynomial, e.g.
@@ -149,6 +140,64 @@ private:
   using ConstPool = std::vector<std::pair<double, std::size_t>>;
   ConstPool pool;
 
+  // Hash table over the nodes emitted through `emit_node`.
+  using MemoEntry = std::pair<std::size_t, std::size_t>;
+  using MemoBucket = std::vector<MemoEntry>;
+  static constexpr std::size_t kInitialBuckets = 64;
+  // Grow once a bucket holds this many entries on average.
+  static constexpr std::size_t kMaxLoadFactor = 2;
+
+  std::vector<MemoBucket> buckets = std::vector<MemoBucket>(kInitialBuckets);
+  std::size_t memoCount = 0;
+
+  // Double the bucket count once the table is loaded past `kMaxLoadFactor`, so
+  // the average bucket stays short and lookups stay constant time.
+  consteval void grow_memo_if_loaded() {
+    if (memoCount <= buckets.size() * kMaxLoadFactor) {
+      return;
+    }
+    std::vector<MemoBucket> fresh(buckets.size() * 2);
+    for (const MemoBucket &bucket : buckets) {
+      for (const MemoEntry &entry : bucket) {
+        fresh[entry.first % fresh.size()].push_back(entry);
+      }
+    }
+    buckets = fresh;
+  }
+
+  // If we have an existing node in the DAG with the same operation and
+  // operands, we can reuse it instead of bloating the DAG with duplicate nodes.
+  // Const nodes carry their value in `leaf` rather than in operands, so they
+  // only match when the leaf matches too. `cond` and `guard` are also keyed on
+  // since a value computed under one guard must not be reused under another.
+  consteval std::size_t emit_node(OpKind op, std::size_t a, std::size_t b,
+                                  info leaf = ^^int, std::size_t cond = 0,
+                                  std::size_t guard = UNGUARDED) {
+    // Hash the node.
+    const std::size_t h = node_hash(op, a, b, cond, guard);
+    // Find the bucket it should live in.
+    MemoBucket &bucket = buckets[h % buckets.size()];
+    // Scan the bucket and return the node if found.
+    for (const MemoEntry &entry : bucket) {
+      if (entry.first != h) {
+        continue;
+      }
+      const Node &n = out[entry.second];
+      // Make sure if we have any hash collisions that we return the correct
+      // node.
+      if (n.op == op && n.a == a && n.b == b && n.cond == cond &&
+          n.guard == guard && (op != OpKind::Const || n.leaf == leaf)) {
+        return n.self;
+      }
+    }
+    std::size_t slot = emit_raw(out, op, a, b, leaf, cond, guard);
+    // Add new node to hash lookup so we don't duplicate it in the future.
+    bucket.push_back({h, slot});
+    ++memoCount;
+    grow_memo_if_loaded();
+    return slot;
+  }
+
 public:
   std::vector<Node> out;
 
@@ -174,7 +223,7 @@ public:
   // binary op, `slot2`), under the guard currently in force.
   consteval std::size_t emit_op_node(OpKind op, std::size_t slot1,
                                      std::size_t slot2 = 0) {
-    return emit_node(out, op, slot1, slot2, ^^int, 0, curGuard);
+    return emit_node(op, slot1, slot2, ^^int, 0, curGuard);
   }
 
   // Add a negation to the `out` vector, negating the existing node at position
@@ -272,7 +321,7 @@ public:
       // Both branches are the same, so no need to add a new node.
       return whenTrue;
     }
-    return emit_node(out, OpKind::Select, whenTrue, whenFalse, ^^int, cond,
+    return emit_node(OpKind::Select, whenTrue, whenFalse, ^^int, cond,
                      curGuard);
   }
 
