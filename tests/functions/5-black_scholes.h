@@ -6,7 +6,7 @@
 inline double total_vol(double v, double T) { return v * std::sqrt(T); }
 
 inline double cfd(double value) {
-  return 0.5 * std::erfc(value * -0.70710678118654746);
+  return 0.5 * std::erfc(-value * 0.70710678118654746);
 }
 
 inline double call_price(double S, double K, double v, double T) {

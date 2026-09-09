@@ -7,6 +7,10 @@ on:
     paths:
       - "gcc-mirror"
       - ".github/workflows/toolchain-cache-gcc.yml"
+  pull_request:
+    paths:
+      - "gcc-mirror"
+      - ".github/workflows/toolchain-cache-gcc.yml"
 
 permissions:
   contents: read

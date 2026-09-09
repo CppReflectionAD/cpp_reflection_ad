@@ -34,6 +34,7 @@ constexpr double collide_sum(double x, double y) {
   return myns::sum(x * x, y);
 } // d/dx = 2x
 constexpr double collide_sin(double x) { return myns::sin(x); } // f' = 2x
+inline double exp_neg(double x) { return std::exp(-x); }
 
 int main() {
   // forward mode (one directional derivative)
@@ -178,6 +179,29 @@ int main() {
     double const collide_sin_der =
         ad::forward_derivative<^^collide_sin, 0>(4.0);
     EXPECT_NEAR_ABS(collide_sin_der, 2 * 4.0, 1e-8);
+  }
+
+  // exp(-x): verify sign handling through unary minus + exp composition.
+  {
+    double const x = 1.1;
+    double const e = std::exp(-x);
+
+    double const der_fwd = ad::forward_derivative<^^exp_neg, 0>(x);
+    EXPECT_NEAR_ABS(der_fwd, -e, 1e-10);
+
+    auto const g_rev = ad::gradient_reverse<^^exp_neg>(x);
+    EXPECT_NEAR_ABS(g_rev[0], -e, 1e-10);
+
+    double const der2 = ad::partial_derivative<^^exp_neg, 0, 0>(x);
+    EXPECT_NEAR_ABS(der2, e, 1e-10);
+
+    double const der3 = ad::partial_derivative<^^exp_neg, 0, 0, 0>(x);
+    EXPECT_NEAR_ABS(der3, -e, 1e-10);
+
+    double const tder1 = ad::taylor_mode_ad<^^exp_neg, 0>(x);
+    EXPECT_NEAR_ABS(tder1, -e, 1e-10);
+    double const tder2 = ad::taylor_mode_ad<^^exp_neg, 0, 0>(x);
+    EXPECT_NEAR_ABS(tder2, e, 1e-10);
   }
 
   // Derivatives are usable in constant expressions (poly is pure arithmetic).
