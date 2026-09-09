@@ -10,8 +10,10 @@ on:
   workflow_run:
     workflows: [ "Build Clang Toolchain (Cache)" ]
     types: [ completed ]
-    branches: [ "main" ]
   pull_request:
+    paths-ignore:
+      - "clang-p2996"
+      - ".github/workflows/toolchain-cache-clang.yml"
   workflow_dispatch:
 
 permissions:
@@ -26,6 +28,9 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'workflow_run' &&
+            github.event.workflow_run.head_sha || github.sha }}
 
       - name: Compute cache key
         id: key

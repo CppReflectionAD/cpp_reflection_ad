@@ -7,6 +7,10 @@ on:
     paths:
       - "clang-p2996"
       - ".github/workflows/toolchain-cache-clang.yml"
+  pull_request:
+    paths:
+      - "clang-p2996"
+      - ".github/workflows/toolchain-cache-clang.yml"
 
 permissions:
   contents: read
