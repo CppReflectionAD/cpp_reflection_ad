@@ -5,7 +5,7 @@
 [submodule "gcc-mirror"]
 	path = gcc-mirror
 	url = https://github.com/yesmanchyk/gcc-mirror.git
-	branch = no_expression_kind
+	branch = autograd-capable
 [submodule "gcc-darwin-reflect"]
 	path = gcc-darwin-reflect
 	url = https://github.com/iains/gcc-darwin-arm64.git
