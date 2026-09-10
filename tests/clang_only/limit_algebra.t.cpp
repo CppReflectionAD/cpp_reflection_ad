@@ -5,8 +5,8 @@
 #include "../functions/1-poly.h"
 #include "../functions/2-trig.h"
 #include "../functions/3-two_arg.h"
-#include "../functions/5-black_scholes.h"
 #include "../functions/6-piecewise.h"
+#include "../tests/mc_sim/black_scholes.hpp"
 
 #include <cmath>
 
