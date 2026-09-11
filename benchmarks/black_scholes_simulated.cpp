@@ -150,7 +150,6 @@ double monte_carlo_discontinuity_delta_contribution(
             ad::inverse_of_wrt<^^evolve_black_scholes, 3, double,
                                user_CDF_pair>(target_factor, r, vol, dt_last);
         const double z_star = mcsim::CDF_inverse(uniforms.back());
-
         const double normal_pdf =
             inv_sqrt_two_pi * std::exp(-0.5 * z_star * z_star);
 
@@ -160,8 +159,9 @@ double monte_carlo_discontinuity_delta_contribution(
         const double dg_d_spot0 = strike / spot0;
         const double dg_d_u =
             strike * vol * sqrt_dt_last / std::max(normal_pdf, 1e-300);
+        const double inv_abs_dg_d_u = 1.0 / std::max(std::abs(dg_d_u), 1e-300);
 
-        correction_sum += dg_d_spot0 / std::abs(dg_d_u);
+        correction_sum += dg_d_spot0 * inv_abs_dg_d_u;
     }
 
     return discount * (correction_sum / static_cast<double>(num_paths));

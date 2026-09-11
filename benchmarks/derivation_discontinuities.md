@@ -71,3 +71,100 @@ For this quantity to be able to be calculated automatically, we would have to:
 - represent and evaluate the function $f$. As a reminder, $f$ depends only on the distribution of $x$, so this could be done adding special operators to a class of RNG distributions.
 - represent and evaluate the function $g$ and its derivatives. As a reminder, $g$ depends only on the payoff, and can be easily extracted form a scripting language. The derivatives of $g$ can be easily calculated with standard AD techniques.
 - find the roots $x_i$ of $g(x, S) = 0$. This can be done using numerical root-finding methods, but could also be alleviated whenever these functions are simple enough to have analytical roots.
+
+## Practical workflow for the digital-call benchmark
+
+In our current benchmark, the payoff is a Heaviside step:
+
+$$
+	ext{payoff}(S_T, K) = H(S_T - K)
+$$
+
+so the payoff has a discontinuity on the surface:
+
+$$
+g = S_T - K = 0.
+$$
+
+The goal is to compute the delta correction term due to this discontinuity while reusing as much of the standard Monte-Carlo path logic as possible.
+
+### 1. Detect that a special treatment is needed
+
+Use the continuity checker on the final payoff function over a box that crosses the switching surface. If the checker reports discontinuous, we activate the discontinuity treatment.
+
+### 2. Keep the usual Monte-Carlo estimator unchanged
+
+For the standard price estimator, keep all uniforms random and simulate the path normally.
+
+This gives the regular term:
+
+$$
+\int \frac{\partial f}{\partial S} H(g)\,dx
+$$
+
+which is the part a classic pathwise AD Monte-Carlo can capture.
+
+### 3. Add a second estimator for the discontinuity contribution
+
+For each path, keep the first $N-1$ random draws unchanged (for example 11 draws when $N=12$), and only modify the last draw so the terminal state lands exactly on the discontinuity surface:
+
+$$
+S_T = K.
+$$
+
+Conceptually, this is the root solve of $g=0$ with respect to the chosen draw variable.
+
+### 4. Solve the tweaked draw through inverse logic
+
+Instead of hardcoding the solve, use inverse machinery on the step map of the last simulation increment. This keeps the approach generic and aligned with the rest of the symbolic inversion framework.
+
+### 5. Apply the sifting Jacobian weight
+
+After solving the tweaked draw, evaluate the weight:
+
+$$
+\frac{\partial g/\partial S}{\left|\partial g/\partial x\right|}
+$$
+
+where $x$ is the tweaked integration variable (the last draw in this setup).
+
+Average this weighted contribution across paths and multiply by discounting. This produces the discontinuity correction term:
+
+$$
+\int f(x,S)\,\delta(g(x,S))\,\frac{\partial g}{\partial S}(x,S)\,dx.
+$$
+
+### 6. Final gradient estimate
+
+Combine:
+
+1. the regular Monte-Carlo pathwise derivative term,
+2. the discontinuity correction term from the tweaked-draw estimator.
+
+This yields a practical estimator that remains close to standard Monte-Carlo code and only introduces special handling where discontinuities are detected.
+
+## Multidimensional interpretation of the discontinuity term
+
+In the path simulation with `SIM_PER_PATH = N`, the switching function is not a one-variable function. It depends on all random draws:
+
+$$
+g(u_1,\dots,u_N; S) = S_T(u_1,\dots,u_N; S) - K.
+$$
+
+So the discontinuity contribution is naturally an $N$-dimensional integral:
+
+$$
+\int_{[0,1]^N} \delta(g(\mathbf{u}; S))\,\frac{\partial g}{\partial S}(\mathbf{u}; S)\,d\mathbf{u}.
+$$
+
+The Dirac term constrains integration to the level set $g=0$, which is typically an $(N-1)$-dimensional hypersurface inside $[0,1]^N$.
+
+When we "tweak the last draw", we are not changing the mathematical object. We are choosing one coordinate (for example $u_N$) as a solve variable:
+
+1. draw $u_1,\dots,u_{N-1}$ from their usual distribution,
+2. solve $g=0$ for $u_N^*$,
+3. apply the Jacobian weight $1/\left|\partial g/\partial u_N\right|$.
+
+This is exactly the standard reduction of a delta-constrained integral by one variable. The remaining Monte-Carlo still integrates over the other $N-1$ random dimensions.
+
+In other words, the implementation with 11 random draws and 1 tweaked draw (for $N=12$) is a parameterization of the same 12-dimensional discontinuity integral, not a different approximation target.

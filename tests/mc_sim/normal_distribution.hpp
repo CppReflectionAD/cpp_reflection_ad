@@ -3,14 +3,22 @@
 
 #include <cmath>
 #include <limits>
+#include <numbers>
 
 namespace mcsim
 {
 
 inline double CDF(double x)
 {
-    constexpr double m_sqrt1_2 = -0.70710678118654752440;
+    constexpr double m_sqrt1_2 = -1.0 / std::numbers::sqrt2_v<double>;
     return 0.5 * std::erfc(x * m_sqrt1_2);
+}
+
+inline double PDF(double x)
+{
+    constexpr double one_over_sqrt_two_pi =
+        std::numbers::inv_sqrtpi_v<double> / std::numbers::sqrt2_v<double>;
+    return one_over_sqrt_two_pi * std::exp(-0.5 * x * x);
 }
 
 // Approximation due to Peter J. Acklam, adapted to C++.
@@ -86,8 +94,7 @@ inline double CDF_inverse(double u)
     double z = acklam_approx(p);
 
     // One Halley refinement strongly improves round-trip precision.
-    constexpr double one_over_sqrt_two_pi = 0.39894228040143267794;
-    const double pdf = one_over_sqrt_two_pi * std::exp(-0.5 * z * z);
+    const double pdf = PDF(z);
     if (pdf > 0.0)
     {
         const double err = CDF(z) - p;

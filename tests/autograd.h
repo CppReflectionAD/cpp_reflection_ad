@@ -356,8 +356,16 @@ consteval Prim find_primitive(info callee) {
 consteval std::size_t lower(Ctx &c, info e) {
   e = stripCasts(e);
 
-  if (m::is_variable_reference(e))
-    return findSlot(c, m::identifier_of(m::declaration_of(e)));
+  if (m::is_variable_reference(e)) {
+    const std::string_view name = m::identifier_of(m::declaration_of(e));
+    for (std::size_t i = c.envDecl.size(); i-- > 0;)
+      if (m::identifier_of(c.envDecl[i]) == name)
+        return c.envSlot[i];
+
+    // External constexpr variables (e.g. std::numbers constants) are not in
+    // the local environment; fold them to literal constants in the DAG.
+    return emit(c, OpKind::Const, 0, 0, m::constant_of(e));
+  }
 
   if (m::is_literal(e)) {
     // Reduce the literal to a value reflection (constant_of); it is spliced by
