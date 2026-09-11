@@ -53,6 +53,7 @@ consteval bool is_discontinuous(Intervals... bounds)
     return !ad::is_continuous_on<Fn>(bounds...);
 }
 
+template <std::meta::info FinalPayoffFn>
 double monte_carlo_digital_call_price(double spot0, double strike, double r,
                                       double vol, double maturity,
                                       std::size_t num_paths,
@@ -84,7 +85,7 @@ double monte_carlo_digital_call_price(double spot0, double strike, double r,
             spot *= factor;
         }
 
-        payoff_sum += final_payoff(spot, strike);
+        payoff_sum += static_cast<double>([:FinalPayoffFn:](spot, strike));
     }
 
     return discount * (payoff_sum / static_cast<double>(num_paths));
@@ -197,8 +198,9 @@ int main()
     const double maturity_years = year_fraction_act365(start, maturity);
 
     const double mc_digital_call_price =
-        monte_carlo_digital_call_price(spot0, strike, rate, vol, maturity_years,
-                                       num_paths, sim_per_path, seed);
+        monte_carlo_digital_call_price<^^final_payoff>(
+            spot0, strike, rate, vol, maturity_years, num_paths, sim_per_path,
+            seed);
 
     const double closed_form_digital_call =
         closed_form_discounted_digital_call_price(spot0, strike, rate, vol,
