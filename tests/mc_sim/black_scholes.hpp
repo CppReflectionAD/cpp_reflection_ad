@@ -6,38 +6,34 @@
 
 inline double total_vol(double v, double T) { return v * std::sqrt(T); }
 
-inline double call_price(double S, double K, double v, double T)
-{
-    double totalvol = total_vol(v, T);
-    double d1 = std::log(S / K) / totalvol + totalvol * 0.5;
-    double d2 = d1 - totalvol;
-    return S * mcsim::CDF(d1) - K * mcsim::CDF(d2);
+inline double call_price(double S, double K, double v, double T) {
+  double totalvol = total_vol(v, T);
+  double d1 = std::log(S / K) / totalvol + totalvol * 0.5;
+  double d2 = d1 - totalvol;
+  return S * mcsim::CDF(d1) - K * mcsim::CDF(d2);
 }
 
-inline double put_price(double S, double K, double v, double T)
-{
-    double totalvol = total_vol(v, T);
-    double d1 = std::log(S / K) / totalvol + totalvol * 0.5;
-    double d2 = d1 - totalvol;
-    return K * mcsim::CDF(-d2) - S * mcsim::CDF(-d1);
+inline double put_price(double S, double K, double v, double T) {
+  double totalvol = total_vol(v, T);
+  double d1 = std::log(S / K) / totalvol + totalvol * 0.5;
+  double d2 = d1 - totalvol;
+  return K * mcsim::CDF(-d2) - S * mcsim::CDF(-d1);
 }
 
 inline double digital_call_price(double S, double K, double v, double T,
-                                 double payout = 1.0)
-{
-    double totalvol = total_vol(v, T);
-    double d1 = std::log(S / K) / totalvol + totalvol * 0.5;
-    double d2 = d1 - totalvol;
-    return payout * mcsim::CDF(d2);
+                                 double payout = 1.0) {
+  double totalvol = total_vol(v, T);
+  double d1 = std::log(S / K) / totalvol + totalvol * 0.5;
+  double d2 = d1 - totalvol;
+  return payout * mcsim::CDF(d2);
 }
 
 inline double digital_put_price(double S, double K, double v, double T,
-                                double payout = 1.0)
-{
-    double totalvol = total_vol(v, T);
-    double d1 = std::log(S / K) / totalvol + totalvol * 0.5;
-    double d2 = d1 - totalvol;
-    return payout * mcsim::CDF(-d2);
+                                double payout = 1.0) {
+  double totalvol = total_vol(v, T);
+  double d1 = std::log(S / K) / totalvol + totalvol * 0.5;
+  double d2 = d1 - totalvol;
+  return payout * mcsim::CDF(-d2);
 }
 
 #endif
