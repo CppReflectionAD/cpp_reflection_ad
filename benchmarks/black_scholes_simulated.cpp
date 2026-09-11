@@ -9,11 +9,13 @@
 
 #include "../tests/clang_only/is_continuous.hpp"
 #include "../tests/forward_derivative.h"
+#include "../tests/is_invertible.hpp"
 #include "../tests/mc_sim/black_scholes.hpp"
 #include "../tests/mc_sim/evolve_black_scholes.hpp"
 
 using TimePoint = std::chrono::system_clock::time_point;
 using Days = std::chrono::duration<std::int64_t, std::ratio<86400>>;
+using user_CDF_pair = ad::inverse_pair<^^mcsim::CDF, ^^mcsim::CDF_inverse>;
 
 double year_fraction_act365(const TimePoint &from, const TimePoint &to)
 {
@@ -141,11 +143,13 @@ double monte_carlo_discontinuity_delta_contribution(
             spot_before_last *= factor;
         }
 
-        // Tweak the last draw so terminal spot lands exactly on strike.
-        const double z_star =
-            (std::log(strike / spot_before_last) - drift_last) /
-            (vol * sqrt_dt_last);
-        uniforms.back() = mcsim::CDF(z_star);
+        // Tweak the last draw so terminal spot lands exactly on strike, using
+        // the generic inverse machinery rather than an explicit closed form.
+        const double target_factor = strike / spot_before_last;
+        uniforms.back() =
+            ad::inverse_of_wrt<^^evolve_black_scholes, 3, double,
+                               user_CDF_pair>(target_factor, r, vol, dt_last);
+        const double z_star = mcsim::CDF_inverse(uniforms.back());
 
         const double normal_pdf =
             inv_sqrt_two_pi * std::exp(-0.5 * z_star * z_star);
