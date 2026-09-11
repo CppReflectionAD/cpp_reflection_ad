@@ -472,6 +472,11 @@ struct InverseStep {
   double constant_value = 0.0;
 };
 
+struct InverseStepWrt {
+  InverseStepKind kind = InverseStepKind::AddConst;
+  int constant_node = -1;
+};
+
 template <typename T>
 constexpr T apply_inverse_step(const InverseStep &step, T y) {
   switch (step.kind) {
@@ -497,6 +502,227 @@ constexpr T apply_inverse_step(const InverseStep &step, T y) {
     return y * y;
   }
   return y;
+}
+
+template <typename T>
+constexpr T apply_inverse_step_wrt(const InverseStepWrt &step, T y,
+                                   const T *node_values) {
+  const T c = step.constant_node >= 0 ? node_values[step.constant_node] : T{};
+  switch (step.kind) {
+  case InverseStepKind::AddConst:
+    return y - c;
+  case InverseStepKind::SubConst:
+    return y + c;
+  case InverseStepKind::ConstMinus:
+    return c - y;
+  case InverseStepKind::MulConst:
+    return y / c;
+  case InverseStepKind::DivConst:
+    return y * c;
+  case InverseStepKind::ConstDiv:
+    return c / y;
+  case InverseStepKind::Neg:
+    return -y;
+  case InverseStepKind::Exp:
+    return std::log(y);
+  case InverseStepKind::Log:
+    return std::exp(y);
+  case InverseStepKind::Sqrt:
+    return y * y;
+  }
+  return y;
+}
+
+template <info Fn, std::size_t ArgIndex>
+consteval auto build_inverse_plan_wrt() {
+  static constexpr auto nodes = std::define_static_array(build_nodes<Fn>());
+  constexpr std::size_t N = nodes.size();
+  constexpr std::size_t InputCount = input_count_of<Fn>();
+
+  struct InversePlanWrt {
+    bool ok;
+    int failing_node;
+    OpKind failing_op;
+    std::size_t step_count;
+    std::array<InverseStepWrt, N> steps;
+  };
+
+  auto fail = [](int node, OpKind op) {
+    return InversePlanWrt{false, node, op, 0, {}};
+  };
+
+  if constexpr (ArgIndex >= InputCount) {
+    return fail(-1, OpKind::Input);
+  } else {
+    bool depends_target[N] = {};
+    int output_idx = -1;
+
+    template for (constexpr auto n : nodes) {
+      if constexpr (n.op == OpKind::Input) {
+        depends_target[n.self] = (n.self == ArgIndex);
+      } else if constexpr (n.op == OpKind::Const) {
+        depends_target[n.self] = false;
+      } else if constexpr (n.op == OpKind::Output) {
+        output_idx = static_cast<int>(n.self);
+        depends_target[n.self] = depends_target[n.a];
+      } else {
+        bool dep = false;
+        if constexpr (op_has_a(n.op))
+          dep = dep || depends_target[n.a];
+        if constexpr (op_has_b(n.op))
+          dep = dep || depends_target[n.b];
+        if constexpr (op_has_cond(n.op))
+          dep = dep || depends_target[n.cond];
+        depends_target[n.self] = dep;
+      }
+    }
+
+    if (output_idx < 0)
+      return fail(-1, OpKind::Output);
+
+    const auto &out = nodes[static_cast<std::size_t>(output_idx)];
+    if (out.op != OpKind::Output)
+      return fail(output_idx, out.op);
+
+    if (!depends_target[out.a])
+      return fail(output_idx, OpKind::Output);
+
+    std::array<InverseStepWrt, N> steps{};
+    std::size_t step_count = 0;
+    std::size_t cur = out.a;
+
+    while (true) {
+      const auto &n = nodes[cur];
+
+      if (n.op == OpKind::Input) {
+        if (cur == ArgIndex)
+          break;
+        return fail(static_cast<int>(cur), n.op);
+      }
+
+      if (n.op == OpKind::Neg) {
+        steps[step_count++] = InverseStepWrt{InverseStepKind::Neg, -1};
+        cur = n.a;
+        continue;
+      }
+
+      if (n.op == OpKind::Exp) {
+        steps[step_count++] = InverseStepWrt{InverseStepKind::Exp, -1};
+        cur = n.a;
+        continue;
+      }
+
+      if (n.op == OpKind::Log) {
+        steps[step_count++] = InverseStepWrt{InverseStepKind::Log, -1};
+        cur = n.a;
+        continue;
+      }
+
+      if (n.op == OpKind::Sqrt) {
+        steps[step_count++] = InverseStepWrt{InverseStepKind::Sqrt, -1};
+        cur = n.a;
+        continue;
+      }
+
+      if (n.op == OpKind::Erfc)
+        return fail(static_cast<int>(cur), n.op);
+
+      if (n.op == OpKind::Add || n.op == OpKind::Sub || n.op == OpKind::Mul ||
+          n.op == OpKind::Div) {
+        const bool a_dep = depends_target[n.a];
+        const bool b_dep = depends_target[n.b];
+        if (a_dep == b_dep)
+          return fail(static_cast<int>(cur), n.op);
+
+        const std::size_t dep_idx = a_dep ? n.a : n.b;
+        const std::size_t cst_idx = a_dep ? n.b : n.a;
+        if (depends_target[cst_idx])
+          return fail(static_cast<int>(cur), n.op);
+
+        if (n.op == OpKind::Add) {
+          steps[step_count++] = InverseStepWrt{InverseStepKind::AddConst,
+                                               static_cast<int>(cst_idx)};
+        } else if (n.op == OpKind::Sub) {
+          steps[step_count++] =
+              a_dep ? InverseStepWrt{InverseStepKind::SubConst,
+                                     static_cast<int>(cst_idx)}
+                    : InverseStepWrt{InverseStepKind::ConstMinus,
+                                     static_cast<int>(cst_idx)};
+        } else if (n.op == OpKind::Mul) {
+          steps[step_count++] = InverseStepWrt{InverseStepKind::MulConst,
+                                               static_cast<int>(cst_idx)};
+        } else {
+          steps[step_count++] = a_dep
+                                    ? InverseStepWrt{InverseStepKind::DivConst,
+                                                     static_cast<int>(cst_idx)}
+                                    : InverseStepWrt{InverseStepKind::ConstDiv,
+                                                     static_cast<int>(cst_idx)};
+        }
+
+        cur = dep_idx;
+        continue;
+      }
+
+      return fail(static_cast<int>(cur), n.op);
+    }
+
+    return InversePlanWrt{true, -1, OpKind::Input, step_count, steps};
+  }
+}
+
+template <info Fn, std::size_t ArgIndex, typename T, typename... ExtraArgs>
+constexpr auto eval_node_values_with_arg(T target_x, ExtraArgs... extras) {
+  static constexpr auto nodes = std::define_static_array(build_nodes<Fn>());
+  constexpr std::size_t N = nodes.size();
+  constexpr std::size_t InputCount = input_count_of<Fn>();
+  static_assert(sizeof...(ExtraArgs) + 1 == InputCount,
+                "inverse_wrt expects all non-target arguments");
+
+  T in[InputCount] = {};
+  const T extra_vals[] = {static_cast<T>(extras)...};
+  std::size_t extra_i = 0;
+  for (std::size_t i = 0; i < InputCount; ++i) {
+    if (i == ArgIndex)
+      in[i] = target_x;
+    else
+      in[i] = extra_vals[extra_i++];
+  }
+
+  std::array<T, N> val{};
+  template for (constexpr auto n : nodes) {
+    if constexpr (n.op == OpKind::Input)
+      val[n.self] = in[n.self];
+    else if constexpr (n.op == OpKind::Const)
+      val[n.self] = static_cast<T>([:n.leaf:]);
+    else if constexpr (n.op == OpKind::Output)
+      val[n.self] = val[n.a];
+    else if constexpr (n.op == OpKind::Add)
+      val[n.self] = val[n.a] + val[n.b];
+    else if constexpr (n.op == OpKind::Sub)
+      val[n.self] = val[n.a] - val[n.b];
+    else if constexpr (n.op == OpKind::Mul)
+      val[n.self] = val[n.a] * val[n.b];
+    else if constexpr (n.op == OpKind::Div)
+      val[n.self] = val[n.a] / val[n.b];
+    else if constexpr (n.op == OpKind::Neg)
+      val[n.self] = -val[n.a];
+    else if constexpr (n.op == OpKind::Sin)
+      val[n.self] = std::sin(val[n.a]);
+    else if constexpr (n.op == OpKind::Cos)
+      val[n.self] = std::cos(val[n.a]);
+    else if constexpr (n.op == OpKind::Exp)
+      val[n.self] = std::exp(val[n.a]);
+    else if constexpr (n.op == OpKind::Log)
+      val[n.self] = std::log(val[n.a]);
+    else if constexpr (n.op == OpKind::Sqrt)
+      val[n.self] = std::sqrt(val[n.a]);
+    else if constexpr (n.op == OpKind::Erfc)
+      val[n.self] = std::erfc(val[n.a]);
+    else
+      val[n.self] = T{};
+  }
+
+  return val;
 }
 
 template <info Fn, typename... RegisteredPairs>
@@ -707,6 +933,8 @@ consteval InvertibilityResult invertibility_result_wrt() {
     return {true, -1, OpKind::Input};
   else if constexpr (has_unary_inverse_pair<RegisteredPairs...>())
     return {true, -1, OpKind::Input};
+  else if constexpr (detail_inv::build_inverse_plan_wrt<Fn, ArgIndex>().ok)
+    return {true, -1, OpKind::Input};
   else
     return {false, -1, OpKind::Input};
 }
@@ -742,7 +970,8 @@ struct inverse_wrt {
   static_assert(
       is_invertible_wrt<Fn, ArgIndex, RegisteredPairs...>(),
       "ad::inverse_wrt requires either: (1) a registered partial inverse "
-      "pair or (2) a registered unary outer inverse pair");
+      "pair, (2) a symbolic inverse path wrt the target argument, or (3) "
+      "a registered unary outer inverse pair");
 
   template <typename T = double, typename... ExtraArgs>
   constexpr T operator()(T y, ExtraArgs... args) const {
@@ -821,6 +1050,16 @@ struct inverse_wrt {
       }
 
       return static_cast<T>(0.5) * (lo + hi);
+    } else if constexpr (detail_inv::build_inverse_plan_wrt<Fn, ArgIndex>()
+                             .ok) {
+      constexpr auto plan = detail_inv::build_inverse_plan_wrt<Fn, ArgIndex>();
+      const auto node_values =
+          detail_inv::eval_node_values_with_arg<Fn, ArgIndex, T>(T{0}, args...);
+      T x = y;
+      for (std::size_t i = 0; i < plan.step_count; ++i)
+        x = detail_inv::apply_inverse_step_wrt(plan.steps[i], x,
+                                               node_values.data());
+      return x;
     } else {
       static_assert(
           has_registered_inverse_wrt<Fn, ArgIndex, RegisteredPairs...>() ||
