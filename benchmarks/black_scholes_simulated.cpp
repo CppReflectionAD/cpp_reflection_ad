@@ -100,6 +100,68 @@ double closed_form_discounted_digital_call_price(double spot0, double strike,
     return discount * digital_call_price(forward, strike, vol, maturity_years);
 }
 
+double monte_carlo_discontinuity_delta_contribution(
+    double spot0, double strike, double r, double vol, double maturity,
+    std::size_t num_paths, std::size_t sim_per_path, std::uint32_t seed)
+{
+    if (spot0 <= 0.0 || strike <= 0.0 || vol <= 0.0 || maturity <= 0.0 ||
+        num_paths == 0 || sim_per_path == 0)
+    {
+        return 0.0;
+    }
+
+    constexpr double inv_sqrt_two_pi = 0.39894228040143267794;
+    std::mt19937 rng(seed);
+    std::uniform_real_distribution<double> unif(0.0, 1.0);
+
+    const double discount = std::exp(-r * maturity);
+
+    const double dt_regular = maturity / static_cast<double>(sim_per_path);
+    const double dt_stub =
+        maturity - dt_regular * static_cast<double>(sim_per_path - 1);
+    std::vector<double> dts(sim_per_path, dt_regular);
+    dts.back() = dt_stub;
+
+    const double dt_last = dts.back();
+    const double sqrt_dt_last = std::sqrt(dt_last);
+    const double drift_last = (r - 0.5 * vol * vol) * dt_last;
+
+    double correction_sum = 0.0;
+    for (std::size_t path = 0; path < num_paths; ++path)
+    {
+        std::vector<double> uniforms(sim_per_path, 0.5);
+
+        double spot_before_last = spot0;
+        for (std::size_t step = 0; step + 1 < sim_per_path; ++step)
+        {
+            uniforms[step] = unif(rng);
+            const double factor =
+                evolve_black_scholes(r, vol, dts[step], uniforms[step]);
+            spot_before_last *= factor;
+        }
+
+        // Tweak the last draw so terminal spot lands exactly on strike.
+        const double z_star =
+            (std::log(strike / spot_before_last) - drift_last) /
+            (vol * sqrt_dt_last);
+        uniforms.back() = mcsim::CDF(z_star);
+
+        const double normal_pdf =
+            inv_sqrt_two_pi * std::exp(-0.5 * z_star * z_star);
+
+        // Sifting term on U~U(0,1): contribution = f_U(u*) * (dg/dS0)/|dg/du|.
+        // Here f_U(u*) = 1, dg/dS0 = K/S0, and
+        // dg/du = K * vol * sqrt(dt_last) / phi(z*).
+        const double dg_d_spot0 = strike / spot0;
+        const double dg_d_u =
+            strike * vol * sqrt_dt_last / std::max(normal_pdf, 1e-300);
+
+        correction_sum += dg_d_spot0 / std::abs(dg_d_u);
+    }
+
+    return discount * (correction_sum / static_cast<double>(num_paths));
+}
+
 int main()
 {
     const TimePoint start{};
@@ -144,6 +206,10 @@ int main()
     const double d_price_delta =
         ad::forward_derivative<^^closed_form_discounted_digital_call_price, 0>(
             spot0, strike, rate, vol, maturity_years);
+    const double d_price_delta_discontinuity =
+        monte_carlo_discontinuity_delta_contribution(spot0, strike, rate, vol,
+                                                     maturity_years, num_paths,
+                                                     sim_per_path, seed);
     constexpr bool payoff_is_discontinuous = is_discontinuous<^^final_payoff>(
         ad::Interval{99.0, 101.0}, ad::Interval{100.0, 100.0});
 
@@ -152,6 +218,8 @@ int main()
     std::cout << "Closed-form (digital call) : " << closed_form_digital_call
               << "\n";
     std::cout << "Closed-form delta          : " << d_price_delta << "\n";
+    std::cout << "Delta discontinuity term   : " << d_price_delta_discontinuity
+              << "\n";
     std::cout << "final_payoff discontinuous : " << payoff_is_discontinuous
               << "\n";
     std::cout << "MC digital call price      : " << mc_digital_call_price
