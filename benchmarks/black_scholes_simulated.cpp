@@ -1,7 +1,9 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <random>
 #include <vector>
 
@@ -39,12 +41,12 @@ std::vector<TimePoint> build_date_grid(const TimePoint &start,
 }
 
 double monte_carlo_digital_call_price(double spot0, double strike, double r,
-                                      double vol,
-                                      const std::vector<TimePoint> &dates,
-                                      std::uint32_t num_paths,
+                                      double vol, double maturity,
+                                      std::size_t num_paths,
+                                      std::size_t sim_per_path,
                                       std::uint32_t seed)
 {
-    if (dates.size() < 2 || num_paths == 0)
+    if (maturity <= 0.0 || num_paths == 0 || sim_per_path == 0)
     {
         return 0.0;
     }
@@ -52,18 +54,20 @@ double monte_carlo_digital_call_price(double spot0, double strike, double r,
     std::mt19937 rng(seed);
     std::uniform_real_distribution<double> unif(0.0, 1.0);
 
-    const double maturity = year_fraction_act365(dates.front(), dates.back());
     const double discount = std::exp(-r * maturity);
+    const double dt_regular = maturity / static_cast<double>(sim_per_path);
+    const double dt_stub =
+        maturity - dt_regular * static_cast<double>(sim_per_path - 1);
 
     double payoff_sum = 0.0;
-    for (std::uint32_t path = 0; path < num_paths; ++path)
+    for (std::size_t path = 0; path < num_paths; ++path)
     {
         double spot = spot0;
-        for (std::size_t i = 1; i < dates.size(); ++i)
+        for (std::size_t step = 0; step + 1 < sim_per_path; ++step)
         {
-            const double dt = year_fraction_act365(dates[i - 1], dates[i]);
-            spot = evolve_black_scholes(spot, r, vol, dt, unif(rng));
+            spot = evolve_black_scholes(spot, r, vol, dt_regular, unif(rng));
         }
+        spot = evolve_black_scholes(spot, r, vol, dt_stub, unif(rng));
 
         payoff_sum += (spot > strike) ? 1.0 : 0.0;
     }
@@ -75,16 +79,20 @@ int main()
 {
     const TimePoint start{};
     const TimePoint maturity = start + Days{367};
-    const auto dates = build_date_grid(start, maturity, Days{30});
 
     const double spot0 = 100.0;
     const double strike = 100.0;
     const double rate = 0.03;
     const double vol = 0.20;
     std::size_t num_paths = 200000;
+    std::size_t sim_per_path = 1;
     if (auto *env_p = std::getenv("PATHS"))
     {
         num_paths = std::stoul(env_p);
+    }
+    if (auto *env_spp = std::getenv("SIM_PER_PATH"))
+    {
+        sim_per_path = std::stoul(env_spp);
     }
 
     if (num_paths == 0)
@@ -92,12 +100,18 @@ int main()
         std::cerr << "PATHS must be a positive integer" << std::endl;
         return 1;
     }
+    if (sim_per_path == 0)
+    {
+        std::cerr << "SIM_PER_PATH must be a positive integer" << std::endl;
+        return 1;
+    }
 
     const std::uint32_t seed = 42;
     const double maturity_years = year_fraction_act365(start, maturity);
 
-    const double mc_digital_call_price = monte_carlo_digital_call_price(
-        spot0, strike, rate, vol, dates, num_paths, seed);
+    const double mc_digital_call_price =
+        monte_carlo_digital_call_price(spot0, strike, rate, vol, maturity_years,
+                                       num_paths, sim_per_path, seed);
 
     // The helper in black_scholes.hpp is written on forward variables.
     const double forward = spot0 * std::exp(rate * maturity_years);
