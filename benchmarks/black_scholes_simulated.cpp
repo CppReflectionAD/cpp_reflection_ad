@@ -7,6 +7,8 @@
 #include <random>
 #include <vector>
 
+#include "../tests/clang_only/is_continuous.hpp"
+#include "../tests/forward_derivative.h"
 #include "../tests/mc_sim/black_scholes.hpp"
 #include "../tests/mc_sim/evolve_black_scholes.hpp"
 
@@ -40,6 +42,17 @@ std::vector<TimePoint> build_date_grid(const TimePoint &start,
     return dates;
 }
 
+double final_payoff(double spot, double strike)
+{
+    return (spot > strike) ? 1.0 : 0.0;
+}
+
+template <std::meta::info Fn, typename... Intervals>
+consteval bool is_discontinuous(Intervals... bounds)
+{
+    return !ad::is_continuous_on<Fn>(bounds...);
+}
+
 double monte_carlo_digital_call_price(double spot0, double strike, double r,
                                       double vol, double maturity,
                                       std::size_t num_paths,
@@ -58,21 +71,33 @@ double monte_carlo_digital_call_price(double spot0, double strike, double r,
     const double dt_regular = maturity / static_cast<double>(sim_per_path);
     const double dt_stub =
         maturity - dt_regular * static_cast<double>(sim_per_path - 1);
+    std::vector<double> dts(sim_per_path, dt_regular);
+    dts.back() = dt_stub;
 
     double payoff_sum = 0.0;
     for (std::size_t path = 0; path < num_paths; ++path)
     {
         double spot = spot0;
-        for (std::size_t step = 0; step + 1 < sim_per_path; ++step)
+        for (double dt : dts)
         {
-            spot = evolve_black_scholes(spot, r, vol, dt_regular, unif(rng));
+            const double factor = evolve_black_scholes(r, vol, dt, unif(rng));
+            spot *= factor;
         }
-        spot = evolve_black_scholes(spot, r, vol, dt_stub, unif(rng));
 
-        payoff_sum += (spot > strike) ? 1.0 : 0.0;
+        payoff_sum += final_payoff(spot, strike);
     }
 
     return discount * (payoff_sum / static_cast<double>(num_paths));
+}
+
+double closed_form_discounted_digital_call_price(double spot0, double strike,
+                                                 double rate, double vol,
+                                                 double maturity_years)
+{
+    // black_scholes.hpp formulas are expressed on forward variables.
+    const double forward = spot0 * std::exp(rate * maturity_years);
+    const double discount = std::exp(-rate * maturity_years);
+    return discount * digital_call_price(forward, strike, vol, maturity_years);
 }
 
 int main()
@@ -113,17 +138,23 @@ int main()
         monte_carlo_digital_call_price(spot0, strike, rate, vol, maturity_years,
                                        num_paths, sim_per_path, seed);
 
-    // The helper in black_scholes.hpp is written on forward variables.
-    const double forward = spot0 * std::exp(rate * maturity_years);
-    const double discount = std::exp(-rate * maturity_years);
     const double closed_form_digital_call =
-        discount * digital_call_price(forward, strike, vol, maturity_years);
+        closed_form_discounted_digital_call_price(spot0, strike, rate, vol,
+                                                  maturity_years);
+    const double d_price_delta =
+        ad::forward_derivative<^^closed_form_discounted_digital_call_price, 0>(
+            spot0, strike, rate, vol, maturity_years);
+    constexpr bool payoff_is_discontinuous = is_discontinuous<^^final_payoff>(
+        ad::Interval{99.0, 101.0}, ad::Interval{100.0, 100.0});
 
     std::cout.precision(std::numeric_limits<double>::max_digits10);
-    std::cout << "MC digital call price      : " << mc_digital_call_price
-              << "\n";
+
     std::cout << "Closed-form (digital call) : " << closed_form_digital_call
               << "\n";
-
+    std::cout << "Closed-form delta          : " << d_price_delta << "\n";
+    std::cout << "final_payoff discontinuous : " << payoff_is_discontinuous
+              << "\n";
+    std::cout << "MC digital call price      : " << mc_digital_call_price
+              << "\n";
     return 0;
 }
