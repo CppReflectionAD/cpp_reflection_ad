@@ -43,6 +43,12 @@ double final_payoff(double spot, double strike) {
   return (spot > strike) ? 1.0 : 0.0;
 }
 
+inline double g_last_step(double spot_before_last, double r, double vol,
+                          double dt_last, double normal_z) {
+  return spot_before_last *
+         evolve_black_scholes_normal(r, vol, dt_last, normal_z);
+}
+
 template <std::meta::info Fn, typename... Intervals>
 consteval bool is_discontinuous(Intervals... bounds) {
   return !ad::is_continuous_on<Fn>(bounds...);
@@ -70,12 +76,23 @@ double monte_carlo_digital_call_price(double spot0, double strike, double r,
 
   double payoff_sum = 0.0;
   for (std::size_t path = 0; path < num_paths; ++path) {
+    std::vector<double> normals_prefix(sim_per_path > 0 ? sim_per_path - 1 : 0,
+                                       0.0);
+    double normal_last = 0.0;
+
+    for (double &z : normals_prefix) {
+      z = mcsim::CDF_inverse(unif(rng));
+    }
+    normal_last = mcsim::CDF_inverse(unif(rng));
+
     double spot = spot0;
-    for (double dt : dts) {
-      const double normal_z = mcsim::CDF_inverse(unif(rng));
-      const double factor = evolve_black_scholes_normal(r, vol, dt, normal_z);
+    for (std::size_t step = 0; step + 1 < sim_per_path; ++step) {
+      const double factor =
+          evolve_black_scholes_normal(r, vol, dts[step], normals_prefix[step]);
       spot *= factor;
     }
+
+    spot = g_last_step(spot, r, vol, dts.back(), normal_last);
 
     payoff_sum += static_cast<double>([:FinalPayoffFn:](spot, strike));
   }
@@ -117,33 +134,35 @@ double monte_carlo_discontinuity_delta_contribution(
 
   double correction_sum = 0.0;
   for (std::size_t path = 0; path < num_paths; ++path) {
-    std::vector<double> normals(sim_per_path, 0.0);
+    std::vector<double> normals_prefix(sim_per_path > 0 ? sim_per_path - 1 : 0,
+                                       0.0);
+    double normal_last = 0.0;
+
+    for (double &z : normals_prefix) {
+      z = mcsim::CDF_inverse(unif(rng));
+    }
 
     double spot_before_last = spot0;
     for (std::size_t step = 0; step + 1 < sim_per_path; ++step) {
-      normals[step] = mcsim::CDF_inverse(unif(rng));
       const double factor =
-          evolve_black_scholes_normal(r, vol, dts[step], normals[step]);
+          evolve_black_scholes_normal(r, vol, dts[step], normals_prefix[step]);
       spot_before_last *= factor;
     }
 
     // Tweak the last draw so terminal spot lands exactly on strike, using
     // the generic inverse machinery rather than an explicit closed form.
     const double target_factor = strike / spot_before_last;
-    normals.back() =
-        ad::inverse_of_wrt<^^evolve_black_scholes_normal, 3, double>(
-            target_factor, r, vol, dt_last);
-    const double z_star = normals.back();
+    normal_last = ad::inverse_of_wrt<^^evolve_black_scholes_normal, 3, double>(
+        target_factor, r, vol, dt_last);
+    const double z_star = normal_last;
     const double normal_pdf = mcsim::PDF(z_star);
 
     // Sifting term written through the normal draw z:
     // contribution = f_Z(z*) * (dg/dS0)/|dg/dz| with f_Z = phi.
     // Since u = Phi(z), this is equivalent to using |dg/du| in U-space.
     const double dg_d_spot0 = strike / spot0;
-    const double d_factor_d_z =
-        ad::forward_derivative<^^evolve_black_scholes_normal, 3>(
-            r, vol, dt_last, z_star);
-    const double dg_d_z = spot_before_last * d_factor_d_z;
+    const double dg_d_z = ad::forward_derivative<^^g_last_step, 4>(
+        spot_before_last, r, vol, dt_last, z_star);
     const double inv_abs_dg_d_u = normal_pdf / std::abs(dg_d_z);
 
     correction_sum += dg_d_spot0 * inv_abs_dg_d_u;
