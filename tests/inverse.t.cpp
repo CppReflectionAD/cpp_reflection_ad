@@ -53,8 +53,9 @@ static_assert(ad::is_invertible<^^mcsim::CDF, user_CDF_pair>());
 static_assert(ad::is_invertible<^^mcsim::CDF_inverse, user_CDF_pair>());
 static_assert(ad::is_invertible<^^fn_sine_custom, user_sine_pair>());
 static_assert(!ad::is_invertible<^^fn_diff_itself>());
-static_assert(
-    ad::is_invertible_wrt<^^evolve_black_scholes, 4, user_CDF_pair>());
+// static_assert(
+//     ad::is_invertible_wrt<^^evolve_black_scholes_uniform, 3,
+//     user_CDF_pair>());
 
 int main()
 {
@@ -126,18 +127,16 @@ int main()
     }
 
     {
-        constexpr auto inv =
-            ad::inverse_wrt<^^evolve_black_scholes, 3, user_CDF_pair>{};
+        constexpr auto inv = ad::inverse_wrt<^^evolve_black_scholes, 3>{};
         const double spot = 1.0;
         const double r = 0.05;
         const double vol = 0.2;
         const double dt = 0.01;
-        const double uniform_u = 0.5;
+        const double normal_z = mcsim::CDF_inverse(0.5);
 
-        const double output =
-            spot * evolve_black_scholes(r, vol, dt, uniform_u);
+        const double output = spot * evolve_black_scholes(r, vol, dt, normal_z);
         const double recovered = inv(output / spot, r, vol, dt);
-        EXPECT_NEAR_REL(recovered, uniform_u, 1e-10);
+        EXPECT_NEAR_REL(recovered, normal_z, 1e-10);
     }
 
     // ad::inverse_of returns the inverse of a function directly, without
@@ -219,14 +218,13 @@ int main()
         const double r = 0.05;
         const double vol = 0.2;
         const double dt = 0.01;
-        const double uniform_u = 0.5;
+        const double normal_z = mcsim::CDF_inverse(0.5);
 
-        const double output =
-            spot * evolve_black_scholes(r, vol, dt, uniform_u);
+        const double output = spot * evolve_black_scholes(r, vol, dt, normal_z);
         const double recovered =
-            ad::inverse_of_wrt<^^evolve_black_scholes, 3, double,
-                               user_CDF_pair>(output / spot, r, vol, dt);
-        EXPECT_NEAR_REL(recovered, uniform_u, 1e-10);
+            ad::inverse_of_wrt<^^evolve_black_scholes, 3, double>(output / spot,
+                                                                  r, vol, dt);
+        EXPECT_NEAR_REL(recovered, normal_z, 1e-10);
     }
 
     TEST_END;

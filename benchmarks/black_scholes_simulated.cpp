@@ -15,7 +15,6 @@
 
 using TimePoint = std::chrono::system_clock::time_point;
 using Days = std::chrono::duration<std::int64_t, std::ratio<86400>>;
-using user_CDF_pair = ad::inverse_pair<^^mcsim::CDF, ^^mcsim::CDF_inverse>;
 
 double year_fraction_act365(const TimePoint &from, const TimePoint &to)
 {
@@ -83,7 +82,8 @@ double monte_carlo_digital_call_price(double spot0, double strike, double r,
         double spot = spot0;
         for (double dt : dts)
         {
-            const double factor = evolve_black_scholes(r, vol, dt, unif(rng));
+            const double normal_z = mcsim::CDF_inverse(unif(rng));
+            const double factor = evolve_black_scholes(r, vol, dt, normal_z);
             spot *= factor;
         }
 
@@ -113,7 +113,6 @@ double monte_carlo_discontinuity_delta_contribution(
         return 0.0;
     }
 
-    constexpr double inv_sqrt_two_pi = 0.39894228040143267794;
     std::mt19937 rng(seed);
     std::uniform_real_distribution<double> unif(0.0, 1.0);
 
@@ -132,34 +131,34 @@ double monte_carlo_discontinuity_delta_contribution(
     double correction_sum = 0.0;
     for (std::size_t path = 0; path < num_paths; ++path)
     {
-        std::vector<double> uniforms(sim_per_path, 0.5);
+        std::vector<double> normals(sim_per_path, 0.0);
 
         double spot_before_last = spot0;
         for (std::size_t step = 0; step + 1 < sim_per_path; ++step)
         {
-            uniforms[step] = unif(rng);
+            normals[step] = mcsim::CDF_inverse(unif(rng));
             const double factor =
-                evolve_black_scholes(r, vol, dts[step], uniforms[step]);
+                evolve_black_scholes(r, vol, dts[step], normals[step]);
             spot_before_last *= factor;
         }
 
         // Tweak the last draw so terminal spot lands exactly on strike, using
         // the generic inverse machinery rather than an explicit closed form.
         const double target_factor = strike / spot_before_last;
-        uniforms.back() =
-            ad::inverse_of_wrt<^^evolve_black_scholes, 3, double,
-                               user_CDF_pair>(target_factor, r, vol, dt_last);
-        const double z_star = mcsim::CDF_inverse(uniforms.back());
-        const double normal_pdf =
-            inv_sqrt_two_pi * std::exp(-0.5 * z_star * z_star);
+        normals.back() = ad::inverse_of_wrt<^^evolve_black_scholes, 3, double>(
+            target_factor, r, vol, dt_last);
+        const double z_star = normals.back();
+        const double normal_pdf = mcsim::PDF(z_star);
 
-        // Sifting term on U~U(0,1): contribution = f_U(u*) * (dg/dS0)/|dg/du|.
-        // Here f_U(u*) = 1, dg/dS0 = K/S0, and
-        // dg/du = K * vol * sqrt(dt_last) / phi(z*).
+        // Sifting term written through the normal draw z:
+        // contribution = f_Z(z*) * (dg/dS0)/|dg/dz| with f_Z = phi.
+        // Since u = Phi(z), this is equivalent to using |dg/du| in U-space.
         const double dg_d_spot0 = strike / spot0;
-        const double dg_d_u =
-            strike * vol * sqrt_dt_last / std::max(normal_pdf, 1e-300);
-        const double inv_abs_dg_d_u = 1.0 / std::max(std::abs(dg_d_u), 1e-300);
+        const double d_factor_d_z =
+            ad::forward_derivative<^^evolve_black_scholes, 3>(r, vol, dt_last,
+                                                              z_star);
+        const double dg_d_z = spot_before_last * d_factor_d_z;
+        const double inv_abs_dg_d_u = normal_pdf / std::abs(dg_d_z);
 
         correction_sum += dg_d_spot0 * inv_abs_dg_d_u;
     }
