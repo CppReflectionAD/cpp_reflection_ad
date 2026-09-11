@@ -477,6 +477,49 @@ struct InverseStepWrt {
   int constant_node = -1;
 };
 
+struct RuntimeEvalNode {
+  OpKind op = OpKind::Const;
+  int self = -1;
+  int a = -1;
+  int b = -1;
+  int cond = -1;
+  int input_index = -1;
+  double const_value = 0.0;
+};
+
+template <std::size_t N> struct RuntimeEvalGraph {
+  std::size_t input_count = 0;
+  std::array<RuntimeEvalNode, N> nodes{};
+};
+
+template <info Fn> consteval auto build_runtime_eval_graph() {
+  static constexpr auto nodes = std::define_static_array(build_nodes<Fn>());
+  constexpr std::size_t N = nodes.size();
+
+  RuntimeEvalGraph<N> g{};
+  std::size_t input_count = 0;
+
+  template for (constexpr auto n : nodes) {
+    RuntimeEvalNode rn{};
+    rn.op = n.op;
+    rn.self = static_cast<int>(n.self);
+    rn.a = static_cast<int>(n.a);
+    rn.b = static_cast<int>(n.b);
+    rn.cond = static_cast<int>(n.cond);
+    if constexpr (n.op == OpKind::Input)
+      rn.input_index = static_cast<int>(input_count++);
+    if constexpr (n.op == OpKind::Const)
+      rn.const_value = static_cast<double>([:n.leaf:]);
+    g.nodes[n.self] = rn;
+  }
+
+  g.input_count = input_count;
+  return g;
+}
+
+template <info Fn>
+inline constexpr auto runtime_eval_graph_v = build_runtime_eval_graph<Fn>();
+
 template <typename T>
 constexpr T apply_inverse_step(const InverseStep &step, T y) {
   switch (step.kind) {
@@ -671,10 +714,10 @@ consteval auto build_inverse_plan_wrt() {
 }
 
 template <info Fn, std::size_t ArgIndex, typename T, typename... ExtraArgs>
-constexpr auto eval_node_values_with_arg(T target_x, ExtraArgs... extras) {
-  static constexpr auto nodes = std::define_static_array(build_nodes<Fn>());
-  constexpr std::size_t N = nodes.size();
-  constexpr std::size_t InputCount = input_count_of<Fn>();
+auto eval_node_values_with_arg(T target_x, ExtraArgs... extras) {
+  static constexpr auto graph = runtime_eval_graph_v<Fn>;
+  constexpr std::size_t N = graph.nodes.size();
+  constexpr std::size_t InputCount = graph.input_count;
   static_assert(sizeof...(ExtraArgs) + 1 == InputCount,
                 "inverse_wrt expects all non-target arguments");
 
@@ -689,11 +732,11 @@ constexpr auto eval_node_values_with_arg(T target_x, ExtraArgs... extras) {
   }
 
   std::array<T, N> val{};
-  template for (constexpr auto n : nodes) {
+  template for (constexpr auto n : graph.nodes) {
     if constexpr (n.op == OpKind::Input)
-      val[n.self] = in[n.self];
+      val[n.self] = in[static_cast<std::size_t>(n.input_index)];
     else if constexpr (n.op == OpKind::Const)
-      val[n.self] = static_cast<T>([:n.leaf:]);
+      val[n.self] = static_cast<T>(n.const_value);
     else if constexpr (n.op == OpKind::Output)
       val[n.self] = val[n.a];
     else if constexpr (n.op == OpKind::Add)
@@ -718,6 +761,32 @@ constexpr auto eval_node_values_with_arg(T target_x, ExtraArgs... extras) {
       val[n.self] = std::sqrt(val[n.a]);
     else if constexpr (n.op == OpKind::Erfc)
       val[n.self] = std::erfc(val[n.a]);
+    else if constexpr (n.op == OpKind::Lt)
+      val[n.self] = (val[n.a] < val[n.b]) ? T{1} : T{0};
+    else if constexpr (n.op == OpKind::Le)
+      val[n.self] = (val[n.a] <= val[n.b]) ? T{1} : T{0};
+    else if constexpr (n.op == OpKind::Gt)
+      val[n.self] = (val[n.a] > val[n.b]) ? T{1} : T{0};
+    else if constexpr (n.op == OpKind::Ge)
+      val[n.self] = (val[n.a] >= val[n.b]) ? T{1} : T{0};
+    else if constexpr (n.op == OpKind::Eq)
+      val[n.self] = (val[n.a] == val[n.b]) ? T{1} : T{0};
+    else if constexpr (n.op == OpKind::Ne)
+      val[n.self] = (val[n.a] != val[n.b]) ? T{1} : T{0};
+    else if constexpr (n.op == OpKind::Not)
+      val[n.self] = (val[n.a] != T{0}) ? T{0} : T{1};
+    else if constexpr (n.op == OpKind::And)
+      val[n.self] = (val[n.a] != T{0} && val[n.b] != T{0}) ? T{1} : T{0};
+    else if constexpr (n.op == OpKind::Or)
+      val[n.self] = (val[n.a] != T{0} || val[n.b] != T{0}) ? T{1} : T{0};
+    else if constexpr (n.op == OpKind::Select)
+      val[n.self] = (val[n.cond] != T{0}) ? val[n.a] : val[n.b];
+    else if constexpr (n.op == OpKind::Abs)
+      val[n.self] = (val[n.a] < T{0}) ? -val[n.a] : val[n.a];
+    else if constexpr (n.op == OpKind::Max)
+      val[n.self] = (val[n.a] < val[n.b]) ? val[n.b] : val[n.a];
+    else if constexpr (n.op == OpKind::Min)
+      val[n.self] = (val[n.b] < val[n.a]) ? val[n.b] : val[n.a];
     else
       val[n.self] = T{};
   }
@@ -951,7 +1020,7 @@ template <info Fn, typename... RegisteredPairs> struct inverse {
       "ad::inverse requires an explicit inverse plan; if the inverse "
       "is not constructible symbolically, ad::is_invertible<Fn>() is false");
 
-  template <typename T = double> constexpr T operator()(T y) const {
+  template <typename T = double> T operator()(T y) const {
     if constexpr (has_registered_inverse<Fn, RegisteredPairs...>()) {
       return apply_registered_inverse<Fn, T, RegisteredPairs...>(y);
     }
@@ -974,7 +1043,7 @@ struct inverse_wrt {
       "a registered unary outer inverse pair");
 
   template <typename T = double, typename... ExtraArgs>
-  constexpr T operator()(T y, ExtraArgs... args) const {
+  T operator()(T y, ExtraArgs... args) const {
     if constexpr (has_registered_inverse_wrt<Fn, ArgIndex,
                                              RegisteredPairs...>()) {
       return apply_registered_inverse_wrt<Fn, ArgIndex, T, RegisteredPairs...>(
@@ -1072,13 +1141,13 @@ struct inverse_wrt {
 };
 
 template <info Fn, typename T = double, typename... RegisteredPairs>
-constexpr T inverse_of(T y) {
+T inverse_of(T y) {
   return inverse<Fn, RegisteredPairs...>{}(y);
 }
 
 template <info Fn, std::size_t ArgIndex, typename T = double,
           typename... RegisteredPairs, typename... ExtraArgs>
-constexpr T inverse_of_wrt(T y, ExtraArgs... args) {
+T inverse_of_wrt(T y, ExtraArgs... args) {
   return inverse_wrt<Fn, ArgIndex, RegisteredPairs...>{}(y, args...);
 }
 
