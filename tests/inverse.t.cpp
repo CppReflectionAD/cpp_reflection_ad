@@ -17,24 +17,6 @@ inline double fn_diff_itself(double x) { return x - x; }
 inline double fn_sine_custom(double x) { return std::sin(x); }
 inline double fn_arcsine_custom(double y) { return std::asin(y); }
 
-inline double evolve_black_scholes2(double spot, double r, double vol,
-                                    double dt, double uniform_u) {
-  const double z = mcsim::CDF_inverse(uniform_u);
-  const double drift = (r - 0.5 * vol * vol) * dt;
-  const double diffusion = vol * std::sqrt(dt) * z;
-  return spot * std::exp(drift + diffusion);
-}
-
-inline double evolve_black_scholes2_inverse(double spot, double r, double vol,
-                                            double dt, double output) {
-  const double std_exp_drift_diffusion_ = output / spot;
-  const double drift_diffusion = std::log(std_exp_drift_diffusion_);
-  const double drift = (r - 0.5 * vol * vol) * dt;
-  const double diffusion = drift_diffusion - drift;
-  const double z = diffusion / (vol * std::sqrt(dt));
-  return mcsim::CDF(z);
-}
-
 using user_sine_pair = ad::inverse_pair<^^fn_sine_custom, ^^fn_arcsine_custom>;
 using user_CDF_pair = ad::inverse_pair<^^mcsim::CDF, ^^mcsim::CDF_inverse>;
 
@@ -52,7 +34,8 @@ static_assert(ad::is_invertible<^^mcsim::CDF_inverse, user_CDF_pair>());
 static_assert(ad::is_invertible<^^fn_sine_custom, user_sine_pair>());
 static_assert(!ad::is_invertible<^^fn_diff_itself>());
 static_assert(
-    ad::is_invertible_wrt<^^evolve_black_scholes, 4, user_CDF_pair>());
+    ad::is_invertible_wrt<^^evolve_black_scholes, 3, user_CDF_pair>());
+static_assert(ad::is_invertible_wrt<^^evolve_black_scholes_normal, 3>());
 
 int main() {
   // ad::inverse returns a callable object that is the inverse of the original
@@ -124,16 +107,27 @@ int main() {
 
   {
     constexpr auto inv =
-        ad::inverse_wrt<^^evolve_black_scholes, 4, user_CDF_pair>{};
-    const double spot = 1.0;
+        ad::inverse_wrt<^^evolve_black_scholes, 3, user_CDF_pair>{};
     const double r = 0.05;
     const double vol = 0.2;
     const double dt = 0.01;
     const double uniform_u = 0.5;
 
-    const double output = evolve_black_scholes(spot, r, vol, dt, uniform_u);
-    const double recovered = inv(output, spot, r, vol, dt);
+    const double output = evolve_black_scholes(r, vol, dt, uniform_u);
+    const double recovered = inv(output, r, vol, dt);
     EXPECT_NEAR_REL(recovered, uniform_u, 1e-10);
+  }
+
+  {
+    constexpr auto inv = ad::inverse_wrt<^^evolve_black_scholes_normal, 3>{};
+    const double r = 0.05;
+    const double vol = 0.2;
+    const double dt = 0.01;
+    const double normal_z = 0.37;
+
+    const double output = evolve_black_scholes_normal(r, vol, dt, normal_z);
+    const double recovered = inv(output, r, vol, dt);
+    EXPECT_NEAR_REL(recovered, normal_z, 1e-10);
   }
 
   // ad::inverse_of returns the inverse of a function directly, without needing
@@ -211,17 +205,29 @@ int main() {
   }
 
   {
-    const double spot = 1.0;
     const double r = 0.05;
     const double vol = 0.2;
     const double dt = 0.01;
     const double uniform_u = 0.5;
 
-    const double output = evolve_black_scholes(spot, r, vol, dt, uniform_u);
+    const double output = evolve_black_scholes(r, vol, dt, uniform_u);
     const double recovered =
-        ad::inverse_of_wrt<^^evolve_black_scholes, 4, double, user_CDF_pair>(
-            output, spot, r, vol, dt);
+        ad::inverse_of_wrt<^^evolve_black_scholes, 3, double, user_CDF_pair>(
+            output, r, vol, dt);
     EXPECT_NEAR_REL(recovered, uniform_u, 1e-10);
+  }
+
+  {
+    const double r = 0.03;
+    const double vol = 0.35;
+    const double dt = 0.2;
+    const double normal_z = -0.91;
+
+    const double output = evolve_black_scholes_normal(r, vol, dt, normal_z);
+    const double recovered =
+        ad::inverse_of_wrt<^^evolve_black_scholes_normal, 3, double>(output, r,
+                                                                     vol, dt);
+    EXPECT_NEAR_REL(recovered, normal_z, 1e-10);
   }
 
   TEST_END;
