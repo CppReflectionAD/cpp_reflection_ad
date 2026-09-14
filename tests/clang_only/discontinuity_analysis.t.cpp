@@ -16,8 +16,8 @@ double two_discontinuities(double x) {
 
 // 3 discontinuities: three independent ternary operators
 double three_discontinuities(double x) {
-  return ((x > 1.0) ? 1.0 : 0.0) + ((x > 4.0) ? 1.0 : 0.0) +
-         ((x > 7.0) ? 1.0 : 0.0);
+  return ((x > 1.0) ? 1.0 : 0.0) + ((x > 4.0) ? 0.0 : 1.0) +
+         ((x > 7.0) ? 2.0 : 0.0);
 }
 
 // Multi-argument function: 1 discontinuity w.r.t. first argument, second fixed
@@ -62,6 +62,35 @@ int main() {
   EXPECT_FALSE(disc_2arg.empty());
   EXPECT_EQUAL(disc_2arg.size(), 1);
   EXPECT_EQUAL(disc_2arg[0], 5.0);
+
+  // Test get_discontinuity_points_and_amplitudes
+  // three_discontinuities: ((x > 1.0) ? 1.0 : 0.0) + ((x > 4.0) ? 0.0 : 1.0) +
+  // ((x > 7.0) ? 2.0 : 0.0)
+  // Expected:
+  //   x=1.0: amp=1.0 (from first ternary)
+  //   x=4.0: amp=-1.0 (from second ternary, inverted)
+  //   x=7.0: amp=2.0 (from third ternary)
+  constexpr auto disc_amp =
+      ad::get_discontinuity_points_and_amplitudes<^^three_discontinuities, 0>();
+  EXPECT_FALSE(disc_amp.empty());
+  EXPECT_EQUAL(disc_amp.size(), 3);
+  // First point
+  EXPECT_EQUAL(disc_amp.point(0), 1.0);
+  EXPECT_EQUAL(disc_amp.amplitude(0), 1.0);
+  // Second point
+  EXPECT_EQUAL(disc_amp.point(1), 4.0);
+  EXPECT_EQUAL(disc_amp.amplitude(1), -1.0);
+  // Third point
+  EXPECT_EQUAL(disc_amp.point(2), 7.0);
+  EXPECT_EQUAL(disc_amp.amplitude(2), 2.0);
+
+  // Test with one_discontinuity and amplitudes
+  constexpr auto disc_1_amp =
+      ad::get_discontinuity_points_and_amplitudes<^^one_discontinuity, 0>();
+  EXPECT_FALSE(disc_1_amp.empty());
+  EXPECT_EQUAL(disc_1_amp.size(), 1);
+  EXPECT_EQUAL(disc_1_amp.point(0), 3.0);
+  EXPECT_EQUAL(disc_1_amp.amplitude(0), 1.0);
 
   TEST_END;
 }
