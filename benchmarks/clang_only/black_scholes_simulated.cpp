@@ -7,12 +7,12 @@
 #include <random>
 #include <vector>
 
-#include "../tests/clang_only/discontinuity_analysis.hpp"
-#include "../tests/clang_only/is_continuous.hpp"
-#include "../tests/forward_derivative.h"
-#include "../tests/is_invertible.hpp"
-#include "../tests/mc_sim/black_scholes.hpp"
-#include "../tests/mc_sim/evolve_black_scholes.hpp"
+#include "../../tests/clang_only/discontinuity_analysis.hpp"
+#include "../../tests/clang_only/is_continuous.hpp"
+#include "../../tests/forward_derivative.h"
+#include "../../tests/is_invertible.hpp"
+#include "../../tests/mc_sim/black_scholes.hpp"
+#include "../../tests/mc_sim/evolve_black_scholes.hpp"
 
 // first case: digital call option
 template <double Strike = 100.0> double digital_call_payoff(double spot) {
