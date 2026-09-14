@@ -45,6 +45,11 @@ double positive_digital_offset_payoff(double spot, double strike) {
   return (spot > strike + 1) ? 1.0 : 0.0;
 }
 
+// Negated digital with offset (negation applied to entire Select)
+double negated_select_payoff(double spot, double strike) {
+  return -((spot > strike + 1) ? 1.0 : 0.0);
+}
+
 int main() {
   // Test 0 discontinuities
   constexpr auto disc0 = ad::get_discontinuity_points<^^continuous_linear, 0>();
@@ -167,6 +172,19 @@ int main() {
   EXPECT_EQUAL(disc_pos.size(), 1);
   EXPECT_EQUAL(disc_pos.point(0), 101.0);
   EXPECT_EQUAL(disc_pos.amplitude(0), 1.0);
+
+  // Test negated_select_payoff with amplitudes
+  // -((spot > strike + 1) ? 1.0 : 0.0)
+  // At strike = 100.0:
+  //   Select: true_branch = 1.0, false_branch = 0.0, amplitude = 1.0
+  //   Negation applied: amplitude = -1.0
+  constexpr auto disc_neg_sel =
+      ad::get_discontinuity_points_and_amplitudes<^^negated_select_payoff, 0>(
+          100.0);
+  EXPECT_FALSE(disc_neg_sel.empty());
+  EXPECT_EQUAL(disc_neg_sel.size(), 1);
+  EXPECT_EQUAL(disc_neg_sel.point(0), 101.0);
+  EXPECT_EQUAL(disc_neg_sel.amplitude(0), -1.0);
 
   TEST_END;
 }

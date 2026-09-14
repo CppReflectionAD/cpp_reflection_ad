@@ -770,16 +770,20 @@ analyze_discontinuities_with_amplitudes_impl(
 
               double amplitude = true_val - false_val;
 
-              // Check if this Select node is used in any binary operations that
-              // would affect its amplitude
+              // Check if this Select node is used in any binary operations or
+              // unary negation that would affect its amplitude
               double amplitude_scale = 1.0;
               template for (constexpr auto parent_node : nodes) {
-                if constexpr ((parent_node.op == OpKind::Add ||
-                               parent_node.op == OpKind::Sub ||
-                               parent_node.op == OpKind::Mul ||
-                               parent_node.op == OpKind::Div) &&
-                              (parent_node.a == select_node.self ||
-                               parent_node.b == select_node.self)) {
+                if constexpr (parent_node.op == OpKind::Neg &&
+                              parent_node.a == select_node.self) {
+                  // This Select is being negated
+                  amplitude_scale = -1.0;
+                } else if constexpr ((parent_node.op == OpKind::Add ||
+                                      parent_node.op == OpKind::Sub ||
+                                      parent_node.op == OpKind::Mul ||
+                                      parent_node.op == OpKind::Div) &&
+                                     (parent_node.a == select_node.self ||
+                                      parent_node.b == select_node.self)) {
                   // This Select is used as an operand in a binary operation
                   if constexpr (parent_node.op == OpKind::Sub &&
                                 parent_node.b == select_node.self) {
@@ -1297,16 +1301,20 @@ get_discontinuity_points_and_amplitudes_rt(FixedArgs... fixed_args) {
 
               double amplitude = true_val - false_val;
 
-              // Check if this Select node is used in any binary operations that
-              // would affect its amplitude
+              // Check if this Select node is used in any binary operations or
+              // unary negation that would affect its amplitude
               double amplitude_scale = 1.0;
               template for (constexpr auto parent_node : nodes) {
-                if constexpr ((parent_node.op == OpKind::Add ||
-                               parent_node.op == OpKind::Sub ||
-                               parent_node.op == OpKind::Mul ||
-                               parent_node.op == OpKind::Div) &&
-                              (parent_node.a == select_node.self ||
-                               parent_node.b == select_node.self)) {
+                if constexpr (parent_node.op == OpKind::Neg &&
+                              parent_node.a == select_node.self) {
+                  // This Select is being negated
+                  amplitude_scale = -1.0;
+                } else if constexpr ((parent_node.op == OpKind::Add ||
+                                      parent_node.op == OpKind::Sub ||
+                                      parent_node.op == OpKind::Mul ||
+                                      parent_node.op == OpKind::Div) &&
+                                     (parent_node.a == select_node.self ||
+                                      parent_node.b == select_node.self)) {
                   // This Select is used as an operand in a binary operation
                   if constexpr (parent_node.op == OpKind::Sub &&
                                 parent_node.b == select_node.self) {
