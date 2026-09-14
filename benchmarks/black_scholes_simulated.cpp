@@ -7,6 +7,7 @@
 #include <random>
 #include <vector>
 
+#include "../tests/clang_only/discontinuity_analysis.hpp"
 #include "../tests/clang_only/is_continuous.hpp"
 #include "../tests/forward_derivative.h"
 #include "../tests/is_invertible.hpp"
@@ -177,6 +178,15 @@ int main() {
 
   const std::uint32_t seed = 42;
   const double maturity_years = year_fraction_act365(start, maturity);
+
+  // Compile-time test: extract discontinuity points from digital_call_payoff
+  // Expected: [100.0] (discontinuity at spot = strike = 100.0)
+  constexpr auto digital_call_discontinuities =
+      ad::get_discontinuity_points<^^digital_call_payoff, 0>(100.0);
+  std::cout << "=== Compile-time Discontinuity Analysis ===\n";
+  std::cout
+      << "digital_call_payoff(x, K) discontinuity with K=100.0 found at x="
+      << digital_call_discontinuities[0] << "\n\n";
 
   // digital call
   {
