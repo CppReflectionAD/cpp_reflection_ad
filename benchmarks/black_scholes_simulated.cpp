@@ -51,7 +51,7 @@ double monte_carlo_option_price(OptionType type, double spot0, double strike,
     double spot = spot0;
     for (std::size_t i = 1; i < dates.size(); ++i) {
       const double dt = year_fraction_act365(dates[i - 1], dates[i]);
-      spot = evolve_black_scholes(spot, r, vol, dt, unif(rng));
+      spot *= evolve_black_scholes(r, vol, dt, unif(rng));
     }
 
     const double intrinsic =

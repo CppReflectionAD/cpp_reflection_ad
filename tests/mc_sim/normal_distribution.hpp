@@ -3,11 +3,12 @@
 
 #include <cmath>
 #include <limits>
+#include <numbers>
 
 namespace mcsim {
 
 inline double CDF(double x) {
-  constexpr double m_sqrt1_2 = -0.70710678118654752440;
+  constexpr double m_sqrt1_2 = -1.0 / std::numbers::sqrt2_v<double>;
   return 0.5 * std::erfc(x * m_sqrt1_2);
 }
 
