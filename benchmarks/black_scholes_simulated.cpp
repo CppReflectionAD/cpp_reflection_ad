@@ -57,6 +57,25 @@ double double_digital_closed_form(double spot0, double rate, double vol,
                      digital_call_price(forward, Strike2, vol, maturity_years));
 }
 
+template <double Strike1 = 99.0, double Strike2 = 101.0>
+double double_digital_butterfly_payoff(double spot) {
+  return ((spot > Strike1) ? -1.0 : (Strike1 - spot)) +
+         ((spot > Strike2) ? 1.0 + (spot - Strike2) : 0.0);
+}
+
+template <double Strike1 = 99.0, double Strike2 = 101.0>
+double double_digital_butterfly_closed_form(double spot0, double rate,
+                                            double vol, double maturity_years) {
+
+  const double forward = spot0 * std::exp(rate * maturity_years);
+  const double discount = std::exp(-rate * maturity_years);
+  return discount *
+         (put_price(forward, Strike1, vol, maturity_years) +
+          -digital_call_price(forward, Strike1, vol, maturity_years) +
+          digital_call_price(forward, Strike2, vol, maturity_years) +
+          call_price(forward, Strike2, vol, maturity_years));
+}
+
 using TimePoint = std::chrono::system_clock::time_point;
 using Days = std::chrono::duration<std::int64_t, std::ratio<86400>>;
 
@@ -212,13 +231,23 @@ int main() {
         const double cf_pv = [:ClosedFormFn:](spot0, rate, vol, maturity_years);
         const double cf_delta = ad::forward_derivative<ClosedFormFn, 0>(
             spot0, rate, vol, maturity_years);
+
+        // Finite difference delta
+        const double h = 1e-8;
+        const double cf_pv_up = [:ClosedFormFn:](spot0 + h, rate, vol,
+                                                 maturity_years);
+        const double cf_pv_down = [:ClosedFormFn:](spot0 - h, rate, vol,
+                                                   maturity_years);
+        const double cf_delta_fd = (cf_pv_up - cf_pv_down) / (2.0 * h);
+
         const auto [mc_pv, mc_delta, mc_correction] =
             monte_carlo_engine<PayoffFn>(spot0, rate, vol, maturity_years,
                                          num_paths, sim_per_path, seed);
 
         std::cout.precision(std::numeric_limits<double>::max_digits10);
         std::cout << "Closed-form (" << label << ") : " << cf_pv << "\n";
-        std::cout << "Closed-form delta          : " << cf_delta << "\n";
+        std::cout << "Closed-form delta (analytic) : " << cf_delta << "\n";
+        std::cout << "Closed-form delta (FD)       : " << cf_delta_fd << "\n";
         std::cout << "MC " << label << " price      : " << mc_pv << "\n";
         std::cout << "MC Delta without correction: " << mc_delta << "\n";
         std::cout << "MC Correction term         : " << mc_correction << "\n";
@@ -251,42 +280,53 @@ int main() {
                                       ^^double_digital_payoff<99.0, 101.0>>(
       "double digital");
 
-  std::cout << "=== Convergence Analysis ===\n\n";
+  std::cout << "=== Double Digital Butterfly===\n\n";
 
-  const double cf_pv_spread1 = [:^^double_digital_closed_form<99.0, 101.0>:](
-      spot0, rate, vol, maturity_years);
-  const double cf_delta_spread1 =
-      ad::forward_derivative<^^double_digital_closed_form<99.0, 101.0>, 0>(
-          spot0, rate, vol, maturity_years);
+  run_payoff_test
+      .template operator()<^^double_digital_butterfly_closed_form<99.0, 101.0>,
+                           ^^double_digital_butterfly_payoff<99.0, 101.0>>(
+          "double digital butterfly");
 
-  std::cout.precision(10);
-  std::cout << "Closed-form PV:    " << cf_pv_spread1 << "\n";
-  std::cout << "Closed-form delta: " << cf_delta_spread1 << "\n\n";
+  bool show_convergence = false;
+  if (show_convergence) {
+    std::cout << "=== Convergence Analysis ===\n\n";
 
-  std::cout.precision(6);
-  std::cout << std::scientific
-            << "Paths\t\tMC PV\t\t\tPV Error %\tMC Delta\t\tDelta Error%\n ";
-  std::cout << "=====\t\t=====\t\t\t=========\t========\t\t=============\n";
+    const double cf_pv_spread1 = [:^^double_digital_closed_form<99.0, 101.0>:](
+        spot0, rate, vol, maturity_years);
+    const double cf_delta_spread1 =
+        ad::forward_derivative<^^double_digital_closed_form<99.0, 101.0>, 0>(
+            spot0, rate, vol, maturity_years);
 
-  const std::vector<std::size_t> path_counts = {
-      100,    500,     1000,    5000,    10000,   50000,    100000,
-      500000, 1000000, 2000000, 4000000, 8000000, 10000000, 15000000};
+    std::cout.precision(10);
+    std::cout << "Closed-form PV:    " << cf_pv_spread1 << "\n";
+    std::cout << "Closed-form delta: " << cf_delta_spread1 << "\n\n";
 
-  for (std::size_t paths : path_counts) {
-    const auto [mc_pv, mc_delta, mc_correction] =
-        monte_carlo_engine<^^double_digital_payoff<99.0, 101.0>>(
-            spot0, rate, vol, maturity_years, paths, sim_per_path, seed);
-    const double pv_error_pct =
-        (std::abs(mc_pv - cf_pv_spread1) / cf_pv_spread1) * 100;
-    const double delta_error_pct =
-        (std::abs((mc_delta + mc_correction) - cf_delta_spread1) /
-         cf_delta_spread1) *
-        100;
+    std::cout.precision(6);
+    std::cout << std::scientific
+              << "Paths\t\tMC PV\t\t\tPV Error %\tMC Delta\t\tDelta Error%\n ";
+    std::cout << "=====\t\t=====\t\t\t=========\t========\t\t=============\n";
 
-    std::cout << paths << "\t\t" << mc_pv << "\t" << pv_error_pct << "%\t\t"
-              << (mc_delta + mc_correction) << "\t" << delta_error_pct << "%\n";
+    const std::vector<std::size_t> path_counts = {
+        100,    500,     1000,    5000,    10000,   50000,    100000,
+        500000, 1000000, 2000000, 4000000, 8000000, 10000000, 15000000};
+
+    for (std::size_t paths : path_counts) {
+      const auto [mc_pv, mc_delta, mc_correction] =
+          monte_carlo_engine<^^double_digital_payoff<99.0, 101.0>>(
+              spot0, rate, vol, maturity_years, paths, sim_per_path, seed);
+      const double pv_error_pct =
+          (std::abs(mc_pv - cf_pv_spread1) / cf_pv_spread1) * 100;
+      const double delta_error_pct =
+          (std::abs((mc_delta + mc_correction) - cf_delta_spread1) /
+           cf_delta_spread1) *
+          100;
+
+      std::cout << paths << "\t\t" << mc_pv << "\t" << pv_error_pct << "%\t\t"
+                << (mc_delta + mc_correction) << "\t" << delta_error_pct
+                << "%\n";
+    }
+    std::cout << std::defaultfloat;
   }
-  std::cout << std::defaultfloat;
 
   return 0;
 }
