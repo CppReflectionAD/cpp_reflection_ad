@@ -13,6 +13,32 @@
 #include "../tests/mc_sim/black_scholes.hpp"
 #include "../tests/mc_sim/evolve_black_scholes.hpp"
 
+// first case: digital call option
+double digital_call_payoff(double spot, double strike) {
+  return (spot > strike) ? 1.0 : 0.0;
+}
+
+double digital_call_closed_form(double spot0, double strike, double rate,
+                                double vol, double maturity_years) {
+  // black_scholes.hpp formulas are expressed on forward variables.
+  const double forward = spot0 * std::exp(rate * maturity_years);
+  const double discount = std::exp(-rate * maturity_years);
+  return discount * digital_call_price(forward, strike, vol, maturity_years);
+}
+
+// second case: digital AND call
+double digital_and_call_payoff(double spot, double strike) {
+  return (spot > strike) ? (1.0 + spot - strike) : 0.0;
+}
+
+double digital_and_call_closed_form(double spot0, double strike, double rate,
+                                    double vol, double maturity_years) {
+  const double forward = spot0 * std::exp(rate * maturity_years);
+  const double discount = std::exp(-rate * maturity_years);
+  return discount * (digital_call_price(forward, strike, vol, maturity_years) +
+                     call_price(forward, strike, vol, maturity_years));
+}
+
 using TimePoint = std::chrono::system_clock::time_point;
 using Days = std::chrono::duration<std::int64_t, std::ratio<86400>>;
 
@@ -39,29 +65,17 @@ std::vector<TimePoint> build_date_grid(const TimePoint &start,
   return dates;
 }
 
-double final_payoff(double spot, double strike) {
-  return (spot > strike) ? 1.0 : 0.0;
-}
-
-inline double g_last_step(double spot_before_last, double r, double vol,
-                          double dt_last, double normal_z) {
-  return spot_before_last *
+inline double g_last_step(double spot0, double factors_except_last, double r,
+                          double vol, double dt_last, double normal_z) {
+  return spot0 * factors_except_last *
          evolve_black_scholes_normal(r, vol, dt_last, normal_z);
 }
 
-double closed_form_discounted_digital_call_price(double spot0, double strike,
-                                                 double rate, double vol,
-                                                 double maturity_years) {
-  // black_scholes.hpp formulas are expressed on forward variables.
-  const double forward = spot0 * std::exp(rate * maturity_years);
-  const double discount = std::exp(-rate * maturity_years);
-  return discount * digital_call_price(forward, strike, vol, maturity_years);
-}
-
 template <std::meta::info FinalPayoffFn>
-std::array<double, 2> monte_carlo_discontinuity_delta_contribution(
-    double spot0, double strike, double r, double vol, double maturity,
-    std::size_t num_paths, std::size_t sim_per_path, std::uint32_t seed) {
+std::array<double, 3>
+monte_carlo_engine(double spot0, double strike, double r, double vol,
+                   double maturity, std::size_t num_paths,
+                   std::size_t sim_per_path, std::uint32_t seed) {
   if (spot0 <= 0.0 || strike <= 0.0 || vol <= 0.0 || maturity <= 0.0 ||
       num_paths == 0 || sim_per_path == 0) {
     return {0.0, 0.0};
@@ -77,8 +91,9 @@ std::array<double, 2> monte_carlo_discontinuity_delta_contribution(
   std::vector<double> dts(sim_per_path, dt_regular);
   dts.back() = dt_stub;
 
-  double correction_sum = 0.0;
   double payoff_sum = 0.0;
+  double payoff_delta_sum = 0.0;
+  double correction_sum = 0.0;
 
   constexpr bool payoff_is_continuous = ad::is_continuous_on<FinalPayoffFn>(
       ad::Interval{0.0, 1000000.0}, ad::Interval{100.0, 100.0});
@@ -91,15 +106,22 @@ std::array<double, 2> monte_carlo_discontinuity_delta_contribution(
     }
 
     double spot_before_last = spot0;
+    double factors_except_last = 1.0;
     for (std::size_t step = 0; step + 1 < sim_per_path; ++step) {
       const double factor =
           evolve_black_scholes_normal(r, vol, dts[step], normals_prefix[step]);
       spot_before_last *= factor;
+      factors_except_last *= factor;
     }
 
-    double spot = g_last_step(spot_before_last, r, vol, dts.back(),
+    double spot = g_last_step(spot0, factors_except_last, r, vol, dts.back(),
                               normals_prefix.back());
     payoff_sum += static_cast<double>([:FinalPayoffFn:](spot, strike));
+
+    double const spot_d = ad::forward_derivative<^^g_last_step, 0>(
+        spot0, factors_except_last, r, vol, dts.back(), normals_prefix.back());
+    payoff_delta_sum +=
+        spot_d * ad::forward_derivative<FinalPayoffFn, 0>(spot, strike);
 
     if constexpr (!payoff_is_continuous) {
       // Tweak the last draw so terminal spot lands exactly on strike, using
@@ -108,15 +130,14 @@ std::array<double, 2> monte_carlo_discontinuity_delta_contribution(
       const double z_star =
           ad::inverse_of_wrt<^^evolve_black_scholes_normal, 3, double>(
               target_factor, r, vol, dts.back());
-      // const double z_star = normal_last;
       const double normal_pdf = mcsim::PDF(z_star);
 
       // Sifting term written through the normal draw z:
       // contribution = f_Z(z*) * (dg/dS0)/|dg/dz| with f_Z = phi.
       // Since u = Phi(z), this is equivalent to using |dg/du| in U-space.
       const double dg_d_spot0 = strike / spot0;
-      const double dg_d_z = ad::forward_derivative<^^g_last_step, 4>(
-          spot_before_last, r, vol, dts.back(), z_star);
+      const double dg_d_z = ad::forward_derivative<^^g_last_step, 5>(
+          spot0, factors_except_last, r, vol, dts.back(), z_star);
       const double inv_abs_dg_d_u = normal_pdf / std::abs(dg_d_z);
 
       correction_sum += dg_d_spot0 * inv_abs_dg_d_u;
@@ -124,6 +145,7 @@ std::array<double, 2> monte_carlo_discontinuity_delta_contribution(
   }
 
   return {discount * (payoff_sum / static_cast<double>(num_paths)),
+          discount * (payoff_delta_sum / static_cast<double>(num_paths)),
           discount * (correction_sum / static_cast<double>(num_paths))};
 }
 
@@ -156,22 +178,51 @@ int main() {
   const std::uint32_t seed = 42;
   const double maturity_years = year_fraction_act365(start, maturity);
 
-  const double cf_pv = closed_form_discounted_digital_call_price(
-      spot0, strike, rate, vol, maturity_years);
-  const double cf_delta =
-      ad::forward_derivative<^^closed_form_discounted_digital_call_price, 0>(
-          spot0, strike, rate, vol, maturity_years);
-  const auto [mc_pv, mc_delta] =
-      monte_carlo_discontinuity_delta_contribution<^^final_payoff>(
-          spot0, strike, rate, vol, maturity_years, num_paths, sim_per_path,
-          seed);
+  // digital call
+  {
+    const double cf_pv =
+        digital_call_closed_form(spot0, strike, rate, vol, maturity_years);
+    const double cf_delta =
+        ad::forward_derivative<^^digital_call_closed_form, 0>(
+            spot0, strike, rate, vol, maturity_years);
+    const auto [mc_pv, mc_delta, mc_correction] =
+        monte_carlo_engine<^^digital_call_payoff>(spot0, strike, rate, vol,
+                                                  maturity_years, num_paths,
+                                                  sim_per_path, seed);
 
-  std::cout.precision(std::numeric_limits<double>::max_digits10);
+    std::cout.precision(std::numeric_limits<double>::max_digits10);
 
-  std::cout << "Closed-form (digital call) : " << cf_pv << "\n";
-  std::cout << "Closed-form delta          : " << cf_delta << "\n";
-  std::cout << "MC digital call price      : " << mc_pv << "\n";
-  std::cout << "Delta discontinuity term   : " << mc_delta << "\n";
+    std::cout << "Closed-form (digital call) : " << cf_pv << "\n";
+    std::cout << "Closed-form delta          : " << cf_delta << "\n";
+    std::cout << "MC digital call price      : " << mc_pv << "\n";
+    std::cout << "MC Delta without correction: " << mc_delta << "\n";
+    std::cout << "MC Correction term         : " << mc_correction << "\n";
+    std::cout << "MC Delta                   : " << mc_delta + mc_correction
+              << "\n";
+  }
+
+  // digital and call
+  {
+    const double cf_pv =
+        digital_and_call_closed_form(spot0, strike, rate, vol, maturity_years);
+    const double cf_delta =
+        ad::forward_derivative<^^digital_and_call_closed_form, 0>(
+            spot0, strike, rate, vol, maturity_years);
+    const auto [mc_pv, mc_delta, mc_correction] =
+        monte_carlo_engine<^^digital_and_call_payoff>(spot0, strike, rate, vol,
+                                                      maturity_years, num_paths,
+                                                      sim_per_path, seed);
+
+    std::cout.precision(std::numeric_limits<double>::max_digits10);
+
+    std::cout << "Closed-form (digital call) : " << cf_pv << "\n";
+    std::cout << "Closed-form delta          : " << cf_delta << "\n";
+    std::cout << "MC digital call price      : " << mc_pv << "\n";
+    std::cout << "MC Delta without correction: " << mc_delta << "\n";
+    std::cout << "MC Correction term         : " << mc_correction << "\n";
+    std::cout << "MC Delta                   : " << mc_delta + mc_correction
+              << "\n";
+  }
 
   return 0;
 }
