@@ -24,6 +24,11 @@ double three_discontinuities(double x) {
 // Simple case: target is arg 0, fixed arg 1
 double two_arg_compare(double x, double y) { return (x > y) ? 1.0 : 0.0; }
 
+// Digital and call: discontinuity at strike with amplitude 1.0
+double digital_and_call_payoff(double spot, double strike) {
+  return (spot > strike) ? (1.0 + spot - strike) : 0.0;
+}
+
 int main() {
   // Test 0 discontinuities
   constexpr auto disc0 = ad::get_discontinuity_points<^^continuous_linear, 0>();
@@ -91,6 +96,20 @@ int main() {
   EXPECT_EQUAL(disc_1_amp.size(), 1);
   EXPECT_EQUAL(disc_1_amp.point(0), 3.0);
   EXPECT_EQUAL(disc_1_amp.amplitude(0), 1.0);
+
+  // Test digital_and_call_payoff with amplitudes
+  // (spot > strike) ? (1.0 + spot - strike) : 0.0
+  // At strike = 100.0:
+  //   True branch at 100.0: 1.0 + 100 - 100 = 1.0
+  //   False branch: 0.0
+  //   Amplitude: 1.0 - 0.0 = 1.0
+  constexpr auto disc_dac =
+      ad::get_discontinuity_points_and_amplitudes<^^digital_and_call_payoff, 0>(
+          100.0);
+  EXPECT_FALSE(disc_dac.empty());
+  EXPECT_EQUAL(disc_dac.size(), 1);
+  EXPECT_EQUAL(disc_dac.point(0), 100.0);
+  EXPECT_EQUAL(disc_dac.amplitude(0), 1.0);
 
   TEST_END;
 }

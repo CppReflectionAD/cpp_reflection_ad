@@ -326,19 +326,270 @@ analyze_discontinuities_with_amplitudes_impl(
                           select_node.cond == n.self &&
                           select_node.a < nodes.size() &&
                           select_node.b < nodes.size()) {
-              constexpr auto true_branch = nodes[select_node.a];
-              constexpr auto false_branch = nodes[select_node.b];
+              // Evaluate true branch (select_node.a) at point_value
+              double true_val = 0.0;
+              constexpr auto true_node = nodes[select_node.a];
 
-              // Extract amplitude if both branches are constants
-              if constexpr (true_branch.op == OpKind::Const &&
-                            false_branch.op == OpKind::Const) {
-                constexpr double true_val =
-                    static_cast<double>([:true_branch.leaf:]);
-                constexpr double false_val =
-                    static_cast<double>([:false_branch.leaf:]);
-                constexpr double amplitude = true_val - false_val;
-                collector.add_point_with_amplitude(point_value, amplitude);
+              if constexpr (true_node.op == OpKind::Const) {
+                true_val = static_cast<double>([:true_node.leaf:]);
+              } else if constexpr (true_node.op == OpKind::Input) {
+                true_val =
+                    (true_node.self == TargetArgIndex)
+                        ? point_value
+                        : (true_node.self < NumArgs ? fixed_args[true_node.self]
+                                                    : 0.0);
+              } else if constexpr (true_node.op == OpKind::Add ||
+                                   true_node.op == OpKind::Sub ||
+                                   true_node.op == OpKind::Mul ||
+                                   true_node.op == OpKind::Div) {
+                // Binary operation - evaluate its operands
+                if constexpr (true_node.a < nodes.size() &&
+                              true_node.b < nodes.size()) {
+                  constexpr auto ta = nodes[true_node.a];
+                  constexpr auto tb = nodes[true_node.b];
+
+                  double ta_val = 0.0, tb_val = 0.0;
+                  // Evaluate first operand
+                  if constexpr (ta.op == OpKind::Const) {
+                    ta_val = static_cast<double>([:ta.leaf:]);
+                  } else if constexpr (ta.op == OpKind::Input) {
+                    ta_val =
+                        (ta.self == TargetArgIndex)
+                            ? point_value
+                            : (ta.self < NumArgs ? fixed_args[ta.self] : 0.0);
+                  } else if constexpr (ta.op == OpKind::Add ||
+                                       ta.op == OpKind::Sub ||
+                                       ta.op == OpKind::Mul ||
+                                       ta.op == OpKind::Div) {
+                    // Nested binary op on left
+                    if constexpr (ta.a < nodes.size() && ta.b < nodes.size()) {
+                      constexpr auto taa = nodes[ta.a];
+                      constexpr auto tab = nodes[ta.b];
+                      double taa_val = 0.0;
+                      if constexpr (taa.op == OpKind::Const) {
+                        taa_val = static_cast<double>([:taa.leaf:]);
+                      } else if constexpr (taa.op == OpKind::Input) {
+                        taa_val =
+                            (taa.self == TargetArgIndex)
+                                ? point_value
+                                : (taa.self < NumArgs ? fixed_args[taa.self]
+                                                      : 0.0);
+                      }
+                      double tab_val = 0.0;
+                      if constexpr (tab.op == OpKind::Const) {
+                        tab_val = static_cast<double>([:tab.leaf:]);
+                      } else if constexpr (tab.op == OpKind::Input) {
+                        tab_val =
+                            (tab.self == TargetArgIndex)
+                                ? point_value
+                                : (tab.self < NumArgs ? fixed_args[tab.self]
+                                                      : 0.0);
+                      }
+                      if constexpr (ta.op == OpKind::Add) {
+                        ta_val = taa_val + tab_val;
+                      } else if constexpr (ta.op == OpKind::Sub) {
+                        ta_val = taa_val - tab_val;
+                      } else if constexpr (ta.op == OpKind::Mul) {
+                        ta_val = taa_val * tab_val;
+                      } else if constexpr (ta.op == OpKind::Div) {
+                        ta_val = (tab_val != 0.0) ? (taa_val / tab_val) : 0.0;
+                      }
+                    }
+                  }
+
+                  // Evaluate second operand
+                  if constexpr (tb.op == OpKind::Const) {
+                    tb_val = static_cast<double>([:tb.leaf:]);
+                  } else if constexpr (tb.op == OpKind::Input) {
+                    tb_val =
+                        (tb.self == TargetArgIndex)
+                            ? point_value
+                            : (tb.self < NumArgs ? fixed_args[tb.self] : 0.0);
+                  } else if constexpr (tb.op == OpKind::Add ||
+                                       tb.op == OpKind::Sub ||
+                                       tb.op == OpKind::Mul ||
+                                       tb.op == OpKind::Div) {
+                    // Nested binary op on right
+                    if constexpr (tb.a < nodes.size() && tb.b < nodes.size()) {
+                      constexpr auto tba = nodes[tb.a];
+                      constexpr auto tbb = nodes[tb.b];
+                      double tba_val = 0.0;
+                      if constexpr (tba.op == OpKind::Const) {
+                        tba_val = static_cast<double>([:tba.leaf:]);
+                      } else if constexpr (tba.op == OpKind::Input) {
+                        tba_val =
+                            (tba.self == TargetArgIndex)
+                                ? point_value
+                                : (tba.self < NumArgs ? fixed_args[tba.self]
+                                                      : 0.0);
+                      }
+                      double tbb_val = 0.0;
+                      if constexpr (tbb.op == OpKind::Const) {
+                        tbb_val = static_cast<double>([:tbb.leaf:]);
+                      } else if constexpr (tbb.op == OpKind::Input) {
+                        tbb_val =
+                            (tbb.self == TargetArgIndex)
+                                ? point_value
+                                : (tbb.self < NumArgs ? fixed_args[tbb.self]
+                                                      : 0.0);
+                      }
+                      if constexpr (tb.op == OpKind::Add) {
+                        tb_val = tba_val + tbb_val;
+                      } else if constexpr (tb.op == OpKind::Sub) {
+                        tb_val = tba_val - tbb_val;
+                      } else if constexpr (tb.op == OpKind::Mul) {
+                        tb_val = tba_val * tbb_val;
+                      } else if constexpr (tb.op == OpKind::Div) {
+                        tb_val = (tbb_val != 0.0) ? (tba_val / tbb_val) : 0.0;
+                      }
+                    }
+                  }
+
+                  if constexpr (true_node.op == OpKind::Add) {
+                    true_val = ta_val + tb_val;
+                  } else if constexpr (true_node.op == OpKind::Sub) {
+                    true_val = ta_val - tb_val;
+                  } else if constexpr (true_node.op == OpKind::Mul) {
+                    true_val = ta_val * tb_val;
+                  } else if constexpr (true_node.op == OpKind::Div) {
+                    true_val = (tb_val != 0.0) ? (ta_val / tb_val) : 0.0;
+                  }
+                }
               }
+
+              // Evaluate false branch (select_node.b) at point_value
+              double false_val = 0.0;
+              constexpr auto false_node = nodes[select_node.b];
+
+              if constexpr (false_node.op == OpKind::Const) {
+                false_val = static_cast<double>([:false_node.leaf:]);
+              } else if constexpr (false_node.op == OpKind::Input) {
+                false_val = (false_node.self == TargetArgIndex)
+                                ? point_value
+                                : (false_node.self < NumArgs
+                                       ? fixed_args[false_node.self]
+                                       : 0.0);
+              } else if constexpr (false_node.op == OpKind::Add ||
+                                   false_node.op == OpKind::Sub ||
+                                   false_node.op == OpKind::Mul ||
+                                   false_node.op == OpKind::Div) {
+                // Binary operation - evaluate its operands
+                if constexpr (false_node.a < nodes.size() &&
+                              false_node.b < nodes.size()) {
+                  constexpr auto fa = nodes[false_node.a];
+                  constexpr auto fb = nodes[false_node.b];
+
+                  double fa_val = 0.0, fb_val = 0.0;
+                  // Evaluate first operand
+                  if constexpr (fa.op == OpKind::Const) {
+                    fa_val = static_cast<double>([:fa.leaf:]);
+                  } else if constexpr (fa.op == OpKind::Input) {
+                    fa_val =
+                        (fa.self == TargetArgIndex)
+                            ? point_value
+                            : (fa.self < NumArgs ? fixed_args[fa.self] : 0.0);
+                  } else if constexpr (fa.op == OpKind::Add ||
+                                       fa.op == OpKind::Sub ||
+                                       fa.op == OpKind::Mul ||
+                                       fa.op == OpKind::Div) {
+                    // Nested binary op on left
+                    if constexpr (fa.a < nodes.size() && fa.b < nodes.size()) {
+                      constexpr auto faa = nodes[fa.a];
+                      constexpr auto fab = nodes[fa.b];
+                      double faa_val = 0.0;
+                      if constexpr (faa.op == OpKind::Const) {
+                        faa_val = static_cast<double>([:faa.leaf:]);
+                      } else if constexpr (faa.op == OpKind::Input) {
+                        faa_val =
+                            (faa.self == TargetArgIndex)
+                                ? point_value
+                                : (faa.self < NumArgs ? fixed_args[faa.self]
+                                                      : 0.0);
+                      }
+                      double fab_val = 0.0;
+                      if constexpr (fab.op == OpKind::Const) {
+                        fab_val = static_cast<double>([:fab.leaf:]);
+                      } else if constexpr (fab.op == OpKind::Input) {
+                        fab_val =
+                            (fab.self == TargetArgIndex)
+                                ? point_value
+                                : (fab.self < NumArgs ? fixed_args[fab.self]
+                                                      : 0.0);
+                      }
+                      if constexpr (fa.op == OpKind::Add) {
+                        fa_val = faa_val + fab_val;
+                      } else if constexpr (fa.op == OpKind::Sub) {
+                        fa_val = faa_val - fab_val;
+                      } else if constexpr (fa.op == OpKind::Mul) {
+                        fa_val = faa_val * fab_val;
+                      } else if constexpr (fa.op == OpKind::Div) {
+                        fa_val = (fab_val != 0.0) ? (faa_val / fab_val) : 0.0;
+                      }
+                    }
+                  }
+
+                  // Evaluate second operand
+                  if constexpr (fb.op == OpKind::Const) {
+                    fb_val = static_cast<double>([:fb.leaf:]);
+                  } else if constexpr (fb.op == OpKind::Input) {
+                    fb_val =
+                        (fb.self == TargetArgIndex)
+                            ? point_value
+                            : (fb.self < NumArgs ? fixed_args[fb.self] : 0.0);
+                  } else if constexpr (fb.op == OpKind::Add ||
+                                       fb.op == OpKind::Sub ||
+                                       fb.op == OpKind::Mul ||
+                                       fb.op == OpKind::Div) {
+                    // Nested binary op on right
+                    if constexpr (fb.a < nodes.size() && fb.b < nodes.size()) {
+                      constexpr auto fba = nodes[fb.a];
+                      constexpr auto fbb = nodes[fb.b];
+                      double fba_val = 0.0;
+                      if constexpr (fba.op == OpKind::Const) {
+                        fba_val = static_cast<double>([:fba.leaf:]);
+                      } else if constexpr (fba.op == OpKind::Input) {
+                        fba_val =
+                            (fba.self == TargetArgIndex)
+                                ? point_value
+                                : (fba.self < NumArgs ? fixed_args[fba.self]
+                                                      : 0.0);
+                      }
+                      double fbb_val = 0.0;
+                      if constexpr (fbb.op == OpKind::Const) {
+                        fbb_val = static_cast<double>([:fbb.leaf:]);
+                      } else if constexpr (fbb.op == OpKind::Input) {
+                        fbb_val =
+                            (fbb.self == TargetArgIndex)
+                                ? point_value
+                                : (fbb.self < NumArgs ? fixed_args[fbb.self]
+                                                      : 0.0);
+                      }
+                      if constexpr (fb.op == OpKind::Add) {
+                        fb_val = fba_val + fbb_val;
+                      } else if constexpr (fb.op == OpKind::Sub) {
+                        fb_val = fba_val - fbb_val;
+                      } else if constexpr (fb.op == OpKind::Mul) {
+                        fb_val = fba_val * fbb_val;
+                      } else if constexpr (fb.op == OpKind::Div) {
+                        fb_val = (fbb_val != 0.0) ? (fba_val / fbb_val) : 0.0;
+                      }
+                    }
+                  }
+
+                  if constexpr (false_node.op == OpKind::Add) {
+                    false_val = fa_val + fb_val;
+                  } else if constexpr (false_node.op == OpKind::Sub) {
+                    false_val = fa_val - fb_val;
+                  } else if constexpr (false_node.op == OpKind::Mul) {
+                    false_val = fa_val * fb_val;
+                  } else if constexpr (false_node.op == OpKind::Div) {
+                    false_val = (fb_val != 0.0) ? (fa_val / fb_val) : 0.0;
+                  }
+                }
+              }
+
+              double amplitude = true_val - false_val;
+              collector.add_point_with_amplitude(point_value, amplitude);
             }
           }
         }

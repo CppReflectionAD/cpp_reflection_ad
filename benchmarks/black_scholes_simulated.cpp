@@ -96,9 +96,6 @@ monte_carlo_engine(double spot0, double strike, double r, double vol,
   double payoff_delta_sum = 0.0;
   double correction_sum = 0.0;
 
-  constexpr bool payoff_is_continuous = ad::is_continuous_on<FinalPayoffFn>(
-      ad::Interval{0.0, 1000000.0}, ad::Interval{100.0, 100.0});
-
   for (std::size_t path = 0; path < num_paths; ++path) {
     std::vector<double> normals_prefix(sim_per_path, 0.0);
 
@@ -124,10 +121,13 @@ monte_carlo_engine(double spot0, double strike, double r, double vol,
     payoff_delta_sum +=
         spot_d * ad::forward_derivative<FinalPayoffFn, 0>(spot, strike);
 
-    if constexpr (!payoff_is_continuous) {
+    constexpr auto discontinuities =
+        ad::get_discontinuity_points_and_amplitudes<FinalPayoffFn, 0>(100.0);
+
+    for (std::size_t i = 0; i < discontinuities.size(); ++i) {
       // Tweak the last draw so terminal spot lands exactly on strike, using
       // the generic inverse machinery rather than an explicit closed form.
-      const double target_factor = strike / spot_before_last;
+      const double target_factor = discontinuities.point(i) / spot_before_last;
       const double z_star =
           ad::inverse_of_wrt<^^evolve_black_scholes_normal, 3, double>(
               target_factor, r, vol, dts.back());
@@ -141,7 +141,8 @@ monte_carlo_engine(double spot0, double strike, double r, double vol,
           spot0, factors_except_last, r, vol, dts.back(), z_star);
       const double inv_abs_dg_d_u = normal_pdf / std::abs(dg_d_z);
 
-      correction_sum += dg_d_spot0 * inv_abs_dg_d_u;
+      correction_sum +=
+          dg_d_spot0 * inv_abs_dg_d_u * discontinuities.amplitude(i);
     }
   }
 
@@ -178,21 +179,6 @@ int main() {
 
   const std::uint32_t seed = 42;
   const double maturity_years = year_fraction_act365(start, maturity);
-
-  // Compile-time test: extract discontinuity points from digital_call_payoff
-  // Expected: [100.0] (discontinuity at spot = strike = 100.0)
-  constexpr auto digital_call_discontinuities =
-      ad::get_discontinuity_points<^^digital_call_payoff, 0>(100.0);
-  std::cout << "=== Compile-time Discontinuity Analysis ===\n";
-  if (!digital_call_discontinuities.empty()) {
-    std::cout
-        << "digital_call_payoff(x, K) discontinuity with K=100.0 found at x="
-        << digital_call_discontinuities[0] << " (" <<
-        digital_call_discontinuities.size() << " point(s))\n";
-  } else {
-    std::cout << "digital_call_payoff(x, K) is continuous with K=100.0\n";
-  }
-  std::cout << "\n";
 
   // digital call
   {
