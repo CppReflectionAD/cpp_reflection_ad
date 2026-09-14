@@ -29,6 +29,22 @@ double digital_and_call_payoff(double spot, double strike) {
   return (spot > strike) ? (1.0 + spot - strike) : 0.0;
 }
 
+// Digital call spread: 2 discontinuities with opposite amplitudes
+// Returns 1 if strike-1 < spot < strike+1, else 0
+double digital_call_spread_payoff(double spot, double strike) {
+  return ((spot > strike - 1) ? 1.0 : 0.0) - ((spot > strike + 1) ? 1.0 : 0.0);
+}
+
+// Simple negative digital with offset: 1 discontinuity at strike+1
+double negative_digital_offset_payoff(double spot, double strike) {
+  return (spot > strike + 1) ? -1.0 : 0.0;
+}
+
+// Simple positive digital with offset: 1 discontinuity at strike+1
+double positive_digital_offset_payoff(double spot, double strike) {
+  return (spot > strike + 1) ? 1.0 : 0.0;
+}
+
 int main() {
   // Test 0 discontinuities
   constexpr auto disc0 = ad::get_discontinuity_points<^^continuous_linear, 0>();
@@ -110,6 +126,47 @@ int main() {
   EXPECT_EQUAL(disc_dac.size(), 1);
   EXPECT_EQUAL(disc_dac.point(0), 100.0);
   EXPECT_EQUAL(disc_dac.amplitude(0), 1.0);
+
+  // Test digital_call_spread_payoff with amplitudes
+  // ((spot > strike - 1) ? 1.0 : 0.0) - ((spot > strike + 1) ? 1.0 : 0.0)
+  // At strike = 100.0:
+  //   First discontinuity at spot = 99.0 (strike - 1): amplitude = 1.0
+  //   Second discontinuity at spot = 101.0 (strike + 1): amplitude = -1.0
+  constexpr auto disc_spread =
+      ad::get_discontinuity_points_and_amplitudes<^^digital_call_spread_payoff,
+                                                  0>(100.0);
+  EXPECT_FALSE(disc_spread.empty());
+  EXPECT_EQUAL(disc_spread.size(), 2);
+  EXPECT_EQUAL(disc_spread.point(0), 99.0);
+  EXPECT_EQUAL(disc_spread.amplitude(0), 1.0);
+  EXPECT_EQUAL(disc_spread.point(1), 101.0);
+  EXPECT_EQUAL(disc_spread.amplitude(1), -1.0);
+
+  // Test negative_digital_offset_payoff with amplitudes
+  // (spot > strike + 1) ? -1.0 : 0.0
+  // At strike = 100.0:
+  //   True branch at 101.0: -1.0
+  //   False branch: 0.0
+  //   Amplitude: -1.0 - 0.0 = -1.0
+  constexpr auto disc_neg = ad::get_discontinuity_points_and_amplitudes<
+      ^^negative_digital_offset_payoff, 0>(100.0);
+  EXPECT_FALSE(disc_neg.empty());
+  EXPECT_EQUAL(disc_neg.size(), 1);
+  EXPECT_EQUAL(disc_neg.point(0), 101.0);
+  EXPECT_EQUAL(disc_neg.amplitude(0), -1.0);
+
+  // Test positive_digital_offset_payoff with amplitudes
+  // (spot > strike + 1) ? 1.0 : 0.0
+  // At strike = 100.0:
+  //   True branch at 101.0: 1.0
+  //   False branch: 0.0
+  //   Amplitude: 1.0 - 0.0 = 1.0
+  constexpr auto disc_pos = ad::get_discontinuity_points_and_amplitudes<
+      ^^positive_digital_offset_payoff, 0>(100.0);
+  EXPECT_FALSE(disc_pos.empty());
+  EXPECT_EQUAL(disc_pos.size(), 1);
+  EXPECT_EQUAL(disc_pos.point(0), 101.0);
+  EXPECT_EQUAL(disc_pos.amplitude(0), 1.0);
 
   TEST_END;
 }

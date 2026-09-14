@@ -248,6 +248,90 @@ analyze_discontinuities_impl(const std::array<double, NumArgs> &fixed_args) {
           double a_val = fixed_args[operand_a.self];
           collector.add_point(a_val);
         }
+
+        // Case 5: a is target input, b is a binary operation (e.g., strike - 1)
+        if constexpr (operand_a.op == OpKind::Input &&
+                      operand_a.self == TargetArgIndex &&
+                      (operand_b.op == OpKind::Add ||
+                       operand_b.op == OpKind::Sub ||
+                       operand_b.op == OpKind::Mul ||
+                       operand_b.op == OpKind::Div) &&
+                      operand_b.a < nodes.size() &&
+                      operand_b.b < nodes.size()) {
+          // Evaluate the binary operation with fixed arguments
+          constexpr auto b_left = nodes[operand_b.a];
+          constexpr auto b_right = nodes[operand_b.b];
+          double b_left_val = 0.0, b_right_val = 0.0;
+
+          if constexpr (b_left.op == OpKind::Const) {
+            b_left_val = static_cast<double>([:b_left.leaf:]);
+          } else if constexpr (b_left.op == OpKind::Input &&
+                               b_left.self < NumArgs) {
+            b_left_val = fixed_args[b_left.self];
+          }
+
+          if constexpr (b_right.op == OpKind::Const) {
+            b_right_val = static_cast<double>([:b_right.leaf:]);
+          } else if constexpr (b_right.op == OpKind::Input &&
+                               b_right.self < NumArgs) {
+            b_right_val = fixed_args[b_right.self];
+          }
+
+          double point_value = 0.0;
+          if constexpr (operand_b.op == OpKind::Add) {
+            point_value = b_left_val + b_right_val;
+          } else if constexpr (operand_b.op == OpKind::Sub) {
+            point_value = b_left_val - b_right_val;
+          } else if constexpr (operand_b.op == OpKind::Mul) {
+            point_value = b_left_val * b_right_val;
+          } else if constexpr (operand_b.op == OpKind::Div) {
+            point_value =
+                (b_right_val != 0.0) ? (b_left_val / b_right_val) : 0.0;
+          }
+          collector.add_point(point_value);
+        }
+
+        // Case 6: b is target input, a is a binary operation (e.g., strike - 1)
+        if constexpr (operand_b.op == OpKind::Input &&
+                      operand_b.self == TargetArgIndex &&
+                      (operand_a.op == OpKind::Add ||
+                       operand_a.op == OpKind::Sub ||
+                       operand_a.op == OpKind::Mul ||
+                       operand_a.op == OpKind::Div) &&
+                      operand_a.a < nodes.size() &&
+                      operand_a.b < nodes.size()) {
+          // Evaluate the binary operation with fixed arguments
+          constexpr auto a_left = nodes[operand_a.a];
+          constexpr auto a_right = nodes[operand_a.b];
+          double a_left_val = 0.0, a_right_val = 0.0;
+
+          if constexpr (a_left.op == OpKind::Const) {
+            a_left_val = static_cast<double>([:a_left.leaf:]);
+          } else if constexpr (a_left.op == OpKind::Input &&
+                               a_left.self < NumArgs) {
+            a_left_val = fixed_args[a_left.self];
+          }
+
+          if constexpr (a_right.op == OpKind::Const) {
+            a_right_val = static_cast<double>([:a_right.leaf:]);
+          } else if constexpr (a_right.op == OpKind::Input &&
+                               a_right.self < NumArgs) {
+            a_right_val = fixed_args[a_right.self];
+          }
+
+          double point_value = 0.0;
+          if constexpr (operand_a.op == OpKind::Add) {
+            point_value = a_left_val + a_right_val;
+          } else if constexpr (operand_a.op == OpKind::Sub) {
+            point_value = a_left_val - a_right_val;
+          } else if constexpr (operand_a.op == OpKind::Mul) {
+            point_value = a_left_val * a_right_val;
+          } else if constexpr (operand_a.op == OpKind::Div) {
+            point_value =
+                (a_right_val != 0.0) ? (a_left_val / a_right_val) : 0.0;
+          }
+          collector.add_point(point_value);
+        }
       }
     }
   }
@@ -318,6 +402,88 @@ analyze_discontinuities_with_amplitudes_impl(
           point_value = fixed_args[operand_a.self];
         }
 
+        // Case 5: a is target input, b is a binary operation (e.g., strike - 1)
+        else if constexpr (operand_a.op == OpKind::Input &&
+                           operand_a.self == TargetArgIndex &&
+                           (operand_b.op == OpKind::Add ||
+                            operand_b.op == OpKind::Sub ||
+                            operand_b.op == OpKind::Mul ||
+                            operand_b.op == OpKind::Div) &&
+                           operand_b.a < nodes.size() &&
+                           operand_b.b < nodes.size()) {
+          involves_target = true;
+          // Evaluate the binary operation with fixed arguments
+          constexpr auto b_left = nodes[operand_b.a];
+          constexpr auto b_right = nodes[operand_b.b];
+          double b_left_val = 0.0, b_right_val = 0.0;
+
+          if constexpr (b_left.op == OpKind::Const) {
+            b_left_val = static_cast<double>([:b_left.leaf:]);
+          } else if constexpr (b_left.op == OpKind::Input &&
+                               b_left.self < NumArgs) {
+            b_left_val = fixed_args[b_left.self];
+          }
+
+          if constexpr (b_right.op == OpKind::Const) {
+            b_right_val = static_cast<double>([:b_right.leaf:]);
+          } else if constexpr (b_right.op == OpKind::Input &&
+                               b_right.self < NumArgs) {
+            b_right_val = fixed_args[b_right.self];
+          }
+
+          if constexpr (operand_b.op == OpKind::Add) {
+            point_value = b_left_val + b_right_val;
+          } else if constexpr (operand_b.op == OpKind::Sub) {
+            point_value = b_left_val - b_right_val;
+          } else if constexpr (operand_b.op == OpKind::Mul) {
+            point_value = b_left_val * b_right_val;
+          } else if constexpr (operand_b.op == OpKind::Div) {
+            point_value =
+                (b_right_val != 0.0) ? (b_left_val / b_right_val) : 0.0;
+          }
+        }
+
+        // Case 6: b is target input, a is a binary operation (e.g., strike - 1)
+        else if constexpr (operand_b.op == OpKind::Input &&
+                           operand_b.self == TargetArgIndex &&
+                           (operand_a.op == OpKind::Add ||
+                            operand_a.op == OpKind::Sub ||
+                            operand_a.op == OpKind::Mul ||
+                            operand_a.op == OpKind::Div) &&
+                           operand_a.a < nodes.size() &&
+                           operand_a.b < nodes.size()) {
+          involves_target = true;
+          // Evaluate the binary operation with fixed arguments
+          constexpr auto a_left = nodes[operand_a.a];
+          constexpr auto a_right = nodes[operand_a.b];
+          double a_left_val = 0.0, a_right_val = 0.0;
+
+          if constexpr (a_left.op == OpKind::Const) {
+            a_left_val = static_cast<double>([:a_left.leaf:]);
+          } else if constexpr (a_left.op == OpKind::Input &&
+                               a_left.self < NumArgs) {
+            a_left_val = fixed_args[a_left.self];
+          }
+
+          if constexpr (a_right.op == OpKind::Const) {
+            a_right_val = static_cast<double>([:a_right.leaf:]);
+          } else if constexpr (a_right.op == OpKind::Input &&
+                               a_right.self < NumArgs) {
+            a_right_val = fixed_args[a_right.self];
+          }
+
+          if constexpr (operand_a.op == OpKind::Add) {
+            point_value = a_left_val + a_right_val;
+          } else if constexpr (operand_a.op == OpKind::Sub) {
+            point_value = a_left_val - a_right_val;
+          } else if constexpr (operand_a.op == OpKind::Mul) {
+            point_value = a_left_val * a_right_val;
+          } else if constexpr (operand_a.op == OpKind::Div) {
+            point_value =
+                (a_right_val != 0.0) ? (a_left_val / a_right_val) : 0.0;
+          }
+        }
+
         // If this comparison involves the target, find Select nodes that use it
         if (involves_target) {
           // Search for Select nodes that use this comparison as their condition
@@ -332,6 +498,13 @@ analyze_discontinuities_with_amplitudes_impl(
 
               if constexpr (true_node.op == OpKind::Const) {
                 true_val = static_cast<double>([:true_node.leaf:]);
+              } else if constexpr (true_node.op == OpKind::Neg &&
+                                   true_node.a < nodes.size()) {
+                // Handle unary negation: -expr
+                constexpr auto neg_operand = nodes[true_node.a];
+                if constexpr (neg_operand.op == OpKind::Const) {
+                  true_val = -static_cast<double>([:neg_operand.leaf:]);
+                }
               } else if constexpr (true_node.op == OpKind::Input) {
                 true_val =
                     (true_node.self == TargetArgIndex)
@@ -463,6 +636,13 @@ analyze_discontinuities_with_amplitudes_impl(
 
               if constexpr (false_node.op == OpKind::Const) {
                 false_val = static_cast<double>([:false_node.leaf:]);
+              } else if constexpr (false_node.op == OpKind::Neg &&
+                                   false_node.a < nodes.size()) {
+                // Handle unary negation: -expr
+                constexpr auto neg_operand = nodes[false_node.a];
+                if constexpr (neg_operand.op == OpKind::Const) {
+                  false_val = -static_cast<double>([:neg_operand.leaf:]);
+                }
               } else if constexpr (false_node.op == OpKind::Input) {
                 false_val = (false_node.self == TargetArgIndex)
                                 ? point_value
@@ -589,6 +769,30 @@ analyze_discontinuities_with_amplitudes_impl(
               }
 
               double amplitude = true_val - false_val;
+
+              // Check if this Select node is used in any binary operations that
+              // would affect its amplitude
+              double amplitude_scale = 1.0;
+              template for (constexpr auto parent_node : nodes) {
+                if constexpr ((parent_node.op == OpKind::Add ||
+                               parent_node.op == OpKind::Sub ||
+                               parent_node.op == OpKind::Mul ||
+                               parent_node.op == OpKind::Div) &&
+                              (parent_node.a == select_node.self ||
+                               parent_node.b == select_node.self)) {
+                  // This Select is used as an operand in a binary operation
+                  if constexpr (parent_node.op == OpKind::Sub &&
+                                parent_node.b == select_node.self) {
+                    // This Select is being subtracted (it's the right operand
+                    // of Sub)
+                    amplitude_scale = -1.0;
+                  }
+                  // For Add/Mul/Div or left operand of Sub, amplitude_scale
+                  // stays 1.0
+                }
+              }
+
+              amplitude = amplitude * amplitude_scale;
               collector.add_point_with_amplitude(point_value, amplitude);
             }
           }
@@ -724,6 +928,88 @@ get_discontinuity_points_and_amplitudes_rt(FixedArgs... fixed_args) {
           point_value = all_inputs[operand_a.self];
         }
 
+        // Case 5: a is target input, b is a binary operation (e.g., strike - 1)
+        else if constexpr (operand_a.op == OpKind::Input &&
+                           operand_a.self == TargetArgIndex &&
+                           (operand_b.op == OpKind::Add ||
+                            operand_b.op == OpKind::Sub ||
+                            operand_b.op == OpKind::Mul ||
+                            operand_b.op == OpKind::Div) &&
+                           operand_b.a < nodes.size() &&
+                           operand_b.b < nodes.size()) {
+          involves_target = true;
+          // Evaluate the binary operation with fixed arguments
+          constexpr auto b_left = nodes[operand_b.a];
+          constexpr auto b_right = nodes[operand_b.b];
+          double b_left_val = 0.0, b_right_val = 0.0;
+
+          if constexpr (b_left.op == OpKind::Const) {
+            b_left_val = static_cast<double>([:b_left.leaf:]);
+          } else if constexpr (b_left.op == OpKind::Input &&
+                               b_left.self < NumArgs) {
+            b_left_val = all_inputs[b_left.self];
+          }
+
+          if constexpr (b_right.op == OpKind::Const) {
+            b_right_val = static_cast<double>([:b_right.leaf:]);
+          } else if constexpr (b_right.op == OpKind::Input &&
+                               b_right.self < NumArgs) {
+            b_right_val = all_inputs[b_right.self];
+          }
+
+          if constexpr (operand_b.op == OpKind::Add) {
+            point_value = b_left_val + b_right_val;
+          } else if constexpr (operand_b.op == OpKind::Sub) {
+            point_value = b_left_val - b_right_val;
+          } else if constexpr (operand_b.op == OpKind::Mul) {
+            point_value = b_left_val * b_right_val;
+          } else if constexpr (operand_b.op == OpKind::Div) {
+            point_value =
+                (b_right_val != 0.0) ? (b_left_val / b_right_val) : 0.0;
+          }
+        }
+
+        // Case 6: b is target input, a is a binary operation (e.g., strike - 1)
+        else if constexpr (operand_b.op == OpKind::Input &&
+                           operand_b.self == TargetArgIndex &&
+                           (operand_a.op == OpKind::Add ||
+                            operand_a.op == OpKind::Sub ||
+                            operand_a.op == OpKind::Mul ||
+                            operand_a.op == OpKind::Div) &&
+                           operand_a.a < nodes.size() &&
+                           operand_a.b < nodes.size()) {
+          involves_target = true;
+          // Evaluate the binary operation with fixed arguments
+          constexpr auto a_left = nodes[operand_a.a];
+          constexpr auto a_right = nodes[operand_a.b];
+          double a_left_val = 0.0, a_right_val = 0.0;
+
+          if constexpr (a_left.op == OpKind::Const) {
+            a_left_val = static_cast<double>([:a_left.leaf:]);
+          } else if constexpr (a_left.op == OpKind::Input &&
+                               a_left.self < NumArgs) {
+            a_left_val = all_inputs[a_left.self];
+          }
+
+          if constexpr (a_right.op == OpKind::Const) {
+            a_right_val = static_cast<double>([:a_right.leaf:]);
+          } else if constexpr (a_right.op == OpKind::Input &&
+                               a_right.self < NumArgs) {
+            a_right_val = all_inputs[a_right.self];
+          }
+
+          if constexpr (operand_a.op == OpKind::Add) {
+            point_value = a_left_val + a_right_val;
+          } else if constexpr (operand_a.op == OpKind::Sub) {
+            point_value = a_left_val - a_right_val;
+          } else if constexpr (operand_a.op == OpKind::Mul) {
+            point_value = a_left_val * a_right_val;
+          } else if constexpr (operand_a.op == OpKind::Div) {
+            point_value =
+                (a_right_val != 0.0) ? (a_left_val / a_right_val) : 0.0;
+          }
+        }
+
         // If this comparison involves the target, find Select nodes that use it
         if (involves_target && result.count < MaxPoints) {
           // Search for Select nodes that use this comparison as their condition
@@ -738,6 +1024,13 @@ get_discontinuity_points_and_amplitudes_rt(FixedArgs... fixed_args) {
 
               if constexpr (true_node.op == OpKind::Const) {
                 true_val = static_cast<double>([:true_node.leaf:]);
+              } else if constexpr (true_node.op == OpKind::Neg &&
+                                   true_node.a < nodes.size()) {
+                // Handle unary negation: -expr
+                constexpr auto neg_operand = nodes[true_node.a];
+                if constexpr (neg_operand.op == OpKind::Const) {
+                  true_val = -static_cast<double>([:neg_operand.leaf:]);
+                }
               } else if constexpr (true_node.op == OpKind::Input) {
                 true_val =
                     (true_node.self == TargetArgIndex)
@@ -870,6 +1163,13 @@ get_discontinuity_points_and_amplitudes_rt(FixedArgs... fixed_args) {
 
               if constexpr (false_node.op == OpKind::Const) {
                 false_val = static_cast<double>([:false_node.leaf:]);
+              } else if constexpr (false_node.op == OpKind::Neg &&
+                                   false_node.a < nodes.size()) {
+                // Handle unary negation: -expr
+                constexpr auto neg_operand = nodes[false_node.a];
+                if constexpr (neg_operand.op == OpKind::Const) {
+                  false_val = -static_cast<double>([:neg_operand.leaf:]);
+                }
               } else if constexpr (false_node.op == OpKind::Input) {
                 false_val = (false_node.self == TargetArgIndex)
                                 ? point_value
@@ -996,6 +1296,30 @@ get_discontinuity_points_and_amplitudes_rt(FixedArgs... fixed_args) {
               }
 
               double amplitude = true_val - false_val;
+
+              // Check if this Select node is used in any binary operations that
+              // would affect its amplitude
+              double amplitude_scale = 1.0;
+              template for (constexpr auto parent_node : nodes) {
+                if constexpr ((parent_node.op == OpKind::Add ||
+                               parent_node.op == OpKind::Sub ||
+                               parent_node.op == OpKind::Mul ||
+                               parent_node.op == OpKind::Div) &&
+                              (parent_node.a == select_node.self ||
+                               parent_node.b == select_node.self)) {
+                  // This Select is used as an operand in a binary operation
+                  if constexpr (parent_node.op == OpKind::Sub &&
+                                parent_node.b == select_node.self) {
+                    // This Select is being subtracted (it's the right operand
+                    // of Sub)
+                    amplitude_scale = -1.0;
+                  }
+                  // For Add/Mul/Div or left operand of Sub, amplitude_scale
+                  // stays 1.0
+                }
+              }
+
+              amplitude = amplitude * amplitude_scale;
 
               // Check for duplicates before adding
               bool found = false;
