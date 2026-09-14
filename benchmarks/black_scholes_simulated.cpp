@@ -121,8 +121,10 @@ monte_carlo_engine(double spot0, double strike, double r, double vol,
     payoff_delta_sum +=
         spot_d * ad::forward_derivative<FinalPayoffFn, 0>(spot, strike);
 
-    constexpr auto discontinuities =
-        ad::get_discontinuity_points_and_amplitudes<FinalPayoffFn, 0>(100.0);
+    // Use runtime version to accept dynamic strike parameter
+    auto discontinuities =
+        ad::get_discontinuity_points_and_amplitudes_rt<FinalPayoffFn, 0>(
+            strike);
 
     for (std::size_t i = 0; i < discontinuities.size(); ++i) {
       // Tweak the last draw so terminal spot lands exactly on strike, using
@@ -161,11 +163,15 @@ int main() {
   const double vol = 0.20;
   std::size_t num_paths = 200000;
   std::size_t sim_per_path = 1;
+  double tolerance = 1e-2;
   if (auto *env_p = std::getenv("PATHS")) {
     num_paths = std::stoul(env_p);
   }
   if (auto *env_spp = std::getenv("SIM_PER_PATH")) {
     sim_per_path = std::stoul(env_spp);
+  }
+  if (auto *env_tol = std::getenv("TOLERANCE")) {
+    tolerance = std::stod(env_tol);
   }
 
   if (num_paths == 0) {
@@ -176,55 +182,53 @@ int main() {
     std::cerr << "SIM_PER_PATH must be a positive integer" << std::endl;
     return 1;
   }
+  if (tolerance <= 0.0) {
+    std::cerr << "TOLERANCE must be a positive number" << std::endl;
+    return 1;
+  }
 
   const std::uint32_t seed = 42;
   const double maturity_years = year_fraction_act365(start, maturity);
 
-  // digital call
-  {
-    const double cf_pv =
-        digital_call_closed_form(spot0, strike, rate, vol, maturity_years);
-    const double cf_delta =
-        ad::forward_derivative<^^digital_call_closed_form, 0>(
+  // Templated function to run payoff test with closed-form and payoff functions
+  auto run_payoff_test =
+      [&]<std::meta::info ClosedFormFn, std::meta::info PayoffFn>(
+          const char *label) {
+        const double cf_pv = [:ClosedFormFn:](spot0, strike, rate, vol,
+                                              maturity_years);
+        const double cf_delta = ad::forward_derivative<ClosedFormFn, 0>(
             spot0, strike, rate, vol, maturity_years);
-    const auto [mc_pv, mc_delta, mc_correction] =
-        monte_carlo_engine<^^digital_call_payoff>(spot0, strike, rate, vol,
-                                                  maturity_years, num_paths,
-                                                  sim_per_path, seed);
+        const auto [mc_pv, mc_delta, mc_correction] =
+            monte_carlo_engine<PayoffFn>(spot0, strike, rate, vol,
+                                         maturity_years, num_paths,
+                                         sim_per_path, seed);
+        // test_payoff(label, cf_pv, cf_delta, mc_pv, mc_delta, mc_correction);
 
-    std::cout.precision(std::numeric_limits<double>::max_digits10);
+        std::cout.precision(std::numeric_limits<double>::max_digits10);
+        std::cout << "Closed-form (" << label << ") : " << cf_pv << "\n";
+        std::cout << "Closed-form delta          : " << cf_delta << "\n";
+        std::cout << "MC " << label << " price      : " << mc_pv << "\n";
+        std::cout << "MC Delta without correction: " << mc_delta << "\n";
+        std::cout << "MC Correction term         : " << mc_correction << "\n";
+        std::cout << "MC Delta                   : " << mc_delta + mc_correction
+                  << "\n";
+        std::cout << "Relative % PV error: "
+                  << (std::abs(mc_pv - cf_pv) / std::abs(cf_pv)) * 100 << "%\n";
+        std::cout << "Relative % Delta error: "
+                  << (std::abs((mc_delta + mc_correction) - cf_delta) /
+                      std::abs(cf_delta)) *
+                         100
+                  << "%\n";
+      };
 
-    std::cout << "Closed-form (digital call) : " << cf_pv << "\n";
-    std::cout << "Closed-form delta          : " << cf_delta << "\n";
-    std::cout << "MC digital call price      : " << mc_pv << "\n";
-    std::cout << "MC Delta without correction: " << mc_delta << "\n";
-    std::cout << "MC Correction term         : " << mc_correction << "\n";
-    std::cout << "MC Delta                   : " << mc_delta + mc_correction
-              << "\n";
-  }
+  // digital call
+  run_payoff_test.template
+  operator()<^^digital_call_closed_form, ^^digital_call_payoff>("digital call");
 
   // digital and call
-  {
-    const double cf_pv =
-        digital_and_call_closed_form(spot0, strike, rate, vol, maturity_years);
-    const double cf_delta =
-        ad::forward_derivative<^^digital_and_call_closed_form, 0>(
-            spot0, strike, rate, vol, maturity_years);
-    const auto [mc_pv, mc_delta, mc_correction] =
-        monte_carlo_engine<^^digital_and_call_payoff>(spot0, strike, rate, vol,
-                                                      maturity_years, num_paths,
-                                                      sim_per_path, seed);
-
-    std::cout.precision(std::numeric_limits<double>::max_digits10);
-
-    std::cout << "Closed-form (digital call) : " << cf_pv << "\n";
-    std::cout << "Closed-form delta          : " << cf_delta << "\n";
-    std::cout << "MC digital call price      : " << mc_pv << "\n";
-    std::cout << "MC Delta without correction: " << mc_delta << "\n";
-    std::cout << "MC Correction term         : " << mc_correction << "\n";
-    std::cout << "MC Delta                   : " << mc_delta + mc_correction
-              << "\n";
-  }
+  run_payoff_test.template
+  operator()<^^digital_and_call_closed_form, ^^digital_and_call_payoff>(
+      "digital and call");
 
   return 0;
 }
