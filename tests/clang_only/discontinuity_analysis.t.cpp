@@ -27,36 +27,41 @@ double two_arg_compare(double x, double y) { return (x > y) ? 1.0 : 0.0; }
 int main() {
   // Test 0 discontinuities
   constexpr auto disc0 = ad::get_discontinuity_points<^^continuous_linear, 0>();
-  // Should have no points (all zeros)
-  EXPECT_EQUAL(disc0[0], 0.0);
+  // Should be empty (no discontinuities)
+  EXPECT_TRUE(disc0.empty());
+  EXPECT_EQUAL(disc0.size(), 0);
 
   // Test 1 discontinuity
   constexpr auto disc1 = ad::get_discontinuity_points<^^one_discontinuity, 0>();
+  EXPECT_FALSE(disc1.empty());
+  EXPECT_EQUAL(disc1.size(), 1);
   EXPECT_EQUAL(disc1[0], 3.0);
-  EXPECT_EQUAL(disc1[1], 0.0); // second point should be zero
 
   // Test 2 discontinuities
   constexpr auto disc2 =
       ad::get_discontinuity_points<^^two_discontinuities, 0>();
+  EXPECT_FALSE(disc2.empty());
+  EXPECT_EQUAL(disc2.size(), 2);
   EXPECT_EQUAL(disc2[0], 2.0);
   EXPECT_EQUAL(disc2[1], 5.0);
-  EXPECT_EQUAL(disc2[2], 0.0); // third point should be zero
 
   // Test 3 discontinuities
   constexpr auto disc3 =
       ad::get_discontinuity_points<^^three_discontinuities, 0>();
+  EXPECT_FALSE(disc3.empty());
+  EXPECT_EQUAL(disc3.size(), 3);
   EXPECT_EQUAL(disc3[0], 1.0);
   EXPECT_EQUAL(disc3[1], 4.0);
   EXPECT_EQUAL(disc3[2], 7.0);
-  EXPECT_EQUAL(disc3[3], 0.0); // fourth point should be zero
 
   // Test multi-argument function
   // two_arg_compare(x, y) where x is target (arg 0) and y is fixed at 5.0
   // Discontinuity at x = y = 5.0
   constexpr auto disc_2arg =
       ad::get_discontinuity_points<^^two_arg_compare, 0>(5.0);
+  EXPECT_FALSE(disc_2arg.empty());
+  EXPECT_EQUAL(disc_2arg.size(), 1);
   EXPECT_EQUAL(disc_2arg[0], 5.0);
-  EXPECT_EQUAL(disc_2arg[1], 0.0);
 
   TEST_END;
 }

@@ -184,9 +184,15 @@ int main() {
   constexpr auto digital_call_discontinuities =
       ad::get_discontinuity_points<^^digital_call_payoff, 0>(100.0);
   std::cout << "=== Compile-time Discontinuity Analysis ===\n";
-  std::cout
-      << "digital_call_payoff(x, K) discontinuity with K=100.0 found at x="
-      << digital_call_discontinuities[0] << "\n\n";
+  if (!digital_call_discontinuities.empty()) {
+    std::cout
+        << "digital_call_payoff(x, K) discontinuity with K=100.0 found at x="
+        << digital_call_discontinuities[0] << " (" <<
+        digital_call_discontinuities.size() << " point(s))\n";
+  } else {
+    std::cout << "digital_call_payoff(x, K) is continuous with K=100.0\n";
+  }
+  std::cout << "\n";
 
   // digital call
   {

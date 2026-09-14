@@ -49,6 +49,29 @@ consteval std::array<T, sizeof...(Args)> make_array_impl(Args... args) {
 // while other arguments are fixed at the provided values.
 // ---------------------------------------------------------------------------
 
+// Result type for discontinuity point extraction
+template <std::size_t MaxPoints = 16> struct DiscontinuityPoints {
+  std::array<double, MaxPoints> points = {};
+  std::size_t count = 0;
+
+  // Check if array is empty (no discontinuities found)
+  constexpr bool empty() const { return count == 0; }
+
+  // Get the number of valid discontinuity points
+  constexpr std::size_t size() const { return count; }
+
+  // Access individual points
+  constexpr double operator[](std::size_t i) const {
+    return (i < count) ? points[i] : 0.0;
+  }
+
+  // Iterator support for range-based loops
+  constexpr auto begin() { return points.begin(); }
+  constexpr auto end() { return points.begin() + count; }
+  constexpr auto begin() const { return points.begin(); }
+  constexpr auto end() const { return points.begin() + count; }
+};
+
 // Helper to collect discontinuity points during DAG traversal
 template <std::size_t MaxPoints = 16> struct DiscontinuityCollector {
   std::array<double, MaxPoints> points = {}; // Initialize all to 0.0
@@ -83,10 +106,10 @@ template <std::size_t MaxPoints = 16> struct DiscontinuityCollector {
     }
   }
 
-  // Return a view of the populated portion
-  consteval std::array<double, MaxPoints> get_array() const { return points; }
-
-  consteval std::size_t size() const { return count; }
+  // Return result with count information
+  consteval DiscontinuityPoints<MaxPoints> get_result() const {
+    return {points, count};
+  }
 };
 
 // Core analysis: walk the DAG, find comparisons involving target input,
@@ -159,7 +182,7 @@ analyze_discontinuities_impl(const std::array<double, NumArgs> &fixed_args) {
 
 template <info Fn, std::size_t TargetArgIndex, std::size_t MaxPoints = 16,
           typename... FixedArgs>
-consteval std::array<double, MaxPoints>
+consteval DiscontinuityPoints<MaxPoints>
 get_discontinuity_points(FixedArgs... fixed_args) {
   constexpr std::size_t NumArgs = TargetArgIndex + 1 + sizeof...(FixedArgs);
 
@@ -177,7 +200,7 @@ get_discontinuity_points(FixedArgs... fixed_args) {
   auto collector =
       analyze_discontinuities_impl<Fn, TargetArgIndex, NumArgs, MaxPoints>(
           all_inputs);
-  return collector.get_array();
+  return collector.get_result();
 }
 
 } // namespace ad
