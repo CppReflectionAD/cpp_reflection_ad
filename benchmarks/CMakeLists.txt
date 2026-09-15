@@ -27,7 +27,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     # GCC counts a different unit from clang's steps and starts from a far
     # larger budget, so this is headroom rather than a required bump.
-    set(_reflect_flags -freflection -fconstexpr-ops-limit=64000000)
+    set(_reflect_flags -freflection -fconstexpr-ops-limit=96000000)
 else()
     message(FATAL_ERROR "Unsupported compiler: ${CMAKE_CXX_COMPILER_ID}")
 endif()
