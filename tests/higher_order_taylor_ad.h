@@ -4,6 +4,7 @@
 #include <meta>
 
 #include "autograd.h"
+#include "consteval_hashmap.h"
 
 namespace ad {
 
@@ -24,14 +25,32 @@ consteval std::size_t emit_raw(std::vector<Node> &out, OpKind op, std::size_t a,
   return s;
 }
 
-consteval std::size_t node_hash(OpKind op, std::size_t a, std::size_t b,
-                                std::size_t cond, std::size_t guard) {
-  std::size_t h = 1469598103934665603ull;
-  for (std::size_t v : {static_cast<std::size_t>(op), a, b, cond, guard}) {
-    h = (h ^ v) * 1099511628211ull;
+// Identity of a node emitted through `DAGBuilder::emit_node`: two nodes with
+// equal keys are the same computation and can share a slot. `cond` and `guard`
+// are part of the identity since a value computed under one guard must not be
+// reused under another, and `leaf` is, since Const nodes carry their value
+// there rather than in their operands.
+struct NodeKey {
+  OpKind op;
+  std::size_t a;
+  std::size_t b;
+  std::size_t cond;
+  std::size_t guard;
+  info leaf;
+
+  constexpr bool operator==(const NodeKey &) const = default;
+};
+
+struct NodeKeyHash {
+  consteval std::size_t operator()(const NodeKey &key) const {
+    std::size_t h = 1469598103934665603ull;
+    for (std::size_t v : {static_cast<std::size_t>(key.op), key.a, key.b,
+                          key.cond, key.guard}) {
+      h = (h ^ v) * 1099511628211ull;
+    }
+    return h;
   }
-  return h;
-}
+};
 
 // This struct represents the shape of a truncated taylor polynomial, e.g.
 // f(x, y) = f(a, b) + fx(a, b)(x-a) + fy(a, b)(y-b) + 1/2 * (fxx(a,b)(x-a)^2 +
@@ -140,61 +159,22 @@ private:
   using ConstPool = std::vector<std::pair<double, std::size_t>>;
   ConstPool pool;
 
-  // Hash table over the nodes emitted through `emit_node`.
-  using MemoEntry = std::pair<std::size_t, std::size_t>;
-  using MemoBucket = std::vector<MemoEntry>;
-  static constexpr std::size_t kInitialBuckets = 64;
-  // Grow once a bucket holds this many entries on average.
-  static constexpr std::size_t kMaxLoadFactor = 2;
-
-  std::vector<MemoBucket> buckets = std::vector<MemoBucket>(kInitialBuckets);
-  std::size_t memoCount = 0;
-
-  // Double the bucket count once the table is loaded past `kMaxLoadFactor`, so
-  // the average bucket stays short and lookups stay constant time.
-  consteval void grow_memo_if_loaded() {
-    if (memoCount <= buckets.size() * kMaxLoadFactor) {
-      return;
-    }
-    std::vector<MemoBucket> fresh(buckets.size() * 2);
-    for (const MemoBucket &bucket : buckets) {
-      for (const MemoEntry &entry : bucket) {
-        fresh[entry.first % fresh.size()].push_back(entry);
-      }
-    }
-    buckets = fresh;
-  }
+  // Map from the identity of a node to the slot it was emitted into, over the
+  // nodes emitted through `emit_node`.
+  ConstevalHashMap<NodeKey, std::size_t, NodeKeyHash> memo;
 
   // If we have an existing node in the DAG with the same operation and
   // operands, we can reuse it instead of bloating the DAG with duplicate nodes.
-  // Const nodes carry their value in `leaf` rather than in operands, so they
-  // only match when the leaf matches too. `cond` and `guard` are also keyed on
-  // since a value computed under one guard must not be reused under another.
   consteval std::size_t emit_node(OpKind op, std::size_t a, std::size_t b,
                                   info leaf = ^^int, std::size_t cond = 0,
                                   std::size_t guard = UNGUARDED) {
-    // Hash the node.
-    const std::size_t h = node_hash(op, a, b, cond, guard);
-    // Find the bucket it should live in.
-    MemoBucket &bucket = buckets[h % buckets.size()];
-    // Scan the bucket and return the node if found.
-    for (const MemoEntry &entry : bucket) {
-      if (entry.first != h) {
-        continue;
-      }
-      const Node &n = out[entry.second];
-      // Make sure if we have any hash collisions that we return the correct
-      // node.
-      if (n.op == op && n.a == a && n.b == b && n.cond == cond &&
-          n.guard == guard && (op != OpKind::Const || n.leaf == leaf)) {
-        return n.self;
-      }
+    const NodeKey key{op, a, b, cond, guard, leaf};
+    if (const std::size_t *slot = memo.find(key)) {
+      return *slot;
     }
     std::size_t slot = emit_raw(out, op, a, b, leaf, cond, guard);
-    // Add new node to hash lookup so we don't duplicate it in the future.
-    bucket.push_back({h, slot});
-    ++memoCount;
-    grow_memo_if_loaded();
+    // Add the new node to the map so we don't duplicate it in the future.
+    memo.insert(key, slot);
     return slot;
   }
 
