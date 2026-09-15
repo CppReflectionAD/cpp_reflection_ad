@@ -24,6 +24,9 @@ if(_is_clang)
         -fexpansion-statements
         -stdlib=libc++
         -isystem "${_clang_root}/include/c++/v1"
+        # High-order Taylor derivatives build a large DAG at compile time, past
+        # the default 1M constant-evaluation step budget.
+        -fconstexpr-steps=16000000
     )
     if(APPLE)
         execute_process(COMMAND xcrun --show-sdk-path
@@ -33,7 +36,9 @@ if(_is_clang)
         endif()
     endif()
 elseif(_is_gcc)
-    set(_reflect_flags -freflection)
+    set(_reflect_flags -freflection -fconstexpr-ops-limit=96000000)
+else()
+    message(FATAL_ERROR "Unsupported compiler: ${CMAKE_CXX_COMPILER_ID}")
 endif()
 
 # ---------------------------------------------------------------------------
