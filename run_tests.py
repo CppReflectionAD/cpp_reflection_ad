@@ -16,7 +16,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 TESTS_DIR = ROOT / "tests"
-TEST_FRAMEWORK = ROOT / "test_simple"
 BENCHMARKS_DIR = ROOT / "benchmarks"
 BUILD_ROOT = ROOT / "build"
 ARTIFACTS_DIR = BUILD_ROOT / "artifacts"
@@ -64,7 +63,10 @@ else:
     DEFAULT_GCC_SYNC_FROM = os.environ.get("REFLECT_GCC_SYNC_FROM", "")
 
 # Per-test compile flags are declared inline via a `// TEST-FLAGS: ...` comment
-# in the first few lines of a test (e.g. benchmarks that need -O2).
+# in the first few lines of a test (e.g. benchmarks that need -O2). Flags that
+# only one compiler understands go in a `// TEST-FLAGS-<COMPILER>: ...` variant
+# (e.g. `// TEST-FLAGS-CLANG:`), which is appended after the shared flags when
+# building with that compiler and ignored by every other one.
 TEST_FLAGS_DIRECTIVE = "// TEST-FLAGS:"
 TEST_FLAGS_SCAN_LINES = 10
 
@@ -482,12 +484,19 @@ def discover_tests(
     return tests
 
 
-def parse_test_flags(test_file: Path) -> list[str]:
-    """Read an inline `// TEST-FLAGS: ...` directive from the top of a test.
+def parse_test_flags(test_file: Path, compiler_name: str) -> list[str]:
+    """Read the inline `// TEST-FLAGS: ...` directives from the top of a test.
 
     Lets a single test declare extra compile flags (e.g. `-O2` for benchmarks)
-    without special-casing it in the harness. Returns [] if none is present.
+    without special-casing it in the harness. Flags from the shared directive
+    come first, followed by those from the `// TEST-FLAGS-<COMPILER>:` variant
+    for `compiler_name`, so a test can ask for something only one compiler
+    spells (e.g. clang's `-fconstexpr-steps`) without breaking the others.
+    Returns [] if neither directive is present.
     """
+    specific_directive = f"{TEST_FLAGS_DIRECTIVE[:-1]}-{compiler_name.upper()}:"
+    shared: list[str] = []
+    specific: list[str] = []
     try:
         with test_file.open("r", encoding="utf-8", errors="replace") as handle:
             for _ in range(TEST_FLAGS_SCAN_LINES):
@@ -495,11 +504,13 @@ def parse_test_flags(test_file: Path) -> list[str]:
                 if not line:
                     break
                 stripped = line.strip()
-                if stripped.startswith(TEST_FLAGS_DIRECTIVE):
-                    return shlex.split(stripped[len(TEST_FLAGS_DIRECTIVE) :])
+                if stripped.startswith(specific_directive):
+                    specific = shlex.split(stripped[len(specific_directive) :])
+                elif stripped.startswith(TEST_FLAGS_DIRECTIVE):
+                    shared = shlex.split(stripped[len(TEST_FLAGS_DIRECTIVE) :])
     except OSError:
         pass
-    return []
+    return shared + specific
 
 
 def ensure_submodule(source_dir: Path, args: argparse.Namespace) -> None:
@@ -973,18 +984,16 @@ def compile_and_maybe_run(
     output_path = compiler_artifacts_dir / output_name
     ensure_directory(output_path.parent)
 
-    include_flags = ["-I", str(TEST_FRAMEWORK)]
     # Benchmarks pull in the shared headers from tests/ (mirrors the include
     # directories in benchmarks/CMakeLists.txt).
-    if base_dir == BENCHMARKS_DIR:
-        include_flags += ["-I", str(TESTS_DIR)]
+    include_flags = ["-I", str(TESTS_DIR)] if base_dir == BENCHMARKS_DIR else []
 
     compile_command = [
         str(spec.executable),
         f"-std={args.std}",
         *spec.cxxflags,
         *include_flags,
-        *parse_test_flags(test_file),
+        *parse_test_flags(test_file, spec.name),
         *args.extra_cxxflag,
         str(test_file),
         "-o",

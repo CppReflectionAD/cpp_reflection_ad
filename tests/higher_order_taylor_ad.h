@@ -4,6 +4,7 @@
 #include <meta>
 
 #include "autograd.h"
+#include "consteval_hashmap.h"
 
 namespace ad {
 
@@ -24,23 +25,32 @@ consteval std::size_t emit_raw(std::vector<Node> &out, OpKind op, std::size_t a,
   return s;
 }
 
-// If we have an existing node in the DAG with the same operation and operands,
-// we can reuse it instead of bloating the DAG with duplicate nodes. Const nodes
-// carry their value in `leaf` rather than in operands, so they only match when
-// the leaf matches too. `cond` and `guard` are also keyed on since a value
-// computed under one guard must not be reused under another.
-consteval std::size_t emit_node(std::vector<Node> &out, OpKind op,
-                                std::size_t a, std::size_t b, info leaf = ^^int,
-                                std::size_t cond = 0,
-                                std::size_t guard = UNGUARDED) {
-  for (const Node &n : out) {
-    if (n.op == op && n.a == a && n.b == b && n.cond == cond &&
-        n.guard == guard && (op != OpKind::Const || n.leaf == leaf)) {
-      return n.self;
+// Identity of a node emitted through `DAGBuilder::emit_node`: two nodes with
+// equal keys are the same computation and can share a slot. `cond` and `guard`
+// are part of the identity since a value computed under one guard must not be
+// reused under another, and `leaf` is, since Const nodes carry their value
+// there rather than in their operands.
+struct NodeKey {
+  OpKind op;
+  std::size_t a;
+  std::size_t b;
+  std::size_t cond;
+  std::size_t guard;
+  info leaf;
+
+  constexpr bool operator==(const NodeKey &) const = default;
+};
+
+struct NodeKeyHash {
+  consteval std::size_t operator()(const NodeKey &key) const {
+    std::size_t h = 1469598103934665603ull;
+    for (std::size_t v : {static_cast<std::size_t>(key.op), key.a, key.b,
+                          key.cond, key.guard}) {
+      h = (h ^ v) * 1099511628211ull;
     }
+    return h;
   }
-  return emit_raw(out, op, a, b, leaf, cond, guard);
-}
+};
 
 // This struct represents the shape of a truncated taylor polynomial, e.g.
 // f(x, y) = f(a, b) + fx(a, b)(x-a) + fy(a, b)(y-b) + 1/2 * (fxx(a,b)(x-a)^2 +
@@ -149,6 +159,25 @@ private:
   using ConstPool = std::vector<std::pair<double, std::size_t>>;
   ConstPool pool;
 
+  // Map from the identity of a node to the slot it was emitted into, over the
+  // nodes emitted through `emit_node`.
+  ConstevalHashMap<NodeKey, std::size_t, NodeKeyHash> memo;
+
+  // If we have an existing node in the DAG with the same operation and
+  // operands, we can reuse it instead of bloating the DAG with duplicate nodes.
+  consteval std::size_t emit_node(OpKind op, std::size_t a, std::size_t b,
+                                  info leaf = ^^int, std::size_t cond = 0,
+                                  std::size_t guard = UNGUARDED) {
+    const NodeKey key{op, a, b, cond, guard, leaf};
+    if (const std::size_t *slot = memo.find(key)) {
+      return *slot;
+    }
+    std::size_t slot = emit_raw(out, op, a, b, leaf, cond, guard);
+    // Add the new node to the map so we don't duplicate it in the future.
+    memo.insert(key, slot);
+    return slot;
+  }
+
 public:
   std::vector<Node> out;
 
@@ -174,7 +203,7 @@ public:
   // binary op, `slot2`), under the guard currently in force.
   consteval std::size_t emit_op_node(OpKind op, std::size_t slot1,
                                      std::size_t slot2 = 0) {
-    return emit_node(out, op, slot1, slot2, ^^int, 0, curGuard);
+    return emit_node(op, slot1, slot2, ^^int, 0, curGuard);
   }
 
   // Add a negation to the `out` vector, negating the existing node at position
@@ -272,7 +301,7 @@ public:
       // Both branches are the same, so no need to add a new node.
       return whenTrue;
     }
-    return emit_node(out, OpKind::Select, whenTrue, whenFalse, ^^int, cond,
+    return emit_node(OpKind::Select, whenTrue, whenFalse, ^^int, cond,
                      curGuard);
   }
 
