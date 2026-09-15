@@ -4,7 +4,18 @@
 # appear in `ctest` runs or the tests/ discovery glob.
 # ---------------------------------------------------------------------------
 
+# Detect compiler family
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    set(_is_clang TRUE)
+    set(_is_gcc FALSE)
+elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    set(_is_clang FALSE)
+    set(_is_gcc TRUE)
+else()
+    message(FATAL_ERROR "Unsupported compiler: ${CMAKE_CXX_COMPILER_ID}")
+endif()
+
+if(_is_clang)
     get_filename_component(_clang_bin "${CMAKE_CXX_COMPILER}" DIRECTORY)
     get_filename_component(_clang_root "${_clang_bin}" DIRECTORY)
     set(_reflect_flags
@@ -24,27 +35,42 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
             list(APPEND _reflect_flags -isysroot "${_sdk}")
         endif()
     endif()
-elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+elseif(_is_gcc)
     set(_reflect_flags -freflection -fconstexpr-ops-limit=96000000)
 else()
     message(FATAL_ERROR "Unsupported compiler: ${CMAKE_CXX_COMPILER_ID}")
 endif()
 
 # ---------------------------------------------------------------------------
-# Discover and register benchmarks
+# Helper: register one benchmark executable
 # ---------------------------------------------------------------------------
-file(GLOB _benchmarks CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
-
-foreach(_src IN LISTS _benchmarks)
-    get_filename_component(_name "${_src}" NAME_WE)
-    add_executable(${_name} "${_src}")
-    target_compile_options(${_name} PRIVATE
+function(add_reflect_benchmark name source)
+    add_executable(${name} ${source})
+    target_compile_options(${name} PRIVATE
         -std=c++2c
         ${_reflect_flags}
     )
-    target_include_directories(${_name} PRIVATE
+    target_include_directories(${name} PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}"
         "${CMAKE_SOURCE_DIR}/tests"
     )
     # Intentionally no add_test() — benchmarks are run manually.
+endfunction()
+
+# ---------------------------------------------------------------------------
+# Discover and register benchmarks
+# ---------------------------------------------------------------------------
+file(GLOB _common_benchmarks CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
+file(GLOB _clang_only_benchmarks CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/clang_only/*.cpp")
+
+foreach(_src IN LISTS _common_benchmarks)
+    get_filename_component(_name "${_src}" NAME_WE)
+    add_reflect_benchmark(${_name} "${_src}")
 endforeach()
+
+if(_is_clang)
+    foreach(_src IN LISTS _clang_only_benchmarks)
+        get_filename_component(_name "${_src}" NAME_WE)
+        add_reflect_benchmark(${_name} "${_src}")
+    endforeach()
+endif()

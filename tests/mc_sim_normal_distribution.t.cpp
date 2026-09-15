@@ -2,6 +2,7 @@
 #include <test_simple_include.hpp>
 
 #include <cmath>
+#include <limits>
 #include <vector>
 
 namespace {
@@ -65,7 +66,8 @@ int main() {
     }
   }
 
-  // Strict check in the central range where round-trip is expected to be tight.
+  // Strict check in the central range where round-trip is expected to be
+  // tight.
   constexpr int kXCentralSteps = 200000;
   constexpr double x_central_min = -6.0;
   constexpr double x_central_max = 6.0;
@@ -104,6 +106,37 @@ int main() {
 
   EXPECT_TRUE(worst_x_wide.abs_error <= kXtolWide);
   EXPECT_EQUAL(x_wide_failures, 0);
+
+  // Overflow-stress checks for the normal PDF implementation.
+  // Very large magnitudes can overflow x*x before exp; ensure we still get a
+  // well-defined finite tail value.
+  const std::vector<double> overflow_inputs_double = {
+      std::sqrt(std::numeric_limits<double>::max()),
+      -std::sqrt(std::numeric_limits<double>::max()),
+      std::numeric_limits<double>::max(),
+      -std::numeric_limits<double>::max(),
+  };
+
+  for (double x : overflow_inputs_double) {
+    const double pdf = mcsim::PDF(x);
+    EXPECT_TRUE(std::isfinite(pdf));
+    EXPECT_TRUE(pdf >= 0.0);
+    EXPECT_EQUAL(pdf, 0.0);
+  }
+
+  const std::vector<float> overflow_inputs_float = {
+      std::sqrt(std::numeric_limits<float>::max()),
+      -std::sqrt(std::numeric_limits<float>::max()),
+      std::numeric_limits<float>::max(),
+      -std::numeric_limits<float>::max(),
+  };
+
+  for (float x : overflow_inputs_float) {
+    const double pdf = mcsim::PDF(static_cast<double>(x));
+    EXPECT_TRUE(std::isfinite(pdf));
+    EXPECT_TRUE(pdf >= 0.0);
+    EXPECT_EQUAL(pdf, 0.0);
+  }
 
   TEST_END;
 }
