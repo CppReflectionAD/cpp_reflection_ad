@@ -156,22 +156,23 @@ std::array<double, 3> monte_carlo_engine(double spot0, double r, double vol,
       z = mcsim::CDF_inverse(unif(rng));
     }
 
-    double spot_before_last = spot0;
     double factors_except_last = 1.0;
     for (std::size_t step = 0; step + 1 < sim_per_path; ++step) {
       const double factor =
           evolve_black_scholes_normal(r, vol, dts[step], normals_prefix[step]);
-      spot_before_last *= factor;
       factors_except_last *= factor;
     }
 
     double spot = g_last_step(spot0, factors_except_last, r, vol, dts.back(),
                               normals_prefix.back());
-    payoff_sum += static_cast<double>([:FinalPayoffFn:](spot));
+    payoff_sum += [:FinalPayoffFn:](spot);
 
-    double const spot_d = ad::forward_derivative<^^g_last_step, 0>(
-        spot0, factors_except_last, r, vol, dts.back(), normals_prefix.back());
-    payoff_delta_sum += spot_d * ad::forward_derivative<FinalPayoffFn, 0>(spot);
+    // we cannot yet reflect the composed payoff function, so we apply chain
+    // rule manually here
+    payoff_delta_sum += ad::forward_derivative<^^g_last_step, 0>(
+                            spot0, factors_except_last, r, vol, dts.back(),
+                            normals_prefix.back()) *
+                        ad::forward_derivative<FinalPayoffFn, 0>(spot);
 
     // Use runtime version to accept dynamic parameters
     constexpr auto discontinuities =
@@ -180,10 +181,9 @@ std::array<double, 3> monte_carlo_engine(double spot0, double r, double vol,
     for (std::size_t i = 0; i < discontinuities.size(); ++i) {
       // Tweak the last draw so terminal spot lands exactly on strike, using
       // the generic inverse machinery rather than an explicit closed form.
-      const double target_factor = discontinuities.point(i) / spot_before_last;
-      const double z_star =
-          ad::inverse_of_wrt<^^evolve_black_scholes_normal, 3, double>(
-              target_factor, r, vol, dts.back());
+      const double z_star = ad::inverse_of_wrt<^^g_last_step, 5>(
+          discontinuities.point(i), spot0, factors_except_last, r, vol,
+          dts.back());
       const double normal_pdf = mcsim::PDF(z_star);
 
       // Sifting term written through the normal draw z:
