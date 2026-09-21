@@ -583,9 +583,13 @@ def build_clang(spec: CompilerSpec, args: argparse.Namespace) -> None:
         )
 
     # The `clang` target also produces the clang++/clang-cl symlinks; there is
-    # no separate `clang++` ninja target.
-    log(f"[clang] building clang (+ clang++ symlink) with ninja (-j{args.jobs})...")
-    build = ["ninja", "-C", str(spec.build_dir), "-j", str(args.jobs), "clang"]
+    # no separate `clang++` ninja target. On Darwin, build the standalone LTO
+    # target as well so the driver can find libLTO.dylib next to the toolchain.
+    clang_targets = ["clang"]
+    if sys.platform == "darwin":
+        clang_targets.append("LTO")
+    log(f"[clang] building {' + '.join(clang_targets)} with ninja (-j{args.jobs})...")
+    build = ["ninja", "-C", str(spec.build_dir), "-j", str(args.jobs), *clang_targets]
     require_success(
         run_command_streamed(build, cwd=ROOT, verbose=args.verbose), "clang build"
     )

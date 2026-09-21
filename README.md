@@ -29,9 +29,10 @@ binaries, and reports compile vs runtime failures. A test may add flags via a
 The repo is **self-contained**: `--build-compilers` builds clang from its own
 `clang-p2996` submodule into `build/` — no externally pre-built compiler needed.
 It checks out the submodule, builds clang (host `clang` + `lld`), builds the
-`libc++`/`libc++abi`/`libunwind` runtimes with that clang, and syncs the fork's
-`<meta>` header. Host prerequisites: `git`, `cmake`, `ninja`, host
-`clang`/`clang++`, `ld.lld`.
+Darwin `LTO` target as well on macOS so `libLTO.dylib` is present for the local
+toolchain driver, builds the `libc++`/`libc++abi`/`libunwind` runtimes with that
+clang, and syncs the fork's `<meta>` header. Host prerequisites: `git`, `cmake`,
+`ninja`, host `clang`/`clang++`, `ld.lld`.
 
 ```bash
 # one-time: build clang + runtimes into build/clang-p2996 (slow — builds LLVM)
