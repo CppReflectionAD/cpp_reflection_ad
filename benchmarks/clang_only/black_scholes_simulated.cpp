@@ -14,9 +14,23 @@
 #include "../../tests/mc_sim/black_scholes.hpp"
 #include "../../tests/mc_sim/evolve_black_scholes.hpp"
 
+template <double Width> double smooth_dirac(double x) {
+  static_assert(Width > 0.0, "Smoothing width must be positive");
+
+  constexpr double inv_sqrt_pi =
+      0.564189583547756286948079451560772585844050629329;
+  const double scaled = x / Width;
+  return inv_sqrt_pi * std::exp(-(scaled * scaled)) / Width;
+}
+
 // first case: digital call option
 template <double Strike = 100.0> double digital_call_payoff(double spot) {
   return (spot > Strike) ? 1.0 : 0.0;
+}
+
+template <double Strike = 100.0, double Width = 1.0>
+double digital_call_payoff_derivative(double spot) {
+  return smooth_dirac<Width>(spot - Strike);
 }
 
 template <double Strike = 100.0>
@@ -33,6 +47,11 @@ template <double Strike = 100.0> double digital_and_call_payoff(double spot) {
   return (spot > Strike) ? (1.0 + spot - Strike) : 0.0;
 }
 
+template <double Strike = 100.0, double Width = 1.0>
+double digital_and_call_payoff_derivative(double spot) {
+  return ((spot > Strike) ? 1.0 : 0.0) + smooth_dirac<Width>(spot - Strike);
+}
+
 template <double Strike = 100.0>
 double digital_and_call_closed_form(double spot0, double rate, double vol,
                                     double maturity_years) {
@@ -45,6 +64,12 @@ double digital_and_call_closed_form(double spot0, double rate, double vol,
 template <double Strike1 = 99.0, double Strike2 = 101.0>
 double double_digital_payoff(double spot) {
   return ((spot > Strike1) ? 1.0 : 0.0) - ((spot > Strike2) ? 1.0 : 0.0);
+}
+
+template <double Strike1 = 99.0, double Strike2 = 101.0, double Width = 1.0>
+double double_digital_payoff_derivative(double spot) {
+  return smooth_dirac<Width>(spot - Strike1) -
+         smooth_dirac<Width>(spot - Strike2);
 }
 
 template <double Strike1 = 99.0, double Strike2 = 101.0>
@@ -61,6 +86,12 @@ template <double Strike1 = 99.0, double Strike2 = 101.0>
 double double_digital_butterfly_payoff(double spot) {
   return ((spot > Strike1) ? -1.0 : (Strike1 - spot)) +
          ((spot > Strike2) ? 1.0 + (spot - Strike2) : 0.0);
+}
+
+template <double Strike1 = 99.0, double Strike2 = 101.0, double Width = 1.0>
+double double_digital_butterfly_payoff_derivative(double spot) {
+  return ((spot < Strike1) ? -1.0 : 0.0) - smooth_dirac<Width>(spot - Strike1) +
+         smooth_dirac<Width>(spot - Strike2) + ((spot > Strike2) ? 1.0 : 0.0);
 }
 
 template <double Strike1 = 99.0, double Strike2 = 101.0>
@@ -106,6 +137,57 @@ inline double g_last_step(double spot0, double factors_except_last, double r,
                           double vol, double dt_last, double normal_z) {
   return spot0 * factors_except_last *
          evolve_black_scholes_normal(r, vol, dt_last, normal_z);
+}
+
+template <std::meta::info FinalPayoffFn, std::meta::info FinalPayoffDeltaFn>
+std::array<double, 2> monte_carlo_engine_smoothed_dirac(
+    double spot0, double r, double vol, double maturity, std::size_t num_paths,
+    std::size_t sim_per_path, std::uint32_t seed) {
+  if (spot0 <= 0.0 || vol <= 0.0 || maturity <= 0.0 || num_paths == 0 ||
+      sim_per_path == 0) {
+    return {0.0, 0.0};
+  }
+
+  std::mt19937 rng(seed);
+  std::uniform_real_distribution<double> unif(0.0, 1.0);
+
+  const double discount = std::exp(-r * maturity);
+  const double dt_regular = maturity / static_cast<double>(sim_per_path);
+  const double dt_stub =
+      maturity - dt_regular * static_cast<double>(sim_per_path - 1);
+  std::vector<double> dts(sim_per_path, dt_regular);
+  dts.back() = dt_stub;
+
+  double payoff_sum = 0.0;
+  double payoff_delta_sum = 0.0;
+  for (std::size_t path = 0; path < num_paths; ++path) {
+    std::vector<double> normals_prefix(sim_per_path, 0.0);
+
+    for (double &z : normals_prefix) {
+      z = mcsim::CDF_inverse(unif(rng));
+    }
+
+    double spot_before_last = spot0;
+    double factors_except_last = 1.0;
+    for (std::size_t step = 0; step + 1 < sim_per_path; ++step) {
+      const double factor =
+          evolve_black_scholes_normal(r, vol, dts[step], normals_prefix[step]);
+      spot_before_last *= factor;
+      factors_except_last *= factor;
+    }
+
+    double spot = g_last_step(spot0, factors_except_last, r, vol, dts.back(),
+                              normals_prefix.back());
+    payoff_sum += static_cast<double>([:FinalPayoffFn:](spot));
+
+    double const spot_d = ad::forward_derivative<^^g_last_step, 0>(
+        spot0, factors_except_last, r, vol, dts.back(), normals_prefix.back());
+    payoff_delta_sum +=
+        spot_d * static_cast<double>([:FinalPayoffDeltaFn:](spot));
+  }
+
+  return {discount * (payoff_sum / static_cast<double>(num_paths)),
+          discount * (payoff_delta_sum / static_cast<double>(num_paths))};
 }
 
 template <std::meta::info FinalPayoffFn>
@@ -225,67 +307,84 @@ int main() {
   const double maturity_years = year_fraction_act365(start, maturity);
 
   // Templated function to run payoff test with closed-form and payoff functions
-  auto run_payoff_test =
-      [&]<std::meta::info ClosedFormFn, std::meta::info PayoffFn>(
-          const char *label) {
-        const double cf_pv = [:ClosedFormFn:](spot0, rate, vol, maturity_years);
-        const double cf_delta = ad::forward_derivative<ClosedFormFn, 0>(
-            spot0, rate, vol, maturity_years);
+  auto run_payoff_test = [&]<std::meta::info ClosedFormFn,
+                             std::meta::info PayoffFn,
+                             std::meta::info PayoffDeltaFn>(const char *label) {
+    const double cf_pv = [:ClosedFormFn:](spot0, rate, vol, maturity_years);
+    const double cf_delta = ad::forward_derivative<ClosedFormFn, 0>(
+        spot0, rate, vol, maturity_years);
 
-        // Finite difference delta
-        const double h = 1e-8;
-        const double cf_pv_up = [:ClosedFormFn:](spot0 + h, rate, vol,
-                                                 maturity_years);
-        const double cf_pv_down = [:ClosedFormFn:](spot0 - h, rate, vol,
-                                                   maturity_years);
-        const double cf_delta_fd = (cf_pv_up - cf_pv_down) / (2.0 * h);
+    // Finite difference delta
+    const double h = 1e-8;
+    const double cf_pv_up = [:ClosedFormFn:](spot0 + h, rate, vol,
+                                             maturity_years);
+    const double cf_pv_down = [:ClosedFormFn:](spot0 - h, rate, vol,
+                                               maturity_years);
+    const double cf_delta_fd = (cf_pv_up - cf_pv_down) / (2.0 * h);
 
-        const auto [mc_pv, mc_delta, mc_correction] =
-            monte_carlo_engine<PayoffFn>(spot0, rate, vol, maturity_years,
-                                         num_paths, sim_per_path, seed);
+    const auto [mc_pv, mc_delta, mc_correction] = monte_carlo_engine<PayoffFn>(
+        spot0, rate, vol, maturity_years, num_paths, sim_per_path, seed);
+    const double mc_delta_corrected = mc_delta + mc_correction;
 
-        std::cout.precision(std::numeric_limits<double>::max_digits10);
-        std::cout << "Closed-form (" << label << ") : " << cf_pv << "\n";
-        std::cout << "Closed-form delta (analytic) : " << cf_delta << "\n";
-        std::cout << "Closed-form delta (FD)       : " << cf_delta_fd << "\n";
-        std::cout << "MC " << label << " price      : " << mc_pv << "\n";
-        std::cout << "MC Delta without correction: " << mc_delta << "\n";
-        std::cout << "MC Correction term         : " << mc_correction << "\n";
-        std::cout << "MC Delta                   : " << mc_delta + mc_correction
-                  << "\n";
-        std::cout << "Relative % PV error: "
-                  << (std::abs(mc_pv - cf_pv) / std::abs(cf_pv)) * 100 << "%\n";
-        std::cout << "Relative % Delta error: "
-                  << (std::abs((mc_delta + mc_correction) - cf_delta) /
-                      std::abs(cf_delta)) *
-                         100
-                  << "%\n";
-      };
+    const auto [mc_pv_smoothed, mc_delta_smoothed] =
+        monte_carlo_engine_smoothed_dirac<PayoffFn, PayoffDeltaFn>(
+            spot0, rate, vol, maturity_years, num_paths, sim_per_path, seed);
+
+    std::cout.precision(std::numeric_limits<double>::max_digits10);
+    std::cout << "Closed-form (" << label << ") : " << cf_pv << "\n";
+    std::cout << "Closed-form delta (analytic) : " << cf_delta << "\n";
+    std::cout << "Closed-form delta (FD)       : " << cf_delta_fd << "\n";
+    std::cout << "MC " << label << " price (legacy)        : " << mc_pv << "\n";
+    std::cout << "MC Delta (raw pathwise)      : " << mc_delta << "\n";
+    std::cout << "MC Correction term           : " << mc_correction << "\n";
+    std::cout << "MC Delta (legacy corrected)  : " << mc_delta_corrected
+              << "\n";
+    std::cout << "MC " << label << " price (smoothed)      : " << mc_pv_smoothed
+              << "\n";
+    std::cout << "MC Delta (smoothed pathwise) : " << mc_delta_smoothed << "\n";
+    std::cout << "Relative % PV error (legacy): "
+              << (std::abs(mc_pv - cf_pv) / std::abs(cf_pv)) * 100 << "%\n";
+    std::cout << "Relative % PV error (smooth): "
+              << (std::abs(mc_pv_smoothed - cf_pv) / std::abs(cf_pv)) * 100
+              << "%\n";
+    std::cout << "Relative % Delta error (legacy): "
+              << (std::abs(mc_delta_corrected - cf_delta) /
+                  std::abs(cf_delta)) *
+                     100
+              << "%\n";
+    std::cout << "Relative % Delta error (smooth): "
+              << (std::abs(mc_delta_smoothed - cf_delta) / std::abs(cf_delta)) *
+                     100
+              << "%\n";
+    std::cout << "\n";
+  };
 
   std::cout << "=== Digital Call ===\n\n";
 
   run_payoff_test.template
-  operator()<^^digital_call_closed_form<100.0>, ^^digital_call_payoff<100.0>>(
-      "digital and call");
+  operator()<^^digital_call_closed_form<100.0>, ^^digital_call_payoff<100.0>,
+             ^^digital_call_payoff_derivative<100.0>>("digital call");
 
   std::cout << "=== Digital Call And Call ===\n\n";
 
-  run_payoff_test.template operator()<^^digital_and_call_closed_form<100.0>,
-                                      ^^digital_and_call_payoff<100.0>>(
-      "digital and call");
+  run_payoff_test.template operator()<
+      ^^digital_and_call_closed_form<100.0>, ^^digital_and_call_payoff<100.0>,
+      ^^digital_and_call_payoff_derivative<100.0>>("digital and call");
 
   std::cout << "=== Double Digital ===\n\n";
 
-  run_payoff_test.template operator()<^^double_digital_closed_form<99.0, 101.0>,
-                                      ^^double_digital_payoff<99.0, 101.0>>(
-      "double digital");
+  run_payoff_test.template
+  operator()<^^double_digital_closed_form<99.0, 101.0>,
+             ^^double_digital_payoff<99.0, 101.0>,
+             ^^double_digital_payoff_derivative<99.0, 101.0>>("double digital");
 
   std::cout << "=== Double Digital Butterfly===\n\n";
 
-  run_payoff_test
-      .template operator()<^^double_digital_butterfly_closed_form<99.0, 101.0>,
-                           ^^double_digital_butterfly_payoff<99.0, 101.0>>(
-          "double digital butterfly");
+  run_payoff_test.template
+  operator()<^^double_digital_butterfly_closed_form<99.0, 101.0>,
+             ^^double_digital_butterfly_payoff<99.0, 101.0>,
+             ^^double_digital_butterfly_payoff_derivative<99.0, 101.0>>(
+      "double digital butterfly");
 
   bool show_convergence = false;
   if (show_convergence) {
@@ -311,19 +410,17 @@ int main() {
         500000, 1000000, 2000000, 4000000, 8000000, 10000000, 15000000};
 
     for (std::size_t paths : path_counts) {
-      const auto [mc_pv, mc_delta, mc_correction] =
-          monte_carlo_engine<^^double_digital_payoff<99.0, 101.0>>(
-              spot0, rate, vol, maturity_years, paths, sim_per_path, seed);
+      const auto [mc_pv, mc_delta] = monte_carlo_engine_smoothed_dirac<
+          ^^double_digital_payoff<99.0, 101.0>,
+          ^^double_digital_payoff_derivative<99.0, 101.0>>(
+          spot0, rate, vol, maturity_years, paths, sim_per_path, seed);
       const double pv_error_pct =
           (std::abs(mc_pv - cf_pv_spread1) / cf_pv_spread1) * 100;
       const double delta_error_pct =
-          (std::abs((mc_delta + mc_correction) - cf_delta_spread1) /
-           cf_delta_spread1) *
-          100;
+          (std::abs(mc_delta - cf_delta_spread1) / cf_delta_spread1) * 100;
 
       std::cout << paths << "\t\t" << mc_pv << "\t" << pv_error_pct << "%\t\t"
-                << (mc_delta + mc_correction) << "\t" << delta_error_pct
-                << "%\n";
+                << mc_delta << "\t" << delta_error_pct << "%\n";
     }
     std::cout << std::defaultfloat;
   }
