@@ -533,11 +533,6 @@ int main(int argc, char **argv) {
                            ^^nonlinear_digital_call_payoff_derivative<100.0>>(
           "nonlinear digital call");
 
-  std::cout << "=== Nonlinear Digital Call (no closed form) ===\n\n";
-
-  run_mc_only_payoff_test.template
-  operator()<^^nonlinear_digital_call_payoff<100.0>>("nonlinear digital call");
-
   bool show_convergence = false;
   if (show_convergence) {
     std::cout << "=== Convergence Analysis ===\n\n";
