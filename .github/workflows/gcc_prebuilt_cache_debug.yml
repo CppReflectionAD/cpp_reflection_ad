@@ -1,4 +1,5 @@
-# actions/cache variant for reproducing the gcc reflection -O2 + -g failure.
+# actions/cache variant for reproducing the gcc reflection debug-build failure
+# through the CMake path used by this repository.
 name: Test GCC (Prebuilt Cache Debug)
 
 on:
@@ -65,16 +66,11 @@ jobs:
             -DCMAKE_CXX_COMPILER=/opt/toolchain-gcc/bin/g++ \
             "-DCMAKE_BUILD_RPATH=${GCC_LIBSTDCPP_DIR};${GCC_LIBGCC_DIR}"
 
-      - name: Direct repro compile (-O2 + -g)
-        run: |
-          set -euo pipefail
-          /opt/toolchain-gcc/bin/g++ \
-            -I"$GITHUB_WORKSPACE/tests" \
-            -I"$GITHUB_WORKSPACE/test_simple" \
-            -O2 -g -DNDEBUG \
-            -std=c++2c -std=c++26 -freflection \
-            -c "$GITHUB_WORKSPACE/tests/is_invertible.t.cpp" \
-            -o /tmp/is_invertible-debug-repro.o
-
-      - name: Build known failing target (gcc cached relwithdebinfo)
+      - name: Build known failing target via CMake
         run: cmake --build build/cmake-debug --target is_invertible --parallel
+
+      - name: Build tests (gcc cached relwithdebinfo)
+        run: cmake --build build/cmake-debug --parallel
+
+      - name: Test AD with CTest
+        run: ctest --test-dir build/cmake-debug --output-on-failure
