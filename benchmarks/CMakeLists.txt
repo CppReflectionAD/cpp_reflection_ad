@@ -36,7 +36,13 @@ if(_is_clang)
         endif()
     endif()
 elseif(_is_gcc)
-    set(_reflect_flags -freflection -fconstexpr-ops-limit=96000000)
+    set(_reflect_flags
+        -freflection
+        -fconstexpr-ops-limit=96000000
+        # Work around a gcc-reflection bug where -O2 combined with -g breaks
+        # consteval statement reflection in the shared DAG/reflection code.
+        -g0
+    )
 else()
     message(FATAL_ERROR "Unsupported compiler: ${CMAKE_CXX_COMPILER_ID}")
 endif()

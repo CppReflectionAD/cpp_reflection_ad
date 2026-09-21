@@ -41,6 +41,9 @@ if(_is_clang)
 else() # GCC
     set(_reflect_flags
         -freflection
+        # Work around a gcc-reflection bug where -O2 combined with -g breaks
+        # consteval statement reflection in is_invertible/autograd.
+        -g0
     )
 endif()
 
