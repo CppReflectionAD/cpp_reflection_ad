@@ -1,0 +1,75 @@
+# actions/cache variant for showing the clang reflection toolchain works
+# through the same CMake RelWithDebInfo path used for the GCC debug check.
+name: Test Clang (Prebuilt Cache Debug)
+
+on:
+  push:
+    branches: [ "main" ]
+    paths-ignore:
+      - "clang-p2996"
+      - ".github/workflows/toolchain-cache-clang.yml"
+  workflow_run:
+    workflows: [ "Build Clang Toolchain (Cache)" ]
+    types: [ completed ]
+  pull_request:
+    paths-ignore:
+      - "clang-p2996"
+      - ".github/workflows/toolchain-cache-clang.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-debug:
+    if: ${{ github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'workflow_run' &&
+            github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Compute cache key
+        id: key
+        shell: bash
+        run: |
+          set -euo pipefail
+          CLANG_SHA="$(git rev-parse HEAD:clang-p2996)"
+          BUILD_INPUT_HASH="$(sha256sum .github/workflows/toolchain-cache-clang.yml | sha256sum | cut -d' ' -f1)"
+          CACHE_KEY="clang-${{ runner.os }}-${{ runner.arch }}-${CLANG_SHA:0:12}-${BUILD_INPUT_HASH:0:12}"
+          echo "cache_key=${CACHE_KEY}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore clang toolchain from cache
+        id: cache
+        uses: actions/cache@v6
+        with:
+          path: /opt/toolchain-clang
+          key: ${{ steps.key.outputs.cache_key }}
+
+      - name: Fail fast on cache miss
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          echo "Clang toolchain not in cache: ${{ steps.key.outputs.cache_key }}"
+          echo "Run workflow 'Build Clang Toolchain (Cache)' first to populate the cache."
+          exit 1
+
+      - name: Configure CMake (clang cached relwithdebinfo)
+        run: |
+          cmake -S . -B build/cmake-clang-debug \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_CXX_COMPILER=/opt/toolchain-clang/bin/clang++ \
+            -DCMAKE_CXX_FLAGS="-stdlib=libc++" \
+            -DCMAKE_EXE_LINKER_FLAGS="-stdlib=libc++ -L/opt/toolchain-clang/lib -Wl,-rpath,/opt/toolchain-clang/lib"
+
+      - name: Build representative target via CMake
+        run: cmake --build build/cmake-clang-debug --target is_invertible --parallel
+
+      - name: Build tests (clang cached relwithdebinfo)
+        run: cmake --build build/cmake-clang-debug --parallel
+
+      - name: Test AD with CTest
+        run: ctest --test-dir build/cmake-clang-debug --output-on-failure
