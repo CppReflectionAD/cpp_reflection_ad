@@ -47,6 +47,23 @@ double digital_call_closed_form(double spot0, double rate, double vol,
   return discount * digital_call_price(forward, Strike, vol, maturity_years);
 }
 
+template <double Strike = 100.0> double digital_put_payoff(double spot) {
+  return (spot < Strike) ? 1.0 : 0.0;
+}
+
+template <double Strike = 100.0>
+double digital_put_payoff_derivative(double spot) {
+  return -smooth_dirac(spot - Strike, g_smoothed_dirac_width);
+}
+
+template <double Strike = 100.0>
+double digital_put_closed_form(double spot0, double rate, double vol,
+                               double maturity_years) {
+  const double forward = spot0 * std::exp(rate * maturity_years);
+  const double discount = std::exp(-rate * maturity_years);
+  return discount * digital_put_price(forward, Strike, vol, maturity_years);
+}
+
 // second case: digital AND call
 template <double Strike = 100.0> double digital_and_call_payoff(double spot) {
   return (spot > Strike) ? (1.0 + spot - Strike) : 0.0;
@@ -113,6 +130,21 @@ double double_digital_butterfly_closed_form(double spot0, double rate,
           -digital_call_price(forward, Strike1, vol, maturity_years) +
           digital_call_price(forward, Strike2, vol, maturity_years) +
           call_price(forward, Strike2, vol, maturity_years));
+}
+
+template <double Strike = 100.0>
+double nonlinear_digital_call_payoff(double spot) {
+  return (spot > Strike) ? ((spot + 3.0) / (spot + 2.0)) : 0.0;
+}
+
+template <double Strike = 100.0>
+double nonlinear_digital_call_payoff_derivative(double spot) {
+  const double jump = (Strike + 3.0) / (Strike + 2.0);
+  const double smooth_jump =
+      smooth_dirac(spot - Strike, g_smoothed_dirac_width);
+  const double regular_part =
+      (spot > Strike) ? (-1.0 / ((spot + 2.0) * (spot + 2.0))) : 0.0;
+  return regular_part + jump * smooth_jump;
 }
 
 using TimePoint = std::chrono::system_clock::time_point;
@@ -351,6 +383,7 @@ int main(int argc, char **argv) {
   auto run_payoff_test = [&]<std::meta::info ClosedFormFn,
                              std::meta::info PayoffFn,
                              std::meta::info PayoffDeltaFn>(const char *label) {
+    const double mc_bump = 1e-2;
     const double cf_pv = [:ClosedFormFn:](spot0, rate, vol, maturity_years);
     const double cf_delta = ad::forward_derivative<ClosedFormFn, 0>(
         spot0, rate, vol, maturity_years);
@@ -371,6 +404,14 @@ int main(int argc, char **argv) {
         monte_carlo_engine_smoothed_dirac<PayoffFn, PayoffDeltaFn>(
             spot0, rate, vol, maturity_years, num_paths, sim_per_path, seed);
 
+    const auto [mc_pv_up, _, __] =
+        monte_carlo_engine<PayoffFn>(spot0 + mc_bump, rate, vol, maturity_years,
+                                     num_paths, sim_per_path, seed);
+    const auto [mc_pv_down, ___, ____] =
+        monte_carlo_engine<PayoffFn>(spot0 - mc_bump, rate, vol, maturity_years,
+                                     num_paths, sim_per_path, seed);
+    const double mc_delta_bump = (mc_pv_up - mc_pv_down) / (2.0 * mc_bump);
+
     std::cout.precision(std::numeric_limits<double>::max_digits10);
     std::cout << "Closed-form (" << label << ") : " << cf_pv << "\n";
     std::cout << "Closed-form delta (analytic) : " << cf_delta << "\n";
@@ -383,6 +424,7 @@ int main(int argc, char **argv) {
     std::cout << "MC " << label << " price (smoothed)      : " << mc_pv_smoothed
               << "\n";
     std::cout << "MC Delta (smoothed pathwise) : " << mc_delta_smoothed << "\n";
+    std::cout << "MC Delta (bump/reprice)      : " << mc_delta_bump << "\n";
     std::cout << "Relative % PV error (legacy): "
               << (std::abs(mc_pv - cf_pv) / std::abs(cf_pv)) * 100 << "%\n";
     std::cout << "Relative % PV error (smooth): "
@@ -397,6 +439,57 @@ int main(int argc, char **argv) {
               << (std::abs(mc_delta_smoothed - cf_delta) / std::abs(cf_delta)) *
                      100
               << "%\n";
+    std::cout << "Legacy corrected vs bump error %: "
+              << (std::abs(mc_delta_corrected - mc_delta_bump) /
+                  std::max(1e-16, std::abs(mc_delta_bump))) *
+                     100
+              << "%\n";
+    std::cout << "Smoothed pathwise vs bump error %: "
+              << (std::abs(mc_delta_smoothed - mc_delta_bump) /
+                  std::max(1e-16, std::abs(mc_delta_bump))) *
+                     100
+              << "%\n";
+    std::cout << "\n";
+  };
+
+  auto run_mc_only_payoff_test = [&]<std::meta::info PayoffFn,
+                                     std::meta::info PayoffDeltaFn>(
+                                     const char *label) {
+    const double mc_bump = 1e-2;
+    const auto [mc_pv, mc_delta, mc_correction] = monte_carlo_engine<PayoffFn>(
+        spot0, rate, vol, maturity_years, num_paths, sim_per_path, seed);
+    const double mc_delta_corrected = mc_delta + mc_correction;
+    const auto [mc_pv_smoothed, mc_delta_smoothed] =
+        monte_carlo_engine_smoothed_dirac<PayoffFn, PayoffDeltaFn>(
+            spot0, rate, vol, maturity_years, num_paths, sim_per_path, seed);
+    const auto [mc_pv_up, _, __] =
+        monte_carlo_engine<PayoffFn>(spot0 + mc_bump, rate, vol, maturity_years,
+                                     num_paths, sim_per_path, seed);
+    const auto [mc_pv_down, ___, ____] =
+        monte_carlo_engine<PayoffFn>(spot0 - mc_bump, rate, vol, maturity_years,
+                                     num_paths, sim_per_path, seed);
+    const double mc_delta_bump = (mc_pv_up - mc_pv_down) / (2.0 * mc_bump);
+
+    std::cout.precision(std::numeric_limits<double>::max_digits10);
+    std::cout << "MC " << label << " price (legacy)        : " << mc_pv << "\n";
+    std::cout << "MC Delta (raw pathwise)      : " << mc_delta << "\n";
+    std::cout << "MC Correction term           : " << mc_correction << "\n";
+    std::cout << "MC Delta (legacy corrected)  : " << mc_delta_corrected
+              << "\n";
+    std::cout << "MC " << label << " price (smoothed)      : " << mc_pv_smoothed
+              << "\n";
+    std::cout << "MC Delta (smoothed pathwise) : " << mc_delta_smoothed << "\n";
+    std::cout << "MC Delta (bump/reprice)      : " << mc_delta_bump << "\n";
+    std::cout << "Legacy corrected vs bump error %: "
+              << (std::abs(mc_delta_corrected - mc_delta_bump) /
+                  std::max(1e-16, std::abs(mc_delta_bump))) *
+                     100
+              << "%\n";
+    std::cout << "Smoothed pathwise vs bump error %: "
+              << (std::abs(mc_delta_smoothed - mc_delta_bump) /
+                  std::max(1e-16, std::abs(mc_delta_bump))) *
+                     100
+              << "%\n";
     std::cout << "\n";
   };
 
@@ -405,6 +498,12 @@ int main(int argc, char **argv) {
   run_payoff_test.template
   operator()<^^digital_call_closed_form<100.0>, ^^digital_call_payoff<100.0>,
              ^^digital_call_payoff_derivative<100.0>>("digital call");
+
+  std::cout << "=== Digital Put (negative slope in Heaviside) ===\n\n";
+
+  run_payoff_test.template
+  operator()<^^digital_put_closed_form<100.0>, ^^digital_put_payoff<100.0>,
+             ^^digital_put_payoff_derivative<100.0>>("digital put");
 
   std::cout << "=== Digital Call And Call ===\n\n";
 
@@ -426,6 +525,13 @@ int main(int argc, char **argv) {
              ^^double_digital_butterfly_payoff<99.0, 101.0>,
              ^^double_digital_butterfly_payoff_derivative<99.0, 101.0>>(
       "double digital butterfly");
+
+  std::cout << "=== Nonlinear Digital Call (no closed form) ===\n\n";
+
+  run_mc_only_payoff_test
+      .template operator()<^^nonlinear_digital_call_payoff<100.0>,
+                           ^^nonlinear_digital_call_payoff_derivative<100.0>>(
+          "nonlinear digital call");
 
   bool show_convergence = false;
   if (show_convergence) {
