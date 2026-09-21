@@ -261,22 +261,23 @@ std::array<double, 3> monte_carlo_engine(double spot0, double r, double vol,
       z = mcsim::CDF_inverse(unif(rng));
     }
 
-    double spot_before_last = spot0;
     double factors_except_last = 1.0;
     for (std::size_t step = 0; step + 1 < sim_per_path; ++step) {
       const double factor =
           evolve_black_scholes_normal(r, vol, dts[step], normals_prefix[step]);
-      spot_before_last *= factor;
       factors_except_last *= factor;
     }
 
     double spot = g_last_step(spot0, factors_except_last, r, vol, dts.back(),
                               normals_prefix.back());
-    payoff_sum += static_cast<double>([:FinalPayoffFn:](spot));
+    payoff_sum += [:FinalPayoffFn:](spot);
 
-    double const spot_d = ad::forward_derivative<^^g_last_step, 0>(
-        spot0, factors_except_last, r, vol, dts.back(), normals_prefix.back());
-    payoff_delta_sum += spot_d * ad::forward_derivative<FinalPayoffFn, 0>(spot);
+    // we cannot yet reflect the composed payoff function, so we apply chain
+    // rule manually here
+    payoff_delta_sum += ad::forward_derivative<^^g_last_step, 0>(
+                            spot0, factors_except_last, r, vol, dts.back(),
+                            normals_prefix.back()) *
+                        ad::forward_derivative<FinalPayoffFn, 0>(spot);
 
     // Use runtime version to accept dynamic parameters
     constexpr auto discontinuities =
@@ -285,10 +286,9 @@ std::array<double, 3> monte_carlo_engine(double spot0, double r, double vol,
     for (std::size_t i = 0; i < discontinuities.size(); ++i) {
       // Tweak the last draw so terminal spot lands exactly on strike, using
       // the generic inverse machinery rather than an explicit closed form.
-      const double target_factor = discontinuities.point(i) / spot_before_last;
-      const double z_star =
-          ad::inverse_of_wrt<^^evolve_black_scholes_normal, 3, double>(
-              target_factor, r, vol, dts.back());
+      const double z_star = ad::inverse_of_wrt<^^g_last_step, 5>(
+          discontinuities.point(i), spot0, factors_except_last, r, vol,
+          dts.back());
       const double normal_pdf = mcsim::PDF(z_star);
 
       // Sifting term written through the normal draw z:
@@ -533,6 +533,11 @@ int main(int argc, char **argv) {
                            ^^nonlinear_digital_call_payoff_derivative<100.0>>(
           "nonlinear digital call");
 
+  std::cout << "=== Nonlinear Digital Call (no closed form) ===\n\n";
+
+  run_mc_only_payoff_test.template
+  operator()<^^nonlinear_digital_call_payoff<100.0>>("nonlinear digital call");
+
   bool show_convergence = false;
   if (show_convergence) {
     std::cout << "=== Convergence Analysis ===\n\n";
@@ -571,6 +576,143 @@ int main(int argc, char **argv) {
     }
     std::cout << std::defaultfloat;
   }
+
+  // Timing benchmarks
+  std::cout << "\n=== Timing Benchmarks ===\n\n";
+
+  auto run_timing_benchmark = [&]<std::meta::info PayoffFn>(
+                                  const char *label,
+                                  std::size_t benchmark_paths) {
+    // Warm-up
+    monte_carlo_engine<PayoffFn>(spot0, rate, vol, maturity_years,
+                                 std::min(benchmark_paths / 10, 10000UL),
+                                 sim_per_path, seed);
+
+    // Full MC engine timing
+    auto t_start = std::chrono::high_resolution_clock::now();
+    const auto [mc_pv, mc_delta, mc_correction] = monte_carlo_engine<PayoffFn>(
+        spot0, rate, vol, maturity_years, benchmark_paths, sim_per_path, seed);
+    auto t_end = std::chrono::high_resolution_clock::now();
+    auto t_total =
+        std::chrono::duration_cast<std::chrono::milliseconds>(t_end - t_start)
+            .count();
+
+    // Time just payoff computation
+    t_start = std::chrono::high_resolution_clock::now();
+    double payoff_sum = 0.0;
+    std::mt19937 rng(seed);
+    std::uniform_real_distribution<double> unif(0.0, 1.0);
+    const double dt_regular =
+        maturity_years / static_cast<double>(sim_per_path);
+    const double dt_stub =
+        maturity_years - dt_regular * static_cast<double>(sim_per_path - 1);
+    std::vector<double> dts(sim_per_path, dt_regular);
+    dts.back() = dt_stub;
+    for (std::size_t path = 0; path < benchmark_paths; ++path) {
+      std::vector<double> normals_prefix(sim_per_path, 0.0);
+      for (double &z : normals_prefix) {
+        z = mcsim::CDF_inverse(unif(rng));
+      }
+      double factors_except_last = 1.0;
+      for (std::size_t step = 0; step + 1 < sim_per_path; ++step) {
+        const double factor = evolve_black_scholes_normal(rate, vol, dts[step],
+                                                          normals_prefix[step]);
+        factors_except_last *= factor;
+      }
+      double spot = g_last_step(spot0, factors_except_last, rate, vol,
+                                dts.back(), normals_prefix.back());
+      payoff_sum += [:PayoffFn:](spot);
+    }
+    t_end = std::chrono::high_resolution_clock::now();
+    auto t_payoff =
+        std::chrono::duration_cast<std::chrono::milliseconds>(t_end - t_start)
+            .count();
+
+    // Time just derivative computation
+    t_start = std::chrono::high_resolution_clock::now();
+    double payoff_delta_sum = 0.0;
+    rng.seed(seed);
+    for (std::size_t path = 0; path < benchmark_paths; ++path) {
+      std::vector<double> normals_prefix(sim_per_path, 0.0);
+      for (double &z : normals_prefix) {
+        z = mcsim::CDF_inverse(unif(rng));
+      }
+      double factors_except_last = 1.0;
+      for (std::size_t step = 0; step + 1 < sim_per_path; ++step) {
+        const double factor = evolve_black_scholes_normal(rate, vol, dts[step],
+                                                          normals_prefix[step]);
+        factors_except_last *= factor;
+      }
+      double spot = g_last_step(spot0, factors_except_last, rate, vol,
+                                dts.back(), normals_prefix.back());
+      payoff_delta_sum += ad::forward_derivative<^^g_last_step, 0>(
+                              spot0, factors_except_last, rate, vol, dts.back(),
+                              normals_prefix.back()) *
+                          ad::forward_derivative<PayoffFn, 0>(spot);
+    }
+    t_end = std::chrono::high_resolution_clock::now();
+    auto t_derivative =
+        std::chrono::duration_cast<std::chrono::milliseconds>(t_end - t_start)
+            .count();
+
+    // Time discontinuity analysis and correction
+    t_start = std::chrono::high_resolution_clock::now();
+    constexpr auto discontinuities =
+        ad::get_discontinuity_points_and_amplitudes<PayoffFn, 0>();
+    double correction_sum = 0.0;
+    rng.seed(seed);
+    for (std::size_t path = 0; path < benchmark_paths; ++path) {
+      std::vector<double> normals_prefix(sim_per_path, 0.0);
+      for (double &z : normals_prefix) {
+        z = mcsim::CDF_inverse(unif(rng));
+      }
+      double factors_except_last = 1.0;
+      for (std::size_t step = 0; step + 1 < sim_per_path; ++step) {
+        const double factor = evolve_black_scholes_normal(rate, vol, dts[step],
+                                                          normals_prefix[step]);
+        factors_except_last *= factor;
+      }
+
+      for (std::size_t i = 0; i < discontinuities.size(); ++i) {
+        const double z_star = ad::inverse_of_wrt<^^g_last_step, 5>(
+            discontinuities.point(i), spot0, factors_except_last, rate, vol,
+            dts.back());
+        const double normal_pdf = mcsim::PDF(z_star);
+        const double dg_d_spot0 = discontinuities.point(i) / spot0;
+        const double dg_d_z = ad::forward_derivative<^^g_last_step, 5>(
+            spot0, factors_except_last, rate, vol, dts.back(), z_star);
+        const double inv_abs_dg_d_u = normal_pdf / std::abs(dg_d_z);
+        correction_sum +=
+            dg_d_spot0 * inv_abs_dg_d_u * discontinuities.amplitude(i);
+      }
+    }
+    t_end = std::chrono::high_resolution_clock::now();
+    auto t_correction =
+        std::chrono::duration_cast<std::chrono::milliseconds>(t_end - t_start)
+            .count();
+
+    std::cout << label << " - " << benchmark_paths << " paths:\n";
+    std::cout << "  Total time:             " << t_total << " ms\n";
+    std::cout << "  Payoff computation:     " << t_payoff << " ms ("
+              << (100.0 * t_payoff / t_total) << "%)\n";
+    std::cout << "  Derivative computation: " << t_derivative << " ms ("
+              << (100.0 * t_derivative / t_total) << "%)\n";
+    std::cout << "  Correction term:        " << t_correction << " ms ("
+              << (100.0 * t_correction / t_total) << "%)\n";
+    std::cout << "  Time per path: " << (1000.0 * t_total / benchmark_paths)
+              << " μs\n\n";
+  };
+
+  // Run timing benchmarks on a few payoff types
+  run_timing_benchmark.template operator()<^^digital_call_payoff<100.0>>(
+      "Digital Call", num_paths);
+
+  run_timing_benchmark.template
+  operator()<^^double_digital_payoff<99.0, 101.0>>("Double Digital", num_paths);
+
+  run_timing_benchmark
+      .template operator()<^^nonlinear_digital_call_payoff<100.0>>(
+          "Nonlinear Digital Call", num_paths);
 
   return 0;
 }
