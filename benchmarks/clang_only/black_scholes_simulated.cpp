@@ -5,6 +5,7 @@
 #include <iostream>
 #include <limits>
 #include <random>
+#include <string>
 #include <vector>
 
 #include "../../tests/clang_only/discontinuity_analysis.hpp"
@@ -14,13 +15,17 @@
 #include "../../tests/mc_sim/black_scholes.hpp"
 #include "../../tests/mc_sim/evolve_black_scholes.hpp"
 
-template <double Width> double smooth_dirac(double x) {
-  static_assert(Width > 0.0, "Smoothing width must be positive");
+double g_smoothed_dirac_width = 1.0;
+
+double smooth_dirac(double x, double width) {
+  if (width <= 0.0) {
+    return 0.0;
+  }
 
   constexpr double inv_sqrt_pi =
       0.564189583547756286948079451560772585844050629329;
-  const double scaled = x / Width;
-  return inv_sqrt_pi * std::exp(-(scaled * scaled)) / Width;
+  const double scaled = x / width;
+  return inv_sqrt_pi * std::exp(-(scaled * scaled)) / width;
 }
 
 // first case: digital call option
@@ -28,9 +33,9 @@ template <double Strike = 100.0> double digital_call_payoff(double spot) {
   return (spot > Strike) ? 1.0 : 0.0;
 }
 
-template <double Strike = 100.0, double Width = 1.0>
+template <double Strike = 100.0>
 double digital_call_payoff_derivative(double spot) {
-  return smooth_dirac<Width>(spot - Strike);
+  return smooth_dirac(spot - Strike, g_smoothed_dirac_width);
 }
 
 template <double Strike = 100.0>
@@ -47,9 +52,10 @@ template <double Strike = 100.0> double digital_and_call_payoff(double spot) {
   return (spot > Strike) ? (1.0 + spot - Strike) : 0.0;
 }
 
-template <double Strike = 100.0, double Width = 1.0>
+template <double Strike = 100.0>
 double digital_and_call_payoff_derivative(double spot) {
-  return ((spot > Strike) ? 1.0 : 0.0) + smooth_dirac<Width>(spot - Strike);
+  return ((spot > Strike) ? 1.0 : 0.0) +
+         smooth_dirac(spot - Strike, g_smoothed_dirac_width);
 }
 
 template <double Strike = 100.0>
@@ -66,10 +72,10 @@ double double_digital_payoff(double spot) {
   return ((spot > Strike1) ? 1.0 : 0.0) - ((spot > Strike2) ? 1.0 : 0.0);
 }
 
-template <double Strike1 = 99.0, double Strike2 = 101.0, double Width = 1.0>
+template <double Strike1 = 99.0, double Strike2 = 101.0>
 double double_digital_payoff_derivative(double spot) {
-  return smooth_dirac<Width>(spot - Strike1) -
-         smooth_dirac<Width>(spot - Strike2);
+  return smooth_dirac(spot - Strike1, g_smoothed_dirac_width) -
+         smooth_dirac(spot - Strike2, g_smoothed_dirac_width);
 }
 
 template <double Strike1 = 99.0, double Strike2 = 101.0>
@@ -88,10 +94,12 @@ double double_digital_butterfly_payoff(double spot) {
          ((spot > Strike2) ? 1.0 + (spot - Strike2) : 0.0);
 }
 
-template <double Strike1 = 99.0, double Strike2 = 101.0, double Width = 1.0>
+template <double Strike1 = 99.0, double Strike2 = 101.0>
 double double_digital_butterfly_payoff_derivative(double spot) {
-  return ((spot < Strike1) ? -1.0 : 0.0) - smooth_dirac<Width>(spot - Strike1) +
-         smooth_dirac<Width>(spot - Strike2) + ((spot > Strike2) ? 1.0 : 0.0);
+  return ((spot < Strike1) ? -1.0 : 0.0) -
+         smooth_dirac(spot - Strike1, g_smoothed_dirac_width) +
+         smooth_dirac(spot - Strike2, g_smoothed_dirac_width) +
+         ((spot > Strike2) ? 1.0 : 0.0);
 }
 
 template <double Strike1 = 99.0, double Strike2 = 101.0>
@@ -269,7 +277,7 @@ std::array<double, 3> monte_carlo_engine(double spot0, double r, double vol,
           discount * (correction_sum / static_cast<double>(num_paths))};
 }
 
-int main() {
+int main(int argc, char **argv) {
   const TimePoint start{};
   const TimePoint maturity = start + Days{367};
 
@@ -280,31 +288,64 @@ int main() {
   std::size_t num_paths = 200000;
   std::size_t sim_per_path = 1;
   double tolerance = 1e-2;
-  if (auto *env_p = std::getenv("PATHS")) {
-    num_paths = std::stoul(env_p);
-  }
-  if (auto *env_spp = std::getenv("SIM_PER_PATH")) {
-    sim_per_path = std::stoul(env_spp);
-  }
-  if (auto *env_tol = std::getenv("TOLERANCE")) {
-    tolerance = std::stod(env_tol);
+
+  for (int i = 1; i < argc; ++i) {
+    const std::string arg = argv[i];
+    auto require_value = [&](const char *flag) -> const char * {
+      if (i + 1 >= argc) {
+        std::cerr << "Missing value after " << flag << std::endl;
+        std::cerr << "Usage: " << argv[0]
+                  << " [--width W|-w W] [--paths N] [--sim-per-path N]"
+                  << " [--tolerance X]" << std::endl;
+        std::exit(1);
+      }
+      return argv[++i];
+    };
+
+    if (arg == "--width" || arg == "-w") {
+      g_smoothed_dirac_width = std::stod(require_value(arg.c_str()));
+    } else if (arg == "--paths") {
+      num_paths = std::stoul(require_value(arg.c_str()));
+    } else if (arg == "--sim-per-path") {
+      sim_per_path = std::stoul(require_value(arg.c_str()));
+    } else if (arg == "--tolerance") {
+      tolerance = std::stod(require_value(arg.c_str()));
+    } else if (arg == "--help" || arg == "-h") {
+      std::cout << "Usage: " << argv[0]
+                << " [--width W|-w W] [--paths N] [--sim-per-path N]"
+                << " [--tolerance X]" << std::endl;
+      return 0;
+    } else {
+      std::cerr << "Unknown argument: " << arg << std::endl;
+      std::cerr << "Usage: " << argv[0]
+                << " [--width W|-w W] [--paths N] [--sim-per-path N]"
+                << " [--tolerance X]" << std::endl;
+      return 1;
+    }
   }
 
   if (num_paths == 0) {
-    std::cerr << "PATHS must be a positive integer" << std::endl;
+    std::cerr << "--paths must be a positive integer" << std::endl;
     return 1;
   }
   if (sim_per_path == 0) {
-    std::cerr << "SIM_PER_PATH must be a positive integer" << std::endl;
+    std::cerr << "--sim-per-path must be a positive integer" << std::endl;
     return 1;
   }
   if (tolerance <= 0.0) {
-    std::cerr << "TOLERANCE must be a positive number" << std::endl;
+    std::cerr << "--tolerance must be a positive number" << std::endl;
+    return 1;
+  }
+  if (g_smoothed_dirac_width <= 0.0) {
+    std::cerr << "--width must be a positive number" << std::endl;
     return 1;
   }
 
   const std::uint32_t seed = 42;
   const double maturity_years = year_fraction_act365(start, maturity);
+
+  std::cout << "Smoothed Dirac width         : " << g_smoothed_dirac_width
+            << "\n\n";
 
   // Templated function to run payoff test with closed-form and payoff functions
   auto run_payoff_test = [&]<std::meta::info ClosedFormFn,
