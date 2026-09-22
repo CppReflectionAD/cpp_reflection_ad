@@ -2,9 +2,11 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <random>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -26,6 +28,32 @@ double smooth_dirac(double x, double width) {
       0.564189583547756286948079451560772585844050629329;
   const double scaled = x / width;
   return inv_sqrt_pi * std::exp(-(scaled * scaled)) / width;
+}
+
+std::vector<double> make_convergence_widths(double base_width) {
+  std::set<double> unique_widths;
+  unique_widths.insert(base_width / 4.0);
+  unique_widths.insert(base_width / 2.0);
+  unique_widths.insert(base_width);
+  unique_widths.insert(base_width * 2.0);
+
+  std::vector<double> widths;
+  widths.reserve(unique_widths.size());
+  for (double width : unique_widths) {
+    if (width > 0.0) {
+      widths.push_back(width);
+    }
+  }
+  return widths;
+}
+
+std::string with_option_suffix(const std::string &path,
+                               const std::string &option_name) {
+  const std::size_t dot = path.rfind('.');
+  if (dot == std::string::npos) {
+    return path + "_" + option_name;
+  }
+  return path.substr(0, dot) + "_" + option_name + path.substr(dot);
 }
 
 // first case: digital call option
@@ -320,6 +348,7 @@ int main(int argc, char **argv) {
   std::size_t num_paths = 200000;
   std::size_t sim_per_path = 1;
   double tolerance = 1e-2;
+  std::string csv_output_path = "black_scholes_simulated_convergence.csv";
 
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
@@ -328,7 +357,7 @@ int main(int argc, char **argv) {
         std::cerr << "Missing value after " << flag << std::endl;
         std::cerr << "Usage: " << argv[0]
                   << " [--width W|-w W] [--paths N] [--sim-per-path N]"
-                  << " [--tolerance X]" << std::endl;
+                  << " [--tolerance X] [--csv FILE]" << std::endl;
         std::exit(1);
       }
       return argv[++i];
@@ -342,16 +371,18 @@ int main(int argc, char **argv) {
       sim_per_path = std::stoul(require_value(arg.c_str()));
     } else if (arg == "--tolerance") {
       tolerance = std::stod(require_value(arg.c_str()));
+    } else if (arg == "--csv") {
+      csv_output_path = require_value(arg.c_str());
     } else if (arg == "--help" || arg == "-h") {
       std::cout << "Usage: " << argv[0]
                 << " [--width W|-w W] [--paths N] [--sim-per-path N]"
-                << " [--tolerance X]" << std::endl;
+                << " [--tolerance X] [--csv FILE]" << std::endl;
       return 0;
     } else {
       std::cerr << "Unknown argument: " << arg << std::endl;
       std::cerr << "Usage: " << argv[0]
                 << " [--width W|-w W] [--paths N] [--sim-per-path N]"
-                << " [--tolerance X]" << std::endl;
+                << " [--tolerance X] [--csv FILE]" << std::endl;
       return 1;
     }
   }
@@ -533,45 +564,6 @@ int main(int argc, char **argv) {
                            ^^nonlinear_digital_call_payoff_derivative<100.0>>(
           "nonlinear digital call");
 
-  bool show_convergence = false;
-  if (show_convergence) {
-    std::cout << "=== Convergence Analysis ===\n\n";
-
-    const double cf_pv_spread1 = [:^^double_digital_closed_form<99.0, 101.0>:](
-        spot0, rate, vol, maturity_years);
-    const double cf_delta_spread1 =
-        ad::forward_derivative<^^double_digital_closed_form<99.0, 101.0>, 0>(
-            spot0, rate, vol, maturity_years);
-
-    std::cout.precision(10);
-    std::cout << "Closed-form PV:    " << cf_pv_spread1 << "\n";
-    std::cout << "Closed-form delta: " << cf_delta_spread1 << "\n\n";
-
-    std::cout.precision(6);
-    std::cout << std::scientific
-              << "Paths\t\tMC PV\t\t\tPV Error %\tMC Delta\t\tDelta Error%\n ";
-    std::cout << "=====\t\t=====\t\t\t=========\t========\t\t=============\n";
-
-    const std::vector<std::size_t> path_counts = {
-        100,    500,     1000,    5000,    10000,   50000,    100000,
-        500000, 1000000, 2000000, 4000000, 8000000, 10000000, 15000000};
-
-    for (std::size_t paths : path_counts) {
-      const auto [mc_pv, mc_delta] = monte_carlo_engine_smoothed_dirac<
-          ^^double_digital_payoff<99.0, 101.0>,
-          ^^double_digital_payoff_derivative<99.0, 101.0>>(
-          spot0, rate, vol, maturity_years, paths, sim_per_path, seed);
-      const double pv_error_pct =
-          (std::abs(mc_pv - cf_pv_spread1) / cf_pv_spread1) * 100;
-      const double delta_error_pct =
-          (std::abs(mc_delta - cf_delta_spread1) / cf_delta_spread1) * 100;
-
-      std::cout << paths << "\t\t" << mc_pv << "\t" << pv_error_pct << "%\t\t"
-                << mc_delta << "\t" << delta_error_pct << "%\n";
-    }
-    std::cout << std::defaultfloat;
-  }
-
   // Timing benchmarks
   std::cout << "\n=== Timing Benchmarks ===\n\n";
 
@@ -708,6 +700,102 @@ int main(int argc, char **argv) {
   run_timing_benchmark
       .template operator()<^^nonlinear_digital_call_payoff<100.0>>(
           "Nonlinear Digital Call", num_paths);
+
+  const double saved_width = g_smoothed_dirac_width;
+  const double cf_price = [:^^double_digital_closed_form<99.0, 101.0>:](
+      spot0, rate, vol, maturity_years);
+  const double cf_delta =
+      ad::forward_derivative<^^double_digital_closed_form<99.0, 101.0>, 0>(
+          spot0, rate, vol, maturity_years);
+  const std::vector<std::size_t> path_counts = {
+      100,     200,     500,     1000,     2000,    5000,
+      10000,   20000,   50000,   100000,   200000,  500000,
+      1000000, 2000000, 5000000, 10000000, 15000000};
+  const std::vector<double> convergence_widths =
+      make_convergence_widths(saved_width);
+
+  auto write_convergence_csv_header = [&](std::ostream &out) {
+    out.precision(std::numeric_limits<double>::max_digits10);
+    out << "paths,log10_paths,sim_per_path,closed_form_price,mc_price,price_"
+           "error,"
+           "closed_form_delta,legacy_corrected_delta,legacy_delta_error,"
+           "finite_difference_delta,finite_difference_delta_error";
+    for (double width : convergence_widths) {
+      out << ",smoothed_delta_w=" << width
+          << ",smoothed_delta_error_w=" << width;
+    }
+    out << "\n";
+  };
+
+  auto export_convergence_csv =
+      [&]<std::meta::info ClosedFormFn, std::meta::info PayoffFn,
+          std::meta::info PayoffDeltaFn>(const std::string &option_name) {
+        const std::string option_csv_path =
+            with_option_suffix(csv_output_path, option_name);
+        std::ofstream csv_output(option_csv_path);
+        if (!csv_output) {
+          std::cerr << "Failed to open CSV output file: " << option_csv_path
+                    << std::endl;
+          std::exit(1);
+        }
+
+        const double cf_price = [:ClosedFormFn:](spot0, rate, vol,
+                                                 maturity_years);
+        const double cf_delta = ad::forward_derivative<ClosedFormFn, 0>(
+            spot0, rate, vol, maturity_years);
+
+        write_convergence_csv_header(csv_output);
+
+        for (std::size_t paths : path_counts) {
+          const auto [mc_price, mc_delta_raw, mc_correction] =
+              monte_carlo_engine<PayoffFn>(spot0, rate, vol, maturity_years,
+                                           paths, sim_per_path, seed);
+          const double mc_bump = 1e-2;
+          const auto [mc_price_up, _, __] = monte_carlo_engine<PayoffFn>(
+              spot0 + mc_bump, rate, vol, maturity_years, paths, sim_per_path,
+              seed);
+          const auto [mc_price_down, ___, ____] = monte_carlo_engine<PayoffFn>(
+              spot0 - mc_bump, rate, vol, maturity_years, paths, sim_per_path,
+              seed);
+          const double legacy_corrected_delta = mc_delta_raw + mc_correction;
+          const double price_error = mc_price - cf_price;
+          const double legacy_delta_error = legacy_corrected_delta - cf_delta;
+          const double finite_difference_delta =
+              (mc_price_up - mc_price_down) / (2.0 * mc_bump);
+          const double finite_difference_delta_error =
+              finite_difference_delta - cf_delta;
+
+          csv_output << paths << "," << std::log10(static_cast<double>(paths))
+                     << "," << sim_per_path << "," << cf_price << ","
+                     << mc_price << "," << price_error << "," << cf_delta << ","
+                     << legacy_corrected_delta << "," << legacy_delta_error
+                     << "," << finite_difference_delta << ","
+                     << finite_difference_delta_error;
+
+          for (double width : convergence_widths) {
+            g_smoothed_dirac_width = width;
+            const auto [ignored_price, smoothed_delta] =
+                monte_carlo_engine_smoothed_dirac<PayoffFn, PayoffDeltaFn>(
+                    spot0, rate, vol, maturity_years, paths, sim_per_path,
+                    seed);
+            const double smoothed_delta_error = smoothed_delta - cf_delta;
+            csv_output << "," << smoothed_delta << "," << smoothed_delta_error;
+          }
+          csv_output << "\n";
+        }
+
+        std::cout << "Saved convergence CSV to: " << option_csv_path << "\n";
+      };
+
+  export_convergence_csv.template
+  operator()<^^digital_call_closed_form<100.0>, ^^digital_call_payoff<100.0>,
+             ^^digital_call_payoff_derivative<100.0>>("digital_call");
+  export_convergence_csv.template
+  operator()<^^double_digital_closed_form<99.0, 101.0>,
+             ^^double_digital_payoff<99.0, 101.0>,
+             ^^double_digital_payoff_derivative<99.0, 101.0>>("double_digital");
+  g_smoothed_dirac_width = saved_width;
+  std::cout << "\n";
 
   return 0;
 }
