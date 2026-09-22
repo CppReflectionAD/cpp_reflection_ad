@@ -17,7 +17,7 @@ inline double evolve_black_scholes(double r, double vol, double dt,
 
 // One Black-Scholes step over dt, driven by a single standard normal random
 // variable.
-inline double evolve_black_scholes_normal(double r, double vol, double dt,
+constexpr inline double evolve_black_scholes_normal(double r, double vol, double dt,
                                           double normal_z) {
   const double drift = (r - 0.5 * vol * vol) * dt;
   const double diffusion = vol * std::sqrt(dt) * normal_z;

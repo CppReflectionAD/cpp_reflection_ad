@@ -120,13 +120,13 @@ int main() {
 
   {
     constexpr auto inv = ad::inverse_wrt<^^evolve_black_scholes_normal, 3>{};
-    const double r = 0.05;
-    const double vol = 0.2;
-    const double dt = 0.01;
-    const double normal_z = 0.37;
+    constexpr double r = 0.05;
+    constexpr double vol = 0.2;
+    constexpr double dt = 0.01;
+    constexpr double normal_z = 0.37;
 
-    const double output = evolve_black_scholes_normal(r, vol, dt, normal_z);
-    const double recovered = inv(output, r, vol, dt);
+    constexpr double output = evolve_black_scholes_normal(r, vol, dt, normal_z);
+    constexpr double recovered = inv(output, r, vol, dt);
     EXPECT_NEAR_REL(recovered, normal_z, 1e-10);
   }
 
@@ -218,13 +218,13 @@ int main() {
   }
 
   {
-    const double r = 0.03;
-    const double vol = 0.35;
-    const double dt = 0.2;
-    const double normal_z = -0.91;
+    constexpr double r = 0.03;
+    constexpr double vol = 0.35;
+    constexpr double dt = 0.2;
+    constexpr double normal_z = -0.91;
 
-    const double output = evolve_black_scholes_normal(r, vol, dt, normal_z);
-    const double recovered =
+    constexpr double output = evolve_black_scholes_normal(r, vol, dt, normal_z);
+    constexpr double recovered =
         ad::inverse_of_wrt<^^evolve_black_scholes_normal, 3, double>(output, r,
                                                                      vol, dt);
     EXPECT_NEAR_REL(recovered, normal_z, 1e-10);
