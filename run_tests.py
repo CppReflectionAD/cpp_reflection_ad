@@ -990,7 +990,10 @@ def compile_and_maybe_run(
 
     # Benchmarks pull in the shared headers from tests/ (mirrors the include
     # directories in benchmarks/CMakeLists.txt).
+    # Tests need access to test_simple/ for test_simple_include.hpp.
     include_flags = ["-I", str(TESTS_DIR)] if base_dir == BENCHMARKS_DIR else []
+    if base_dir == TESTS_DIR:
+        include_flags.extend(["-I", str(ROOT / "test_simple")])
 
     compile_command = [
         str(spec.executable),
