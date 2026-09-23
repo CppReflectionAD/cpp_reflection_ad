@@ -1020,7 +1020,7 @@ template <info Fn, typename... RegisteredPairs> struct inverse {
       "ad::inverse requires an explicit inverse plan; if the inverse "
       "is not constructible symbolically, ad::is_invertible<Fn>() is false");
 
-  template <typename T = double> T operator()(T y) const {
+  template <typename T = double> constexpr T operator()(T y) const {
     if constexpr (has_registered_inverse<Fn, RegisteredPairs...>()) {
       return apply_registered_inverse<Fn, T, RegisteredPairs...>(y);
     }
@@ -1043,7 +1043,7 @@ struct inverse_wrt {
       "a registered unary outer inverse pair");
 
   template <typename T = double, typename... ExtraArgs>
-  T operator()(T y, ExtraArgs... args) const {
+  constexpr T operator()(T y, ExtraArgs... args) const {
     if constexpr (has_registered_inverse_wrt<Fn, ArgIndex,
                                              RegisteredPairs...>()) {
       return apply_registered_inverse_wrt<Fn, ArgIndex, T, RegisteredPairs...>(
@@ -1141,13 +1141,13 @@ struct inverse_wrt {
 };
 
 template <info Fn, typename T = double, typename... RegisteredPairs>
-T inverse_of(T y) {
+constexpr T inverse_of(T y) {
   return inverse<Fn, RegisteredPairs...>{}(y);
 }
 
 template <info Fn, std::size_t ArgIndex, typename T = double,
           typename... RegisteredPairs, typename... ExtraArgs>
-T inverse_of_wrt(T y, ExtraArgs... args) {
+constexpr T inverse_of_wrt(T y, ExtraArgs... args) {
   return inverse_wrt<Fn, ArgIndex, RegisteredPairs...>{}(y, args...);
 }
 
