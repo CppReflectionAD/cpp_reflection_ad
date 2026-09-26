@@ -21,6 +21,10 @@ BUILD_ROOT = ROOT / "build"
 ARTIFACTS_DIR = BUILD_ROOT / "artifacts"
 CLANG_ONLY_DIR = "clang_only"
 GCC_ONLY_DIR = "gcc_only"
+# Tests under tests/static_fail/ must be rejected by the compiler (e.g. by a
+# static_assert); they pass only when compilation fails. Mirrors the
+# compile_check(... TRUE) registration in tests/CMakeLists.txt.
+STATIC_FAIL_DIR = "static_fail"
 
 # The clang reflection fork is built from the clang-p2996 submodule into this
 # repo's own build/ tree, so the repo is self-contained (no dependency on any
@@ -85,10 +89,12 @@ class TestResult:
     test_file: Path
     compile_result: CommandResult
     run_result: CommandResult | None
+    expect_compile_failure: bool = False
 
     @property
     def compile_ok(self) -> bool:
-        return self.compile_result.returncode == 0
+        compiled = self.compile_result.returncode == 0
+        return compiled != self.expect_compile_failure
 
     @property
     def run_ok(self) -> bool:
@@ -1007,11 +1013,16 @@ def compile_and_maybe_run(
         str(output_path),
     ]
     relative_path = test_file.relative_to(ROOT)
+    expect_compile_failure = test_file.relative_to(base_dir).parts[0] == STATIC_FAIL_DIR
     log(f"[{spec.name}] compiling {relative_path} ...")
     compile_result = run_command(compile_command, cwd=ROOT, verbose=args.verbose)
 
     run_result: CommandResult | None = None
-    if compile_result.returncode == 0 and args.run_executables:
+    if (
+        compile_result.returncode == 0
+        and args.run_executables
+        and not expect_compile_failure
+    ):
         log(f"[{spec.name}] running {relative_path} ...")
         run_result = run_command([str(output_path)], cwd=ROOT, verbose=args.verbose)
 
@@ -1020,6 +1031,7 @@ def compile_and_maybe_run(
         test_file=test_file,
         compile_result=compile_result,
         run_result=run_result,
+        expect_compile_failure=expect_compile_failure,
     )
 
 
@@ -1040,8 +1052,18 @@ def render_command_failure(result: CommandResult) -> str:
 def print_test_result(result: TestResult) -> None:
     relative_path = result.test_file.relative_to(ROOT)
     if not result.compile_ok:
+        if result.expect_compile_failure:
+            print(
+                f"[FAIL][{result.compiler}][compile] {relative_path} "
+                "(expected a compile error, but it compiled)"
+            )
+            return
         print(f"[FAIL][{result.compiler}][compile] {relative_path}")
         print(indent_block(render_command_failure(result.compile_result)))
+        return
+
+    if result.expect_compile_failure:
+        print(f"[PASS][{result.compiler}][compile-fail] {relative_path}")
         return
 
     if result.run_result is not None and not result.run_ok:
