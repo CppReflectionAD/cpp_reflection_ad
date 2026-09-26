@@ -49,6 +49,12 @@ ITERATIONS=1000000 python3 run_tests.py --compiler clang --benchmarks 'black_sch
 
 # use a clang built elsewhere (or set CLANG_P2996_ROOT)
 python3 run_tests.py --compiler clang --clang-root /path/to/clang-p2996 --run-executables
+
+# build clang from another clang-p2996 checkout (or set REFLECT_CLANG_SOURCE_DIR),
+# into its own clang root so the default build/clang-p2996 is left untouched
+python3 run_tests.py --compiler clang --build-compilers --run-executables \
+    --clang-source-dir ../clang-p2996 \
+    --clang-root build/clang-other --clang-runtimes-dir build/libcxx-other
 ```
 
 Each demo prints its own `ALL CHECKS PASSED` / `ALL MATCH` on success.
