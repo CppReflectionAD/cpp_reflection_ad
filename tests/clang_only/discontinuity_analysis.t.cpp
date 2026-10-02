@@ -56,6 +56,21 @@ double digital_put_payoff(double spot, double strike) {
   return (spot < strike) ? 1.0 : 0.0;
 }
 
+// Digital call: spot > K ? 1 : 0
+// This has a discontinuity at spot = K with a positive jump (0 -> 1 as spot
+// increases) The jump should be +1
+double digital_call(double spot, double strike) {
+  return (spot > strike) ? 1.0 : 0.0;
+}
+
+// Test function that measures the actual jump on the function itself
+double measure_jump_on_function(double (*payoff)(double, double), double strike,
+                                double epsilon = 1e-8) {
+  double before = payoff(strike - epsilon, strike);
+  double after = payoff(strike + epsilon, strike);
+  return after - before; // This is the actual jump in the function value
+}
+
 int main() {
   // Test 0 discontinuities
   constexpr auto disc0 = ad::get_discontinuity_points<^^continuous_linear, 0>();
@@ -202,6 +217,21 @@ int main() {
   EXPECT_EQUAL(disc_put.size(), 1);
   EXPECT_EQUAL(disc_put.point(0), 100.0);
   EXPECT_EQUAL(disc_put.amplitude(0), -1.0);
+
+  // Test digital_call with amplitudes (verify opposite sign from put)
+  // (spot > strike) ? 1.0 : 0.0
+  // At strike = 100.0, the jump as spot increases is 1.0 - 0.0 = +1.0.
+  constexpr auto disc_call =
+      ad::get_discontinuity_points_and_amplitudes<^^digital_call, 0>(100.0);
+  EXPECT_FALSE(disc_call.empty());
+  EXPECT_EQUAL(disc_call.size(), 1);
+  EXPECT_EQUAL(disc_call.point(0), 100.0);
+  EXPECT_EQUAL(disc_call.amplitude(0), 1.0);
+
+  // Test that digital put and call have opposite signs (proof of bug fix)
+  // If the bug existed, both would report +1 instead of having opposite signs
+  // Digital put should be negative, digital call should be positive
+  EXPECT_EQUAL(disc_put.amplitude(0) < disc_call.amplitude(0), true);
 
   TEST_END;
 }
