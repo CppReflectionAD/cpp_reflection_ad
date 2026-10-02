@@ -22,12 +22,16 @@ ARTIFACTS_DIR = BUILD_ROOT / "artifacts"
 CLANG_ONLY_DIR = "clang_only"
 GCC_ONLY_DIR = "gcc_only"
 
-# The clang reflection fork is built from the clang-p2996 submodule into this
-# repo's own build/ tree, so the repo is self-contained (no dependency on any
+# The clang reflection fork is built from the clang-p2996 submodule (override
+# with --clang-source-dir / REFLECT_CLANG_SOURCE_DIR) into this repo's own
+# build/ tree, so the repo is self-contained (no dependency on any
 # externally pre-built compiler). The clang "root" is that build tree: it holds
 # bin/clang++, include/c++/v1/meta, and lib/libc++.so, and the clang flag
 # profile is derived from it. Override with --clang-root / CLANG_P2996_ROOT to
 # point at a compiler built elsewhere.
+DEFAULT_CLANG_SOURCE_DIR = os.environ.get(
+    "REFLECT_CLANG_SOURCE_DIR", str(ROOT / "clang-p2996")
+)
 DEFAULT_CLANG_ROOT = os.environ.get("CLANG_P2996_ROOT", str(BUILD_ROOT / "clang-p2996"))
 # Standalone libc++/libc++abi/libunwind (runtimes) build tree. Built with the
 # freshly built clang; its headers/libs are emitted into the clang root via
@@ -154,6 +158,15 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=os.cpu_count() or 1,
         help="Parallel build jobs. Default: host CPU count.",
+    )
+    parser.add_argument(
+        "--clang-source-dir",
+        default=DEFAULT_CLANG_SOURCE_DIR,
+        help=(
+            "Path to the clang-p2996 source tree (an llvm-project checkout) used "
+            "for clang builds. "
+            f"Default: {DEFAULT_CLANG_SOURCE_DIR} (env REFLECT_CLANG_SOURCE_DIR)."
+        ),
     )
     parser.add_argument(
         "--clang-root",
@@ -402,13 +415,14 @@ def clang_cxxflags(
 
 def build_specs(args: argparse.Namespace) -> dict[str, CompilerSpec]:
     clang_root = Path(args.clang_root).resolve()
+    clang_source_dir = Path(args.clang_source_dir).resolve()
     gcc_source_dir = Path(args.gcc_source_dir).resolve()
     gcc_build_dir = Path(args.gcc_build_dir).resolve()
     gcc_binary_dir = gcc_build_dir / "artifacts"
     return {
         "clang": CompilerSpec(
             name="clang",
-            source_dir=ROOT / "clang-p2996",
+            source_dir=clang_source_dir,
             # The clang root doubles as its build tree (runtimes + <meta> land here).
             build_dir=clang_root,
             binary_dir=clang_root,
@@ -524,12 +538,15 @@ def ensure_submodule(source_dir: Path, args: argparse.Namespace) -> None:
     ):
         return
 
-    if source_dir.name not in {"clang-p2996", "gcc-mirror"}:
+    # Compare full paths, not names: a --clang-source-dir/--gcc-source-dir
+    # checkout elsewhere may share a submodule's name but is not that submodule.
+    if source_dir not in {ROOT / "clang-p2996", ROOT / "gcc-mirror"}:
         raise SystemExit(
             "Compiler source directory is missing or empty: "
             f"{source_dir}\n"
             "This path is not a known submodule, so it is not auto-initialized. "
-            "Clone/populate it first, or pass --gcc-source-dir to an existing tree."
+            "Clone/populate it first, or pass --clang-source-dir/--gcc-source-dir "
+            "to an existing tree."
         )
 
     ensure_directory(source_dir)
