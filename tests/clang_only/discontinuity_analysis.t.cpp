@@ -50,6 +50,12 @@ double negated_select_payoff(double spot, double strike) {
   return -((spot > strike + 1) ? 1.0 : 0.0);
 }
 
+// Digital put style payoff: the Heaviside argument has negative derivative in
+// spot, so the jump amplitude should be negative as spot increases.
+double digital_put_payoff(double spot, double strike) {
+  return (spot < strike) ? 1.0 : 0.0;
+}
+
 int main() {
   // Test 0 discontinuities
   constexpr auto disc0 = ad::get_discontinuity_points<^^continuous_linear, 0>();
@@ -185,6 +191,17 @@ int main() {
   EXPECT_EQUAL(disc_neg_sel.size(), 1);
   EXPECT_EQUAL(disc_neg_sel.point(0), 101.0);
   EXPECT_EQUAL(disc_neg_sel.amplitude(0), -1.0);
+
+  // Test digital_put_payoff with amplitudes
+  // (spot < strike) ? 1.0 : 0.0
+  // At strike = 100.0, the jump as spot increases is 0.0 - 1.0 = -1.0.
+  constexpr auto disc_put =
+      ad::get_discontinuity_points_and_amplitudes<^^digital_put_payoff, 0>(
+          100.0);
+  EXPECT_FALSE(disc_put.empty());
+  EXPECT_EQUAL(disc_put.size(), 1);
+  EXPECT_EQUAL(disc_put.point(0), 100.0);
+  EXPECT_EQUAL(disc_put.amplitude(0), -1.0);
 
   TEST_END;
 }
