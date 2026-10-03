@@ -545,10 +545,14 @@ constexpr double step_ulps(double x, int k) {
   return x;
 }
 
-// How far a root is moved to where crossing I's sides are equal, how far
-// either side of it a jump must keep its sign to be more than rounding, and
-// how near another crossing's root must be to be held at its side.
+// How far a root is moved to where crossing I's sides are equal (see snap).
 inline constexpr int kSnapUlps = 4;
+// How near another crossing's root must be to a point to be held at its side
+// of it (see analyze).
+inline constexpr int kHoldUlps = 4;
+// How far either side of a point a jump must keep its sign to be more than
+// rounding (see analyze).
+inline constexpr int kKinkUlps = 4;
 
 // Trailing zero bits in x's significand: more means a shorter number.
 constexpr int roundness(double x) {
@@ -719,15 +723,15 @@ analyze(const std::array<double, NumArgs> &in) {
       continue;
     const double point = root[c];
     // Crossings rooted at the point take their outcome above it on the
-    // right and below it on the left. Those rooted within kSnapUlps of it
+    // right and below it on the left. Those rooted within kHoldUlps of it
     // take the outcome on their side of it on both, by where their roots
     // lie rather than by Fn's arithmetic: that can make a comparison's sides
     // exactly equal on a run of doubles, so a crossing rooted just below the
     // point may still read false there. Such crossings are often one
     // crossing in exact arithmetic (`s * 1.1 > k && s / 0.9 > k / 0.99`),
     // whose jump would otherwise be lost at both roots.
-    const double lo = step_ulps(point, -kSnapUlps),
-                 hi = step_ulps(point, kSnapUlps);
+    const double lo = step_ulps(point, -kHoldUlps),
+                 hi = step_ulps(point, kHoldUlps);
     std::array<signed char, N> right, left;
     right.fill(-1);
     left.fill(-1);
@@ -752,7 +756,7 @@ analyze(const std::array<double, NumArgs> &in) {
     // A kink -- continuous where its branches meet -- has no jump at its
     // exact root, but that need not be a double, nor the point (snap finds
     // a double where the crossing's sides are equal, not the branches'), so
-    // rounding can leave a tiny one here. Measured kSnapUlps either side,
+    // rounding can leave a tiny one here. Measured kKinkUlps either side,
     // with the same crossings forced, it then vanishes or changes sign; a
     // jump keeps its sign. A side that is not finite says nothing.
     const auto jump_at = [&](double x) {
@@ -763,7 +767,9 @@ analyze(const std::array<double, NumArgs> &in) {
       return is_finite(other) &&
              (other == 0.0 || (other > 0.0) != (jump > 0.0));
     };
-    if (jump != 0.0 && !disagrees(jump_at(lo)) && !disagrees(jump_at(hi)))
+    if (jump != 0.0 &&
+        !disagrees(jump_at(step_ulps(point, -kKinkUlps))) &&
+        !disagrees(jump_at(step_ulps(point, kKinkUlps))))
       collector.add_point_with_amplitude(point, jump);
   }
 
