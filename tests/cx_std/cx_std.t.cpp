@@ -31,6 +31,30 @@ double ulps(double a, double b) {
   return std::fabs(static_cast<double>(key(a) - key(b)));
 }
 
+// Largest ulp error of cx_f against std_f over n random doubles of either
+// sign, with exponents uniform over [2^min_exp, 2^1023].
+template <class CxF, class StdF>
+double max_ulps_any_exponent(CxF cx_f, StdF std_f, int min_exp, int n) {
+  std::uint64_t state = 42; // xorshift64
+  const auto next = [&] {
+    state ^= state << 13;
+    state ^= state >> 7;
+    state ^= state << 17;
+    return state;
+  };
+  double worst = 0.0;
+  for (int i = 0; i < n; ++i) {
+    const std::uint64_t exponent =
+        static_cast<std::uint64_t>(1023 + min_exp) +
+        next() % static_cast<std::uint64_t>(1023 - min_exp + 1);
+    const double x = std::bit_cast<double>(
+        exponent << 52 | (next() & ((std::uint64_t{1} << 52) - 1)) |
+        (next() & (std::uint64_t{1} << 63)));
+    worst = std::fmax(worst, ulps(cx_f(x), std_f(x)));
+  }
+  return worst;
+}
+
 // Largest ulp error of cx_f against std_f over n points of [lo, hi], spaced
 // evenly or (log_spaced) geometrically.
 template <class CxF, class StdF>
@@ -71,6 +95,17 @@ static_assert(cx::sqrt(8.9049066160978575e+299) == 9.4365812750687717e+149);
 static_assert(cx::erfc(26.0) > 0.0 && cx::erfc(30.0) == 0.0);
 static_assert(cx::erfc(0.5) > 0.47 && cx::erfc(-3.0) < 2.0);
 static_assert(cx::sin(1e5) != 0.0 && cx::cos(-1e5) != 0.0);
+// Beyond the Cody-Waite range, the reduction is exact (Payne-Hanek): the
+// correctly rounded values (from mpmath), where the three-part reduction gave
+// sin(1e18) = -2e29. The first is the double nearest a multiple of pi/2, at
+// 2^-60.9.
+constexpr double nearest_pio2_multiple = 6381956970095103.0 * 0x1p797;
+static_assert(cx::sin(nearest_pio2_multiple) == 1.0 &&
+              cx::cos(nearest_pio2_multiple) == -4.687165924254628e-19);
+static_assert(cx::sin(1e18) == -0.9929693207404051 &&
+              cx::cos(1e18) == 0.11837199021871073);
+static_assert(cx::sin(1.7976931348623157e308) > 0.00496 &&
+              cx::sin(1.7976931348623157e308) < 0.00497);
 
 // Special values
 static_assert(cx::exp(0.0) == 1.0 && cx::exp(-inf) == 0.0 &&
@@ -118,12 +153,15 @@ int main() {
   EXPECT_LESS_THAN(max_ulps(cx_erfc, std_erfc, -6.0, 0.5), 8.0);
   EXPECT_LESS_THAN(max_ulps(cx_erfc, std_erfc, 0.5, 4.0), 8.0);
   EXPECT_LESS_THAN(max_ulps(cx_erfc, std_erfc, 4.0, 26.5), 8.0);
-  // sin / cos: small arguments and |x| up to 1e5
+  // sin / cos: small arguments, |x| up to 1e5 ...
   EXPECT_LESS_THAN(max_ulps(cx_sin, std_sin, -10.0, 10.0), 4.0);
   EXPECT_LESS_THAN(max_ulps(cx_sin, std_sin, -1e5, 1e5), 4.0);
   EXPECT_LESS_THAN(max_ulps(cx_sin, std_sin, 1e-300, 1e-3, true), 4.0);
   EXPECT_LESS_THAN(max_ulps(cx_cos, std_cos, -10.0, 10.0), 4.0);
   EXPECT_LESS_THAN(max_ulps(cx_cos, std_cos, -1e5, 1e5), 4.0);
+  // ... and every exponent, out to the largest double
+  EXPECT_LESS_THAN(max_ulps_any_exponent(cx_sin, std_sin, -30, 400000), 4.0);
+  EXPECT_LESS_THAN(max_ulps_any_exponent(cx_cos, std_cos, -30, 400000), 4.0);
 
   TEST_END;
 }

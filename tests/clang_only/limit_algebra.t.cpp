@@ -31,6 +31,7 @@ inline double fn_step(double x) { return x < 1.0 ? 0.0 : 1.0; }
 inline double fn_cancel(double x) { return x - x; }
 inline double fn_removable(double x) { return x * x / x; }
 inline double fn_ratio(double x) { return x / x; }
+inline double fn_sin(double x) { return std::sin(x); }
 inline double fn_cos(double x) { return std::cos(x); }
 inline double fn_log_one_minus_sin(double x) {
   return std::log(1.0 - std::sin(x));
@@ -179,6 +180,20 @@ static_assert(ad::limits::limit_result<^^fn_cos>(At::from_right(0.0))
 static_assert(ad::limits::limit_result<^^fn_log_one_minus_sin>(
                   At::from_left(3.141592653589793 / 2.0))
                   .limit.kind == ad::limits::Value::Kind::None);
+// ... at any finite point: cx_trig reduces large arguments exactly, so these
+// are within a few ulps of the correctly rounded values (from mpmath), not
+// the -2e29 at 1e18 a three-part reduction gave, and the side is cos's sign
+// there
+static_assert(near(ad::limits::limit_of<^^fn_sin>(At{1e10}),
+                   -0.4875060250875107, 4e-16));
+static_assert(near(ad::limits::limit_of<^^fn_sin>(At{1e15}), 0.8582727931702359,
+                   4e-16));
+static_assert(near(ad::limits::limit_of<^^fn_sin>(At{1e18}),
+                   -0.9929693207404051, 4e-16));
+static_assert(ad::limits::limit_result<^^fn_sin>(At::from_right(1e15))
+                  .limit.side == ad::limits::Side::Below);
+static_assert(ad::limits::limit_result<^^fn_sin>(At::from_right(1e18))
+                  .limit.side == ad::limits::Side::Above);
 // ... and at ±inf they oscillate
 static_assert(!ad::limits::is_convergent_at<^^fn_cos>(At::plus_infinity()));
 

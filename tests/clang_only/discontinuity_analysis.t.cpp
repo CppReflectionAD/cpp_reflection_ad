@@ -994,6 +994,18 @@ int main() {
            100.0)
            .amplitude(0)),
       disc_sin.amplitude(0));
+  // ... at any strike: the three-part reduction gave sin(1e18) = -2e29
+  constexpr auto disc_sin_far =
+      ad::get_discontinuity_points_and_amplitudes<^^digital_sin_rebate, 0>(
+          1e18);
+  EXPECT_EQUAL(disc_sin_far.size(), 1);
+  EXPECT_EQUAL(disc_sin_far.point(0), 1e18);
+  EXPECT_NEAR_REL(disc_sin_far.amplitude(0), std::sin(1e18) + 1.0, 1e-13);
+  EXPECT_EQUAL(
+      (ad::get_discontinuity_points_and_amplitudes_rt<^^digital_sin_rebate, 0>(
+           1e18)
+           .amplitude(0)),
+      disc_sin_far.amplitude(0));
   constexpr auto disc_exp =
       ad::get_discontinuity_points_and_amplitudes<^^digital_exp_payoff, 0>(
           500.0);

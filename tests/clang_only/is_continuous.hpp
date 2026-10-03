@@ -105,8 +105,9 @@ consteval bool contains_phase(Interval a, double c) {
 // The range of a periodic f (sin or cos) over a: its values at the ends,
 // widened to 1 where a contains a maximum (at max_at + 2πk) and to -1 where
 // it contains a minimum (at max_at + π + 2πk). Then widened by a few ulps of
-// 1 for cx_trig's rounding. Past |x| = 1e6, where cx_trig's accuracy is not
-// promised, and on any interval 2π wide or more, it is [-1, 1].
+// 1 for cx_trig's rounding. Past |x| = 1e6, where contains_phase's double 2π
+// has drifted from the period by more than rounding (k·2π is off by about
+// k·2.4e-16), and on any interval 2π wide or more, it is [-1, 1].
 template <typename F>
 consteval Interval periodic_range(Interval a, F f, double max_at) {
   constexpr double pi = 3.141592653589793;
