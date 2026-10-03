@@ -6,13 +6,14 @@ import argparse
 import json
 import os
 import platform
-import re
 import shlex
 import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+
+from test_simple import compile_fail_check
 
 
 ROOT = Path(__file__).resolve().parent
@@ -23,7 +24,8 @@ ARTIFACTS_DIR = BUILD_ROOT / "artifacts"
 CLANG_ONLY_DIR = "clang_only"
 GCC_ONLY_DIR = "gcc_only"
 # Tests under tests/static_fail/ must be rejected by the compiler (e.g. by a
-# static_assert); they pass only when compilation fails. Mirrors the
+# static_assert) with the error(s) their `// EXPECT-ERROR: <text>` comments
+# name; see test_simple/compile_fail_check.py, which CTest also uses for the
 # compile_check(... TRUE) registration in tests/CMakeLists.txt.
 STATIC_FAIL_DIR = "static_fail"
 
@@ -79,13 +81,6 @@ else:
 TEST_FLAGS_DIRECTIVE = "// TEST-FLAGS:"
 TEST_FLAGS_SCAN_LINES = 10
 
-# A static_fail test names the error(s) it must fail with via one or more
-# `// EXPECT-ERROR: <text>` comments anywhere in the file. Each <text> is
-# matched literally against the compiler's `error:` lines; at least one is
-# required. Mirrors test_simple/compile_fail_check.cmake.
-EXPECT_ERROR_DIRECTIVE = "// EXPECT-ERROR:"
-ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
-
 
 @dataclass(frozen=True)
 class CommandResult:
@@ -102,27 +97,14 @@ class TestResult:
     compile_result: CommandResult
     run_result: CommandResult | None
     expect_compile_failure: bool = False
-    expected_errors: tuple[str, ...] = ()
-
-    @property
-    def missing_errors(self) -> list[str]:
-        """Expected errors that no `error:` line of the compiler output has."""
-        output = ANSI_ESCAPE_RE.sub(
-            "", self.compile_result.stdout + self.compile_result.stderr
-        )
-        error_lines = [line for line in output.splitlines() if "error:" in line]
-        return [
-            text
-            for text in self.expected_errors
-            if not any(text in line for line in error_lines)
-        ]
+    # Why a static_fail test failed (see compile_fail_check.check), or None.
+    compile_fail_reason: str | None = None
 
     @property
     def compile_ok(self) -> bool:
-        compiled = self.compile_result.returncode == 0
-        if not self.expect_compile_failure:
-            return compiled
-        return not compiled and bool(self.expected_errors) and not self.missing_errors
+        if self.expect_compile_failure:
+            return self.compile_fail_reason is None
+        return self.compile_result.returncode == 0
 
     @property
     def run_ok(self) -> bool:
@@ -555,18 +537,6 @@ def parse_test_flags(test_file: Path, compiler_name: str) -> list[str]:
     except OSError:
         pass
     return shared + specific
-
-
-def parse_expected_errors(test_file: Path) -> tuple[str, ...]:
-    """Read the `// EXPECT-ERROR: <text>` directives from a static_fail test."""
-    expected = []
-    for line in test_file.read_text(encoding="utf-8", errors="replace").splitlines():
-        stripped = line.strip()
-        if stripped.startswith(EXPECT_ERROR_DIRECTIVE):
-            text = stripped[len(EXPECT_ERROR_DIRECTIVE) :].strip()
-            if text:
-                expected.append(text)
-    return tuple(expected)
 
 
 def ensure_submodule(source_dir: Path, args: argparse.Namespace) -> None:
@@ -1079,15 +1049,22 @@ def compile_and_maybe_run(
         log(f"[{spec.name}] running {relative_path} ...")
         run_result = run_command([str(output_path)], cwd=ROOT, verbose=args.verbose)
 
+    compile_fail_reason = None
+    if expect_compile_failure:
+        compile_fail_reason = compile_fail_check.check(
+            compile_fail_check.read_source(test_file),
+            compile_result.returncode,
+            # Newline-separated so the last stdout line can't run into stderr.
+            f"{compile_result.stdout}\n{compile_result.stderr}",
+        )
+
     return TestResult(
         compiler=spec.name,
         test_file=test_file,
         compile_result=compile_result,
         run_result=run_result,
         expect_compile_failure=expect_compile_failure,
-        expected_errors=(
-            parse_expected_errors(test_file) if expect_compile_failure else ()
-        ),
+        compile_fail_reason=compile_fail_reason,
     )
 
 
@@ -1109,26 +1086,12 @@ def print_test_result(result: TestResult) -> None:
     relative_path = result.test_file.relative_to(ROOT)
     if not result.compile_ok:
         if result.expect_compile_failure:
-            if not result.expected_errors:
-                print(
-                    f"[FAIL][{result.compiler}][compile] {relative_path} "
-                    f"(no `{EXPECT_ERROR_DIRECTIVE} <text>` directive)"
-                )
-            elif result.compile_result.returncode == 0:
-                print(
-                    f"[FAIL][{result.compiler}][compile] {relative_path} "
-                    "(expected a compile error, but it compiled)"
-                )
-                return
-            else:
-                print(
-                    f"[FAIL][{result.compiler}][compile] {relative_path} "
-                    "(failed, but not with the expected error(s))"
-                )
-                print(indent_block("missing:"))
-                for text in result.missing_errors:
-                    print(indent_block(f"  {text}"))
-            print(indent_block(render_command_failure(result.compile_result)))
+            summary, *details = (result.compile_fail_reason or "").splitlines()
+            print(f"[FAIL][{result.compiler}][compile] {relative_path} ({summary})")
+            if details:
+                print(indent_block("\n".join(details)))
+            if result.compile_result.returncode != 0:
+                print(indent_block(render_command_failure(result.compile_result)))
             return
         print(f"[FAIL][{result.compiler}][compile] {relative_path}")
         print(indent_block(render_command_failure(result.compile_result)))

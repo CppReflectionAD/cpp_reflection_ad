@@ -1,3 +1,7 @@
+# compile_check(... TRUE) tests are checked by compile_fail_check.py, the same
+# checker run_tests.py uses.
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
 function(compile_check group filelist fail)
     foreach(testfile IN LISTS filelist)
         if(IS_ABSOLUTE "${testfile}")
@@ -23,11 +27,10 @@ function(compile_check group filelist fail)
         )
         if (fail)
             # Must fail with the error(s) its `// EXPECT-ERROR:` comments name.
-            add_test(NAME ${test_name} COMMAND ${CMAKE_COMMAND}
-                "-DBUILD_DIR=${CMAKE_BINARY_DIR}"
-                "-DTARGET=${target_name}"
-                "-DSOURCE=${_source}"
-                -P "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/compile_fail_check.cmake")
+            add_test(NAME ${test_name} COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/compile_fail_check.py"
+                --source "${_source}"
+                -- ${CMAKE_COMMAND} --build "${CMAKE_BINARY_DIR}" --target ${target_name})
         else()
             add_test(NAME ${test_name} COMMAND ${CMAKE_COMMAND} --build "${CMAKE_BINARY_DIR}" --target ${target_name})
         endif()
