@@ -10,7 +10,7 @@ import shlex
 import shutil
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 
@@ -429,14 +429,26 @@ def clang_cxxflags(
     return tuple(flags)
 
 
-def gcc_cxxflags(executable: Path) -> tuple[str, ...]:
+def gcc_cxxflags() -> tuple[str, ...]:
+    return ("-std=c++26", "-freflection")
+
+
+def gcc_runtime_cxxflags(executable: Path) -> tuple[str, ...]:
     # The fork's libstdc++ is newer than the system one, and optimized builds
     # reference symbols only it exports (GLIBCXX_3.4.35), so the test binaries
     # must load it rather than the system copy -- as clang_cxxflags does for
-    # libc++. It is installed next to the compiler.
-    prefix = executable.parent.parent
-    rpaths = [f"-Wl,-rpath,{prefix / lib}" for lib in ("lib64", "lib")]
-    return ("-std=c++26", "-freflection", *rpaths)
+    # libc++. The compiler says where its own copy is, which holds however it
+    # was invoked (a symlink, a ccache wrapper); this needs the compiler built.
+    result = subprocess.run(
+        [str(executable), "-print-file-name=libstdc++.so"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    library = Path(result.stdout.strip())
+    if result.returncode != 0 or not library.is_absolute():
+        return ()  # not found: the system's copy is all there is
+    return (f"-Wl,-rpath,{library.resolve().parent}",)
 
 
 def build_specs(args: argparse.Namespace) -> dict[str, CompilerSpec]:
@@ -446,7 +458,7 @@ def build_specs(args: argparse.Namespace) -> dict[str, CompilerSpec]:
     gcc_build_dir = Path(args.gcc_build_dir).resolve()
     gcc_binary_dir = gcc_build_dir / "artifacts"
     gcc_executable = (
-        Path(args.gcc_executable).resolve()
+        Path(args.gcc_executable).absolute()
         if args.gcc_executable
         else gcc_binary_dir / "bin" / "g++"
     )
@@ -470,7 +482,7 @@ def build_specs(args: argparse.Namespace) -> dict[str, CompilerSpec]:
             build_dir=gcc_build_dir,
             binary_dir=gcc_binary_dir,
             executable=gcc_executable,
-            cxxflags=gcc_cxxflags(gcc_executable),
+            cxxflags=gcc_cxxflags(),
         ),
     }
 
@@ -1163,6 +1175,10 @@ def main() -> int:
     for compiler_name in selected_compilers(args):
         spec = specs[compiler_name]
         validate_compiler_executable(spec)
+        if compiler_name == "gcc":
+            spec = replace(
+                spec, cxxflags=spec.cxxflags + gcc_runtime_cxxflags(spec.executable)
+            )
         for base_dir, patterns in selected_sources(args):
             tests = discover_tests(patterns, base_dir, compiler_name)
             log(
