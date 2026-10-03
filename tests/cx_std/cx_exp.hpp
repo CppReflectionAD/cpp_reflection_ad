@@ -73,7 +73,11 @@ template <typename T> constexpr T exp_core(T x) {
   // Past the type's range the result is +∞ or 0. Return those directly:
   // computing them by overflow is not a constant expression for GCC.
   using limits = std::numeric_limits<T>;
-  if (x > static_cast<T>(limits::max_exponent) * static_cast<T>(ln2_hi))
+  // Above max_exponent·ln2 (the full ln2: ln2_hi alone is 2e-7 short of it
+  // at double) e^x is past the largest finite value.
+  const T max_exponent = static_cast<T>(limits::max_exponent);
+  if (x > max_exponent * static_cast<T>(ln2_hi) +
+              max_exponent * static_cast<T>(ln2_lo))
     return limits::infinity();
   if (x < static_cast<T>(limits::min_exponent - limits::digits - 1) *
               static_cast<T>(ln2_hi))
@@ -82,6 +86,10 @@ template <typename T> constexpr T exp_core(T x) {
   const T r = (x - static_cast<T>(k) * static_cast<T>(ln2_hi)) -
               static_cast<T>(k) * static_cast<T>(ln2_lo);
   const T exp_r = T(1) + r * exp_horner(r, 1, kExpTerms);
+  // So k ≤ max_exponent, and exp_r·2^k is finite exactly when exp_r < 1
+  // there (scaling by a power of two is exact).
+  if (k == limits::max_exponent && exp_r >= T(1))
+    return limits::infinity();
   return exp_r * pow2<T>(k / 2) * pow2<T>(k - k / 2);
 }
 

@@ -50,6 +50,13 @@ double max_ulps(CxF cx_f, StdF std_f, double lo, double hi,
 // subnormals, and the depth of each series.
 static_assert(cx::exp(1e5) == inf && cx::exp(-1e5) == 0.0);
 static_assert(cx::exp(709.0) > 8e307 && cx::exp(-744.0) > 0.0);
+// The largest double and float whose exp is finite, and the next ones up
+constexpr double exp_max = 0x1.62e42fefa39efp+9; // 709.782712893383973...
+static_assert(cx::exp(exp_max) > 1.79e308 && cx::exp(exp_max) < inf);
+static_assert(cx::exp(0x1.62e42fefa39f0p+9) == inf);
+static_assert(cx::exp(0x1.62e42ep+6f) > 3.4e38f &&
+              cx::exp(0x1.62e430p+6f) ==
+                  std::numeric_limits<float>::infinity());
 static_assert(cx::log(5e-324) < -744.0 && cx::log(1e308) > 709.0);
 static_assert(cx::sqrt(5e-324) > 0.0 && cx::sqrt(1e308) > 1e153);
 static_assert(cx::erfc(26.0) > 0.0 && cx::erfc(30.0) == 0.0);
@@ -85,7 +92,10 @@ int main() {
   const auto std_cos = [](double x) { return std::cos(x); };
 
   // exp: the whole range, including results that are subnormal
-  EXPECT_LESS_THAN(max_ulps(cx_exp, std_exp, -745.0, 709.7), 4.0);
+  EXPECT_LESS_THAN(max_ulps(cx_exp, std_exp, -745.0, exp_max), 4.0);
+  // ... and densely up to overflow, where ln2_hi alone once cut off at 2e-7
+  // short of it
+  EXPECT_LESS_THAN(max_ulps(cx_exp, std_exp, exp_max - 3e-7, exp_max), 4.0);
   EXPECT_LESS_THAN(max_ulps(cx_exp, std_exp, -2.0, 2.0), 4.0);
   // log: normal and subnormal arguments, and around 1
   EXPECT_LESS_THAN(max_ulps(cx_log, std_log, 1e-308, 1e308, true), 4.0);
