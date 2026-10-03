@@ -200,99 +200,6 @@ constexpr T apply_registered_inverse_wrt(T, ExtraArgs...) {
 
 namespace detail_inv {
 
-template <info Fn> consteval std::size_t input_count_of() {
-  static constexpr auto nodes = std::define_static_array(build_nodes<Fn>());
-  std::size_t count = 0;
-  template for (constexpr auto n : nodes) {
-    if constexpr (n.op == OpKind::Input)
-      ++count;
-  }
-  return count;
-}
-
-template <info Fn, std::size_t ArgIndex> consteval bool is_affine_in_arg() {
-  static constexpr auto nodes = std::define_static_array(build_nodes<Fn>());
-  constexpr std::size_t N = nodes.size();
-  constexpr std::size_t InputCount = input_count_of<Fn>();
-  if constexpr (ArgIndex >= InputCount)
-    return false;
-
-  struct WrtInfo {
-    bool depends_target = false;
-    bool affine_target = false;
-  };
-
-  WrtInfo info[N];
-  for (std::size_t i = 0; i < N; ++i)
-    info[i] = WrtInfo{};
-
-  int output_idx = -1;
-
-  template for (constexpr auto n : nodes) {
-    if constexpr (n.op == OpKind::Input) {
-      info[n.self].depends_target = (n.self == ArgIndex);
-      info[n.self].affine_target = true;
-    } else if constexpr (n.op == OpKind::Const) {
-      info[n.self].depends_target = false;
-      info[n.self].affine_target = true;
-    } else if constexpr (n.op == OpKind::Output) {
-      output_idx = static_cast<int>(n.self);
-      info[n.self] = info[n.a];
-    } else if constexpr (n.op == OpKind::Add || n.op == OpKind::Sub) {
-      info[n.self].depends_target =
-          info[n.a].depends_target || info[n.b].depends_target;
-      info[n.self].affine_target =
-          info[n.a].affine_target && info[n.b].affine_target;
-    } else if constexpr (n.op == OpKind::Mul) {
-      const bool a_dep = info[n.a].depends_target;
-      const bool b_dep = info[n.b].depends_target;
-      info[n.self].depends_target = a_dep || b_dep;
-      info[n.self].affine_target = info[n.a].affine_target &&
-                                   info[n.b].affine_target && !(a_dep && b_dep);
-    } else if constexpr (n.op == OpKind::Div) {
-      const bool a_dep = info[n.a].depends_target;
-      const bool b_dep = info[n.b].depends_target;
-      info[n.self].depends_target = a_dep || b_dep;
-      info[n.self].affine_target =
-          info[n.a].affine_target && info[n.b].affine_target && !b_dep;
-    } else if constexpr (n.op == OpKind::Neg) {
-      info[n.self].depends_target = info[n.a].depends_target;
-      info[n.self].affine_target = info[n.a].affine_target;
-    } else if constexpr (n.op == OpKind::Exp || n.op == OpKind::Log ||
-                         n.op == OpKind::Sqrt || n.op == OpKind::Erfc ||
-                         n.op == OpKind::Sin || n.op == OpKind::Cos ||
-                         n.op == OpKind::Abs) {
-      info[n.self].depends_target = info[n.a].depends_target;
-      info[n.self].affine_target = !info[n.a].depends_target;
-    } else {
-      // Conservative fallback for unsupported ops.
-      bool dep = false;
-      bool aff = true;
-      if constexpr (op_has_a(n.op)) {
-        dep = dep || info[n.a].depends_target;
-        aff = aff && info[n.a].affine_target;
-      }
-      if constexpr (op_has_b(n.op)) {
-        dep = dep || info[n.b].depends_target;
-        aff = aff && info[n.b].affine_target;
-      }
-      if constexpr (op_has_cond(n.op))
-        dep = dep || info[n.cond].depends_target;
-      info[n.self].depends_target = dep;
-      info[n.self].affine_target = aff && !dep;
-    }
-  }
-
-  if (output_idx < 0)
-    return false;
-
-  const auto &out = nodes[static_cast<std::size_t>(output_idx)];
-  if (out.op != OpKind::Output)
-    return false;
-
-  return info[out.a].depends_target && info[out.a].affine_target;
-}
-
 template <info Fn, std::size_t ArgIndex, typename T, typename... ExtraArgs>
 constexpr T eval_fn_with_arg_runtime(T target_x, ExtraArgs... extras) {
   constexpr std::size_t InputCount = sizeof...(ExtraArgs) + 1;
@@ -438,7 +345,7 @@ template <std::size_t N> struct RuntimeEvalGraph {
 };
 
 template <info Fn> consteval auto build_runtime_eval_graph() {
-  static constexpr auto nodes = std::define_static_array(build_nodes<Fn>());
+  static constexpr auto nodes = nodes_of<Fn>;
   constexpr std::size_t N = nodes.size();
 
   RuntimeEvalGraph<N> g{};
@@ -523,7 +430,7 @@ constexpr T apply_inverse_step_wrt(const InverseStepWrt &step, T y,
 
 template <info Fn, std::size_t ArgIndex>
 consteval auto build_inverse_plan_wrt() {
-  static constexpr auto nodes = std::define_static_array(build_nodes<Fn>());
+  static constexpr auto nodes = nodes_of<Fn>;
   constexpr std::size_t N = nodes.size();
   constexpr std::size_t InputCount = input_count_of<Fn>();
 
@@ -542,37 +449,15 @@ consteval auto build_inverse_plan_wrt() {
   if constexpr (ArgIndex >= InputCount) {
     return fail(-1, OpKind::Input);
   } else {
-    bool depends_target[N] = {};
-    int output_idx = -1;
-
-    template for (constexpr auto n : nodes) {
-      if constexpr (n.op == OpKind::Input) {
-        depends_target[n.self] = (n.self == ArgIndex);
-      } else if constexpr (n.op == OpKind::Const) {
-        depends_target[n.self] = false;
-      } else if constexpr (n.op == OpKind::Output) {
-        output_idx = static_cast<int>(n.self);
-        depends_target[n.self] = depends_target[n.a];
-      } else {
-        bool dep = false;
-        if constexpr (op_has_a(n.op))
-          dep = dep || depends_target[n.a];
-        if constexpr (op_has_b(n.op))
-          dep = dep || depends_target[n.b];
-        if constexpr (op_has_cond(n.op))
-          dep = dep || depends_target[n.cond];
-        depends_target[n.self] = dep;
-      }
-    }
-
-    if (output_idx < 0)
-      return fail(-1, OpKind::Output);
+    static constexpr auto dep = target_dependence_of<Fn, ArgIndex>;
+    // build_nodes ends with the Output node.
+    constexpr int output_idx = static_cast<int>(N) - 1;
 
     const auto &out = nodes[static_cast<std::size_t>(output_idx)];
     if (out.op != OpKind::Output)
       return fail(output_idx, out.op);
 
-    if (!depends_target[out.a])
+    if (!dep[out.a].varies)
       return fail(output_idx, OpKind::Output);
 
     std::array<InverseStepWrt, N> steps{};
@@ -617,14 +502,14 @@ consteval auto build_inverse_plan_wrt() {
 
       if (n.op == OpKind::Add || n.op == OpKind::Sub || n.op == OpKind::Mul ||
           n.op == OpKind::Div) {
-        const bool a_dep = depends_target[n.a];
-        const bool b_dep = depends_target[n.b];
+        const bool a_dep = dep[n.a].varies;
+        const bool b_dep = dep[n.b].varies;
         if (a_dep == b_dep)
           return fail(static_cast<int>(cur), n.op);
 
         const std::size_t dep_idx = a_dep ? n.a : n.b;
         const std::size_t cst_idx = a_dep ? n.b : n.a;
-        if (depends_target[cst_idx])
+        if (dep[cst_idx].varies)
           return fail(static_cast<int>(cur), n.op);
 
         if (n.op == OpKind::Add) {
@@ -697,8 +582,7 @@ consteval auto build_inverse_plan() {
     if constexpr (has_registered_inverse<Fn, RegisteredPairs...>()) {
       return std::size_t{56};
     } else {
-      static constexpr auto nodes_for_size =
-          std::define_static_array(build_nodes<Fn>());
+      static constexpr auto nodes_for_size = nodes_of<Fn>;
       return nodes_for_size.size();
     }
   }();
@@ -718,7 +602,7 @@ consteval auto build_inverse_plan() {
   if constexpr (has_registered_inverse<Fn, RegisteredPairs...>()) {
     return InversePlan{true, -1, OpKind::Input, 0, {}};
   } else {
-    static constexpr auto nodes = std::define_static_array(build_nodes<Fn>());
+    static constexpr auto nodes = nodes_of<Fn>;
     constexpr std::size_t N = nodes.size();
 
     NodeInfo info[N];
