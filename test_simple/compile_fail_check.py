@@ -35,13 +35,13 @@ from pathlib import Path
 
 
 EXPECT_ERROR_DIRECTIVE = "// EXPECT-ERROR:"
-# A `//` comment that reads like an EXPECT-ERROR directive: the hyphen or
-# underscore spelling with or without a colon, or the spaced spelling with one
-# (so prose like "expected errors are listed below" is left alone). A line
-# that matches this but is not an exact directive is a mistake, not something
-# to skip.
+# A `//` comment (including `///` and `//!`) that reads like an EXPECT-ERROR
+# directive: the hyphen or underscore spelling with or without a colon, or the
+# spaced spelling with one (so prose like "expected errors are listed below"
+# is left alone). A line that matches this but is not an exact directive is a
+# mistake, not something to skip.
 _NEAR_MISS_RE = re.compile(
-    r"//\s*expect(?:ed)?(?:[-_]errors?\b|\s+errors?\s*:)", re.IGNORECASE
+    r"//[/!]*\s*expect(?:ed)?(?:[-_]errors?\b|\s+errors?\s*:)", re.IGNORECASE
 )
 # String and character literals, and `/* ... */` comments that close on the
 # same line, are blanked out before a line of code is searched for a
