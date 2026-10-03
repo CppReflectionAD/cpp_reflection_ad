@@ -349,7 +349,8 @@ EXPECT_ERROR = DirectiveFamily.with_compiler_variants(
 )
 # `// TEST-FLAGS: <flags>`: extra flags to compile the test with (e.g. -O2
 # for a benchmark). A misspelt one is an error rather than flags silently
-# dropped.
+# dropped. A relative path in them is relative to the test's directory (see
+# absolute_paths).
 TEST_FLAGS = DirectiveFamily.with_compiler_variants(
     "TEST-FLAGS", "flags", near_miss=_near_miss("TEST", "FLAGS?")
 )
@@ -420,9 +421,65 @@ def read_test_directives(
     return TestDirectives(tuple(flags), tuple(d.text for d in expected))
 
 
+# The options whose value is a path: as the next argument (an exact name, so
+# that `-include-pch` or `-isystem-after` is left alone), or joined to the
+# option (`-Idir`, `--sysroot=dir`).
+_SEPARATE_PATH_OPTIONS = frozenset(
+    {"-I", "-L", "-B", "-isystem", "-iquote", "-idirafter", "-isysroot", "--sysroot"}
+)
+_JOINED_PATH_OPTIONS = ("-I", "-L", "-B", "--sysroot=")
+# A forced include, which the compiler looks for in its working directory,
+# then along the include path: made absolute only if it is in the test's
+# directory, so that one found along the include path still is.
+_INCLUDE_OPTIONS = frozenset({"-include", "-imacros"})
+
+
+def _absolute_path(value: str, base: Path) -> str:
+    # `=dir` and `$SYSROOT/dir` are relative to the sysroot; `-I-` isn't a
+    # path.
+    if not value or value[0] in "=$" or value == "-" or Path(value).is_absolute():
+        return value
+    return str(base / value)
+
+
+def absolute_paths(flags: Sequence[str], base: Path) -> tuple[str, ...]:
+    """`flags`, with the relative paths in them made relative to `base`
+    (an absolute directory) instead of the compiler's working directory.
+
+    Both runners give a test its TEST-FLAGS this way, so that a path in them
+    means the same in each, although each runs the compiler in a different
+    directory (run_tests.py in the repository's root, CMake in its build
+    tree): `-I extra` is the `extra` directory beside the test. The paths
+    are made absolute only in the command line that builds the test, never
+    in the test.
+    """
+    result: list[str] = []
+    pending: str | None = None  # the option whose value is the next flag
+    for flag in flags:
+        if pending is not None:
+            if pending not in _INCLUDE_OPTIONS:
+                flag = _absolute_path(flag, base)
+            elif (base / flag).is_file():
+                flag = str(base / flag)
+            pending = None
+        elif flag in _SEPARATE_PATH_OPTIONS or flag in _INCLUDE_OPTIONS:
+            pending = flag
+        else:
+            for option in _JOINED_PATH_OPTIONS:
+                if flag.startswith(option):
+                    flag = option + _absolute_path(flag[len(option):], base)
+                    break
+        result.append(flag)
+    return tuple(result)
+
+
 def load_test_directives(path: Path, compiler: str, must_fail: bool) -> TestDirectives:
-    """read_test_directives for the test at `path`.
+    """read_test_directives for the test at `path`, with the paths in its
+    flags relative to its directory (see absolute_paths).
 
     Raises DirectiveError if it can't be read, too.
     """
-    return read_test_directives(read_comments(path), compiler, must_fail)
+    directives = read_test_directives(read_comments(path), compiler, must_fail)
+    return directives._replace(
+        flags=absolute_paths(directives.flags, path.parent.absolute())
+    )

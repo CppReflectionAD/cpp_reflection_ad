@@ -26,7 +26,9 @@ once a gcc engine exposes the same `ad::` interface its drivers can move up to
 binaries, and reports compile vs runtime failures. A test may add flags via a
 `// TEST-FLAGS: ...` comment at the top of the file, before any code
 (benchmarks use it for `-O2`); a long list may be split over several such
-comments. Any `--extra-cxxflag` comes after them, so it can override them
+comments. A relative path in them (`-I extra`, `-include extra/x.hpp`) is
+relative to the test's directory, under both runners: they pass it to the
+compiler as an absolute path. Any `--extra-cxxflag` comes after them, so it can override them
 (under CMake, `CMAKE_CXX_FLAGS` and the build type's flags come after them, so
 `-DCMAKE_CXX_FLAGS=-O0` undoes a benchmark's `-O2`).
 Tests under `tests/static_fail/` (or `clang_only/static_fail/`,
@@ -36,13 +38,21 @@ Tests under `tests/static_fail/` (or `clang_only/static_fail/`,
 where `<text>` is part of the compiler's error message or of a note attached to
 that error (not of a note that only says where the error was reached from, such
 as `in instantiation of ... requested here`). Use one comment per expected
-error; each must match a different error. Text that only one compiler prints
-goes in a `// EXPECT-ERROR-CLANG:` or `// EXPECT-ERROR-GCC:` comment
-(`TEST-FLAGS` has the same variants):
+error; each must match a different error. For example:
 
 ```cpp
 // EXPECT-ERROR: ad::inverse requires an explicit inverse plan
-// EXPECT-ERROR-CLANG: subexpression not valid in a constant expression
+```
+
+Text that only one compiler prints goes in a `// EXPECT-ERROR-CLANG:` or
+`// EXPECT-ERROR-GCC:` comment (`TEST-FLAGS` has the same variants). These
+match the same `static_assert` failure, which each compiler explains in its
+own words; as each compiler reports it in a single error, the test has one
+directive per compiler, not a shared one as well:
+
+```cpp
+// EXPECT-ERROR-CLANG: due to requirement 'is_invertible<
+// EXPECT-ERROR-GCC: 'ad::is_invertible<^^fn_square>()' evaluates to false
 ```
 
 A misspelt or misplaced directive fails the test instead of being ignored.

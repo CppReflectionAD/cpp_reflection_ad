@@ -43,7 +43,7 @@ import os
 import re
 import subprocess
 import sys
-from pathlib import Path, PurePath
+from pathlib import Path
 from typing import Sequence
 
 if __package__:
@@ -77,34 +77,28 @@ _QUOTES = str.maketrans({"\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": 
 # The header line of a diagnostic, from clang or gcc:
 #   <file>:<line>[:<col>]: <kind>: <message>
 #   <pseudo-file>: <kind>: <message>   (`<command-line>`, `<built-in>`)
-#   <file-or-tool>: <kind>: <message>  (gcc's file-level diagnostics, and
-#                                       `clang++`, `cc1plus`; see below; a
+#   <file-or-tool>: <kind>: <message>  (gcc's file-level diagnostics, on
+#                                       any file, an extensionless header
+#                                       such as `.../c++/v1/vector` too, and
+#                                       the driver's: `clang++`, `xg++`; a
 #                                       file's path may contain spaces)
 #   <kind>: <message>
 # Only <message> is searched. Matching the whole line would let text that
 # happens to occur in the file path match any error at all, and the
 # compilers echo source lines (which may contain `error:` inside a string
-# literal) indented under the header, so those never match.
+# literal) indented under the header, so those never match. An error from
+# any tool counts: the test is only compiled, never linked, so the only
+# other tool is the build tool (`ninja: error: ...`), whose errors say the
+# build broke and which no EXPECT-ERROR names.
 _DIAGNOSTIC_HEADER_RE = re.compile(
-    r"^(?:(?:\S.*?:\d+(?::\d+)?|<[^>]+>|(?P<prefix>[^\s:](?:[^:]*[^\s:])?)): )?"
+    r"^(?:(?:\S.*?:\d+(?::\d+)?|<[^>]+>|[^\s:](?:[^:]*[^\s:])?): )?"
     r"(?P<kind>(?:fatal )?error|sorry, unimplemented|internal compiler error"
     r"|warning|note|remark): (?P<message>.*)$"
 )
-_ERROR_KINDS = frozenset({"error", "fatal error", "sorry, unimplemented"})
-# A <file-or-tool> prefix with a C or C++ source or header extension is a
-# file (gcc prints a diagnostic without a line that way); otherwise it is a
-# tool, which counts only if it is the compiler: its whole name is a driver
-# or cc1 name, with any target prefix and version suffix (`clang++`,
-# `x86_64-linux-gnu-g++-14`, `cc1plus`), not another tool that merely
-# contains one (`clang-linker-wrapper`, `gcc-ar`) or the build tool
-# (`ninja`, `make`).
-_SOURCE_FILE_RE = re.compile(
-    r"\.(?:c|cc|cp|cpp|cxx|c\+\+|cppm|ixx|ii|h|hh|hpp|hxx|h\+\+|ipp|tpp|tcc|inc|C|H)$"
-)
-_COMPILER_TOOL_RE = re.compile(
-    r"(?:[\w.]+-)*(?:clang(?:\+\+)?|gcc|g\+\+|c\+\+|cc|cc1(?:plus)?)"
-    r"(?:-\d+(?:\.\d+)*)?(?:\.exe)?"
-)
+# Not gcc's `sorry, unimplemented:`, which says the compiler can't build the
+# test at all (a gap in its reflection support, say), so that no test passes
+# by it, even when its message names what an EXPECT-ERROR does.
+_ERROR_KINDS = frozenset({"error", "fatal error"})
 # A note in gcc's nested diagnostics (how the gcc trunk this repo builds
 # prints them by default): an indented bullet line under the error, `•` or
 # `*`. Source lines the compilers echo are indented too, but start with the
@@ -176,11 +170,6 @@ def _crash(returncode: int, lines: list[str]) -> str | None:
     return None
 
 
-def _is_compiler(prefix: str) -> bool:
-    name = PurePath(prefix).name
-    return bool(_SOURCE_FILE_RE.search(name) or _COMPILER_TOOL_RE.fullmatch(name))
-
-
 def error_diagnostics(output: str) -> list[tuple[str, ...]]:
     """The error diagnostics in compiler `output`.
 
@@ -194,7 +183,8 @@ def error_diagnostics(output: str) -> list[tuple[str, ...]]:
     Notes belong to the diagnostic just before them, so those after a
     warning, or after any other line that isn't indented (a diagnostic of
     another kind, build-tool output) other than gcc's context lines, belong
-    to no error. gcc's `sorry, unimplemented:` counts as an error.
+    to no error. gcc's `sorry, unimplemented:` isn't an error here (see
+    _ERROR_KINDS), so neither it nor its notes match anything.
     """
     diagnostics: list[list[str]] = []
     current: list[str] | None = None
@@ -225,12 +215,10 @@ def error_diagnostics(output: str) -> list[tuple[str, ...]]:
             elif line[:1] not in ("", " ") and not _CONTEXT_RE.match(line):
                 current = None
             continue
-        prefix, kind, message = match.group("prefix", "kind", "message")
+        kind, message = match.group("kind", "message")
         in_message = True
         message_of = None
-        if prefix is not None and not _is_compiler(prefix):
-            current = None
-        elif kind == "note":
+        if kind == "note":
             if current is not None and not _BACKTRACE_NOTE_RE.match(message):
                 current.append(message)
                 message_of = current

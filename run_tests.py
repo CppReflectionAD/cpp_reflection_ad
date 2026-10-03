@@ -125,9 +125,13 @@ class CompilerSpec:
     executable: Path
     # Reflection flag profile for this compiler: everything the compiler needs
     # beyond -std and the source/-o pair (reflection features, stdlib, include
-    # and library paths). This is what lets the same test compile under a
-    # different compiler by simply selecting a different profile.
+    # paths). This is what lets the same test compile under a different
+    # compiler by simply selecting a different profile.
     cxxflags: tuple[str, ...] = ()
+    # The flags it also needs to link (library paths), which a compile-only
+    # command must not get: clang warns that they are unused, which
+    # -Werror makes an error.
+    ldflags: tuple[str, ...] = ()
 
 
 def parse_args() -> argparse.Namespace:
@@ -414,11 +418,10 @@ def clang_cxxflags(
     """Reflection flag profile for the clang-p2996 fork.
 
     Mirrors DEMO_FLAGS in the top-level Makefile: the reflection features, the
-    libc++ stdlib, the -isystem for the installed <meta> header, and the
-    library/rpath for libc++ (all rooted at the built compiler tree).
+    libc++ stdlib and the -isystem for the installed <meta> header (rooted at
+    the built compiler tree). The libc++ library paths are clang_ldflags.
     """
     libcxx_inc = clang_root / "include" / "c++" / "v1"
-    libcxx_lib = clang_root / "lib"
     flags: list[str] = [
         "-freflection",
         "-fparameter-reflection",
@@ -426,18 +429,24 @@ def clang_cxxflags(
         "-stdlib=libc++",
         "-isystem",
         str(libcxx_inc),
-        f"-L{libcxx_lib}",
-        f"-Wl,-rpath,{libcxx_lib}",
     ]
-    for sub in libcxx_lib.glob("*linux*"):
-        if sub.is_dir():
-            flags.extend([f"-L{sub}", f"-Wl,-rpath,{sub}"])
 
     if sys.platform == "darwin":
         flags.extend(["-isysroot", macos_sdk_path(verbose)])
     elif gcc_toolchain:
         flags.append(f"--gcc-toolchain={gcc_toolchain}")
 
+    return tuple(flags)
+
+
+def clang_ldflags(clang_root: Path) -> tuple[str, ...]:
+    """The library path and rpath for the clang-p2996 fork's libc++ (the rest
+    of DEMO_FLAGS), which only a link uses."""
+    libcxx_lib = clang_root / "lib"
+    flags = [f"-L{libcxx_lib}", f"-Wl,-rpath,{libcxx_lib}"]
+    for sub in libcxx_lib.glob("*linux*"):
+        if sub.is_dir():
+            flags.extend([f"-L{sub}", f"-Wl,-rpath,{sub}"])
     return tuple(flags)
 
 
@@ -460,6 +469,7 @@ def build_specs(args: argparse.Namespace) -> dict[str, CompilerSpec]:
                 else clang_root / "bin" / "clang++"
             ),
             cxxflags=clang_cxxflags(clang_root, args.gcc_toolchain, args.verbose),
+            ldflags=clang_ldflags(clang_root),
         ),
         "gcc": CompilerSpec(
             name="gcc",
@@ -1051,8 +1061,8 @@ def compile_and_maybe_run(
             directives, expect_compile_failure, args.extra_cxxflag
         ),
         # A compile-fail test is only compiled, so no linker output reaches
-        # the checker.
-        *(["-c"] if expect_compile_failure else []),
+        # the checker; any other is linked too.
+        *(["-c"] if expect_compile_failure else spec.ldflags),
         str(test_file),
         "-o",
         str(output_path),

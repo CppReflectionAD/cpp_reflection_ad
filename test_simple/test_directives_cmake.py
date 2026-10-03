@@ -21,8 +21,9 @@ compile, the diagnostic flags. It is rewritten only when they change, so
 that a change to the test that leaves its flags alone, or to these scripts,
 doesn't recompile every test.
 
-If the test's directives are invalid, this prints why, removes the response
-file and fails, so building the test fails.
+If the test's directives are invalid, or the user's flags can't be read or
+split, this prints why, removes the response file and fails, so building
+the test fails.
 """
 
 from __future__ import annotations
@@ -65,6 +66,17 @@ def test_flags(
     return list(compile_fail_check.compile_flags(directives, must_fail, user_flags))
 
 
+def _fail(output: Path, reason: str) -> int:
+    """Print `reason`, remove the response file `output`, so that the build
+    runs this again once the cause is fixed, and return the exit status."""
+    try:
+        output.unlink()  # (missing_ok needs Python 3.8)
+    except FileNotFoundError:
+        pass
+    print(reason, file=sys.stderr)
+    return 1
+
+
 def main(argv: list[str] | None = None) -> int:
     # No docstring under `python3 -OO`.
     parser = argparse.ArgumentParser(
@@ -77,17 +89,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--must-fail", action="store_true")
     args = parser.parse_args(argv)
 
-    user_flags = shlex.split(args.user_flags_file.read_text(encoding="utf-8"))
+    try:
+        user_flags = shlex.split(args.user_flags_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:  # unreadable, or unbalanced quotes
+        return _fail(
+            args.output,
+            f"can't read the user's flags (CMAKE_CXX_FLAGS and those of the "
+            f"build type) from {args.user_flags_file}: {error}",
+        )
     try:
         flags = test_flags(args.source, args.compiler, args.must_fail, user_flags)
     except source_directives.DirectiveError as error:
-        # No response file, so the build reruns this once the test is fixed.
-        try:
-            args.output.unlink()  # (missing_ok needs Python 3.8)
-        except FileNotFoundError:
-            pass
-        print(f"{args.source}: {error}", file=sys.stderr)
-        return 1
+        return _fail(args.output, f"{args.source}: {error}")
     content = "".join(f"{response_file_argument(flag)}\n" for flag in flags)
     try:
         unchanged = args.output.read_text(encoding="utf-8") == content
