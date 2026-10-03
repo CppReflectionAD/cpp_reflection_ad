@@ -27,10 +27,11 @@
 //      `(s > k ? 1 : 0) > 0.5`, needs no root of its own: it flips only where
 //      a comparison inside it does.
 //   3. At each root, evaluate the whole function with the crossings there
-//      forced to their outcome just above, and just below, the root. The
-//      difference is the jump. Roots with no jump are dropped, and so are
-//      those whose jump is only rounding: one that vanishes or changes sign
-//      a few ulps away, as at a kink whose root is not a double.
+//      forced to their outcome just above, and just below, the root, and
+//      those rooted a few ulps away held at their side of it. The difference
+//      is the jump. Roots with no jump are dropped, and so are those whose
+//      jump is only rounding: one that vanishes or changes sign a few ulps
+//      away, as at a kink whose root is not a double.
 //   4. Return as a static array (assuming finite discontinuities)
 //
 // Everything is evaluated as Fn evaluates it: branches it does not take are
@@ -463,15 +464,18 @@ template <std::size_t N> struct Sweep {
   std::array<double, N> val = {};
   std::array<double, N> tan = {};   // derivative in the target
   std::array<bool, N> reached = {}; // evaluated: Fn reaches it for some target
-  // Reached, and true for some target when read as a condition.
-  std::array<bool, N> may_hold = {};
+  // Reached, and true (may_hold) or false (may_fail) for some target when
+  // read as a condition. Neither, if not reached.
+  std::array<bool, N> may_hold = {}, may_fail = {};
 };
 
 // Values and target derivatives of every node needed to place the crossings,
 // with the target input at x. A node is evaluated, as Fn evaluates it, only
-// if its guard can hold for some target: a target-free guard by its value,
-// `&&` / `||` by their operands' (so `s > 1 && k > 0` at k = 0 never holds),
-// anything else that varies as possibly true.
+// if its guard can hold for some target. Whether a condition may be true, and
+// whether it may be false: a target-free one by its value, `!`, `&&` and `||`
+// by their operands' (so `s > 1 && k > 0` at k = 0 never holds, and the else
+// branch of `s > 1 || k > 0` at k = 1 is never taken), anything else that
+// varies as either.
 template <info Fn, std::size_t Target, std::size_t NumArgs>
 constexpr auto sweep(const std::array<double, NumArgs> &in, double x) {
   static constexpr auto nodes = nodes_of<Fn>;
@@ -489,14 +493,21 @@ constexpr auto sweep(const std::array<double, NumArgs> &in, double x) {
       s.reached[i] = true;
       s.val[i] = node_value<Fn, i, Target>(s.val, in, x);
       s.tan[i] = node_tangent<Fn, i, Target>(s.val, s.tan);
-      if constexpr (!dep[i].varies)
+      if constexpr (!dep[i].varies) {
         s.may_hold[i] = s.val[i] != 0.0;
-      else if constexpr (op == OpKind::And)
+        s.may_fail[i] = !s.may_hold[i];
+      } else if constexpr (op == OpKind::Not) {
+        s.may_hold[i] = s.may_fail[a];
+        s.may_fail[i] = s.may_hold[a];
+      } else if constexpr (op == OpKind::And) {
         s.may_hold[i] = s.may_hold[a] && s.may_hold[b];
-      else if constexpr (op == OpKind::Or)
+        s.may_fail[i] = s.may_fail[a] || s.may_fail[b];
+      } else if constexpr (op == OpKind::Or) {
         s.may_hold[i] = s.may_hold[a] || s.may_hold[b];
-      else
-        s.may_hold[i] = true;
+        s.may_fail[i] = s.may_fail[a] && s.may_fail[b];
+      } else {
+        s.may_hold[i] = s.may_fail[i] = true;
+      }
     }
   }
   return s;
@@ -530,8 +541,9 @@ constexpr double step_ulps(double x, int k) {
   return x;
 }
 
-// How far a root is moved to where crossing I's sides are equal, and how far
-// either side of it a jump must keep its sign to be more than rounding.
+// How far a root is moved to where crossing I's sides are equal, how far
+// either side of it a jump must keep its sign to be more than rounding, and
+// how near another crossing's root must be to be held at its side.
 inline constexpr int kSnapUlps = 4;
 
 // Trailing zero bits in x's significand: more means a shorter number.
@@ -622,7 +634,8 @@ constexpr double value_with(const std::array<double, NumArgs> &in, double x,
 // sits between the comparison and the output (`!`, `&&`, `||`, nested
 // selects, scaling, other jumps at the same point) is evaluated rather than
 // pattern-matched. `==` / `!=` and conditions rooted there take their outcome
-// off the point on both sides. Roots with no jump, or with one that vanishes
+// off the point on both sides, and crossings rooted a few ulps away the
+// outcome on their side of it. Roots with no jump, or with one that vanishes
 // or changes sign a few ulps away (rounding at a kink), are not reported.
 //
 // `in` holds the function's arguments; the target's slot is ignored.
@@ -701,14 +714,28 @@ analyze(const std::array<double, NumArgs> &in) {
     if (!makes_point[c] || measured[c])
       continue;
     const double point = root[c];
+    // Crossings rooted at the point take their outcome above it on the
+    // right and below it on the left. Those rooted within kSnapUlps of it
+    // take the outcome on their side of it on both, by where their roots
+    // lie rather than by Fn's arithmetic: that can make a comparison's sides
+    // exactly equal on a run of doubles, so a crossing rooted just below the
+    // point may still read false there. Such crossings are often one
+    // crossing in exact arithmetic (`s * 1.1 > k && s / 0.9 > k / 0.99`),
+    // whose jump would otherwise be lost at both roots.
+    const double lo = step_ulps(point, -kSnapUlps),
+                 hi = step_ulps(point, kSnapUlps);
     std::array<signed char, N> right, left;
     right.fill(-1);
     left.fill(-1);
     for (std::size_t j = 0; j < N; ++j) {
-      if (rooted[j] && root[j] == point) {
+      if (!rooted[j] || root[j] < lo || hi < root[j])
+        continue;
+      if (root[j] == point) {
         right[j] = above[j];
         left[j] = below[j];
         measured[j] = true;
+      } else {
+        right[j] = left[j] = root[j] < point ? above[j] : below[j];
       }
     }
     const double from_right = value_with<Fn, Target>(in, point, right);
@@ -721,7 +748,7 @@ analyze(const std::array<double, NumArgs> &in) {
     // A kink -- continuous where its branches meet -- has no jump at its
     // exact root, but that need not be a double, nor the point (snap finds
     // a double where the crossing's sides are equal, not the branches'), so
-    // rounding can leave a tiny one here. Measured a few ulps either side,
+    // rounding can leave a tiny one here. Measured kSnapUlps either side,
     // with the same crossings forced, it then vanishes or changes sign; a
     // jump keeps its sign. A side that is not finite says nothing.
     const auto jump_at = [&](double x) {
@@ -732,8 +759,7 @@ analyze(const std::array<double, NumArgs> &in) {
       return is_finite(other) &&
              (other == 0.0 || (other > 0.0) != (jump > 0.0));
     };
-    if (jump != 0.0 && !disagrees(jump_at(step_ulps(point, -kSnapUlps))) &&
-        !disagrees(jump_at(step_ulps(point, kSnapUlps))))
+    if (jump != 0.0 && !disagrees(jump_at(lo)) && !disagrees(jump_at(hi)))
       collector.add_point_with_amplitude(point, jump);
   }
 

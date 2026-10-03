@@ -231,6 +231,13 @@ double dead_nested_crossing(double spot, double k) {
                       : 1.0 / spot;
 }
 
+// ... and so is the else branch of a guard that always holds: at k > 0 the
+// condition is always true, so `spot > 0`, whose root 0 is log's pole, is
+// never reached
+double dead_else_branch(double spot, double k) {
+  return (spot > 1.0 || k > 0.0) ? std::log(spot) : (spot > 0.0 ? 1.0 : 0.0);
+}
+
 // A `?:` on a target-free condition (a call / put flag) is affine when its
 // branches are
 double flagged_digital(double spot, double strike, double is_call) {
@@ -252,6 +259,17 @@ double tiny_digital(double spot, double strike) {
 }
 double steep_call_with_rebate(double spot, double strike) {
   return (spot > strike) ? (spot - strike) * 1e6 + 1e-3 : 0.0;
+}
+
+// The same crossing written two ways. They meet at strike / 1.1 in exact
+// arithmetic but are rooted a few ulps apart, and Fn's own sides can be
+// exactly equal on a run of doubles between them. Either way the function
+// jumps once, by 1.
+double same_crossing_and(double spot, double strike) {
+  return (spot * 1.1 > strike && spot / 0.9 > strike / 0.99) ? 1.0 : 0.0;
+}
+double same_crossing_or(double spot, double strike) {
+  return (spot * 1.1 > strike || spot / 0.9 > strike / 0.99) ? 1.0 : 0.0;
 }
 
 // Functions go through cx_std in both entry points: sin/cos work at compile
@@ -678,6 +696,24 @@ int main() {
            .size()),
       1);
 
+  // A dead else branch is not rooted either; a live one is
+  EXPECT_EQUAL(
+      (ad::get_discontinuity_points_and_amplitudes<^^dead_else_branch, 0>(1.0)
+           .size()),
+      0);
+  EXPECT_EQUAL(
+      (ad::get_discontinuity_points_and_amplitudes_rt<^^dead_else_branch, 0>(
+           1.0)
+           .size()),
+      0);
+  constexpr auto disc_live_else =
+      ad::get_discontinuity_points_and_amplitudes<^^dead_else_branch, 0>(-1.0);
+  EXPECT_EQUAL(disc_live_else.size(), 2);
+  EXPECT_EQUAL(disc_live_else.point(0), 0.0);
+  EXPECT_EQUAL(disc_live_else.amplitude(0), 1.0);
+  EXPECT_EQUAL(disc_live_else.point(1), 1.0);
+  EXPECT_EQUAL(disc_live_else.amplitude(1), -1.0);
+
   // A target-free flag picks the side: a digital call, or a digital put
   constexpr auto disc_flag_call =
       ad::get_discontinuity_points_and_amplitudes<^^flagged_digital, 0>(100.0,
@@ -754,6 +790,40 @@ int main() {
   EXPECT_EQUAL(disc_third_eq.amplitude(0), 1.0);
   EXPECT_EQUAL(measure_jump_on_function(step_times_third_eq, 100.0, 100.0),
                disc_third_eq.amplitude(0));
+
+  // The same crossing written two ways jumps once, by 1, wherever its two
+  // roots land: at 69.19 Fn's sides are both exactly equal on a run of
+  // doubles, and each root is on the other's run
+  constexpr auto disc_same_and =
+      ad::get_discontinuity_points_and_amplitudes<^^same_crossing_and, 0>(
+          69.19);
+  EXPECT_EQUAL(disc_same_and.size(), 1);
+  EXPECT_EQUAL(disc_same_and.amplitude(0), 1.0);
+  EXPECT_EQUAL(measure_jump_on_function(same_crossing_and,
+                                        disc_same_and.point(0), 69.19),
+               1.0);
+  constexpr auto disc_same_or =
+      ad::get_discontinuity_points_and_amplitudes<^^same_crossing_or, 0>(0.37);
+  EXPECT_EQUAL(disc_same_or.size(), 1);
+  EXPECT_EQUAL(disc_same_or.amplitude(0), 1.0);
+  {
+    int not_one_jump = 0;
+    for (int i = 1; i <= 2000; ++i) {
+      const double strike = 0.37 * i;
+      const auto both =
+          ad::get_discontinuity_points_and_amplitudes_rt<^^same_crossing_and,
+                                                         0>(strike);
+      const auto either =
+          ad::get_discontinuity_points_and_amplitudes_rt<^^same_crossing_or, 0>(
+              strike);
+      not_one_jump += both.size() != 1 || both.amplitude(0) != 1.0 ||
+                      std::fabs(both.point(0) - strike / 1.1) > 1e-13 * strike;
+      not_one_jump +=
+          either.size() != 1 || either.amplitude(0) != 1.0 ||
+          std::fabs(either.point(0) - strike / 1.1) > 1e-13 * strike;
+    }
+    EXPECT_EQUAL(not_one_jump, 0);
+  }
 
   // Every argument but the target, in order
   constexpr auto disc_kfirst =
