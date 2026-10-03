@@ -120,11 +120,7 @@ inline constexpr double erfc_chebyshev[kErfcPieces][kErfcMaxTerms] = {
 
 // exp(-x²), with x² = hi + lo exactly.
 template <typename T> constexpr T exp_minus_square(T x) {
-  constexpr T splitter =
-      pow2<T>((std::numeric_limits<T>::digits + 1) / 2) + T(1);
-  const T c = splitter * x;
-  const T hi = c - (c - x);
-  const T lo = x - hi;
+  const auto [hi, lo] = split(x);
   return cx::exp(-(hi * hi)) * cx::exp(-(T(2) * hi * lo + lo * lo));
 }
 

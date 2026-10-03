@@ -63,6 +63,20 @@ template <typename T> constexpr T pow2(int k) {
   return result;
 }
 
+// v = hi + lo exactly, each half of T's significand (Veltkamp's split), so
+// products of halves are exact: the core of an error-free product (Dekker).
+// |v| must be well within range: v · 2^(digits/2) must not overflow.
+template <typename T> struct Halves {
+  T hi, lo;
+};
+template <typename T> constexpr Halves<T> split(T v) {
+  constexpr T splitter =
+      pow2<T>((std::numeric_limits<T>::digits + 1) / 2) + T(1);
+  const T t = splitter * v;
+  const T hi = t - (t - v);
+  return {hi, v - hi};
+}
+
 // x = m · 2^e with m ∈ [1, 2), for finite positive x (frexp, scaled by 2).
 // Scaling by powers of two is exact. The coarse steps are 2^64, within even
 // float's range: a larger one overflows there, which GCC rejects during
