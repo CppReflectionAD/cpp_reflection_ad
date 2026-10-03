@@ -25,8 +25,9 @@ The directives (TEST-FLAGS included) are read with
 source_directives.read_test_directives before anything is compiled, so a test
 without a valid one fails at once.
 
-The compiler must run with COMPILE_ENV and DIAGNOSTIC_FLAGS, so that its
-output is in the form parsed here.
+The compiler must run with COMPILE_ENV and the flags compile_flags gives the
+test, so that its output is in the form parsed here, and must only compile the
+test (`-c`), not link it, so that its output holds no linker errors.
 
 This is the single implementation of that check: run_tests.py imports it, and
 CTest runs it as a script around the build of each compile_check(... TRUE)
@@ -51,8 +52,6 @@ else:  # run as a script; its directory isn't on sys.path under `python3 -P`
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import source_directives
 
-DirectiveError = source_directives.DirectiveError
-
 # The environment and flags the compiler must run with. In the C locale the
 # compilers write English and ASCII quotes (an NLS-enabled gcc otherwise
 # translates `error:` and quotes with ‘’ in a UTF-8 locale). The forced
@@ -62,7 +61,12 @@ DirectiveError = source_directives.DirectiveError
 COMPILE_ENV = {"LC_ALL": "C"}
 DIAGNOSTIC_FLAGS = ("-fdiagnostics-show-line-numbers",)
 
-_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+# Colours and other CSI sequences, and the OSC 8 hyperlinks gcc wraps around
+# an option name when URLs are enabled (`-fdiagnostics-urls=always`), which
+# end with ST (ESC \) or BEL.
+_ANSI_ESCAPE_RE = re.compile(
+    r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x1b\x07]*(?:\x1b\\|\x07)"
+)
 # Quotes are normalized on both sides of a match, so that a directive copied
 # from gcc's output in a UTF-8 locale (‘foo’) matches the ASCII quotes it
 # prints under COMPILE_ENV, and the other way round.
@@ -89,9 +93,8 @@ _ERROR_KINDS = frozenset({"error", "fatal error", "sorry, unimplemented"})
 # tool, which counts only if it is the compiler: its whole name is a driver
 # or cc1 name, with any target prefix and version suffix (`clang++`,
 # `x86_64-linux-gnu-g++-14`, `cc1plus`), not another tool that merely
-# contains one (`clang-linker-wrapper`, `gcc-ar`), the linker (`collect2`,
-# `ld.lld`) or the build tool (`ninja`, `make`); nor does the driver's
-# report that the linker failed.
+# contains one (`clang-linker-wrapper`, `gcc-ar`) or the build tool
+# (`ninja`, `make`).
 _SOURCE_FILE_RE = re.compile(
     r"\.(?:c|cc|cp|cpp|cxx|c\+\+|cppm|ixx|ii|h|hh|hpp|hxx|h\+\+|ipp|tpp|tcc|inc|C|H)$"
 )
@@ -99,7 +102,6 @@ _COMPILER_TOOL_RE = re.compile(
     r"(?:[\w.]+-)*(?:clang(?:\+\+)?|gcc|g\+\+|c\+\+|cc|cc1(?:plus)?)"
     r"(?:-\d+(?:\.\d+)*)?(?:\.exe)?"
 )
-_LINKER_FAILED = "linker command failed"
 # A note in gcc's nested diagnostics (how the gcc trunk this repo builds
 # prints them by default): an indented bullet line under the error, `•` or
 # `*`. Source lines the compilers echo are indented too, but start with the
@@ -133,6 +135,19 @@ _CRASH_RE = re.compile(
     r"internal compiler error|signal terminated program"
     r"|frontend command failed|PLEASE submit a bug report"
 )
+
+
+def compile_flags(
+    directives: source_directives.TestDirectives, must_fail: bool
+) -> tuple[str, ...]:
+    """The flags a test is compiled with, after the build's and the user's
+    own: its TEST-FLAGS, then, if it must fail to compile, DIAGNOSTIC_FLAGS,
+    last so that they win.
+
+    Both runners build a test with these: run_tests.py on its command line,
+    CTest through the response file test_directives_cmake.py writes.
+    """
+    return directives.flags + (DIAGNOSTIC_FLAGS if must_fail else ())
 
 
 def _crash(returncode: int, lines: list[str]) -> str | None:
@@ -176,9 +191,7 @@ def error_diagnostics(output: str) -> list[tuple[str, ...]]:
                 current = None
             continue
         prefix, kind, message = match.group("prefix", "kind", "message")
-        if prefix is not None and (
-            not _is_compiler(prefix) or message.startswith(_LINKER_FAILED)
-        ):
+        if prefix is not None and not _is_compiler(prefix):
             current = None
         elif kind == "note":
             if current is not None and not _BACKTRACE_NOTE_RE.match(message):
@@ -273,13 +286,13 @@ def main(argv: list[str] | None = None) -> int:
         expected = source_directives.load_test_directives(
             args.source, args.compiler, must_fail=True
         ).expected_errors
-    except DirectiveError as error:
+    except source_directives.DirectiveError as error:
         print(f"{args.source}: {error}")
         return 1
 
     # One stream, so stdout and stderr lines stay whole and in order. The
     # environment reaches the compiler through the build tool; the build
-    # adds the test's flags and DIAGNOSTIC_FLAGS (see test_directives_cmake).
+    # adds compile_flags (see test_directives_cmake).
     build = subprocess.run(
         args.command,
         stdout=subprocess.PIPE,

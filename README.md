@@ -25,7 +25,9 @@ once a gcc engine exposes the same `ad::` interface its drivers can move up to
 (respecting the `clang_only`/`gcc_only`/shared dirs), optionally runs the
 binaries, and reports compile vs runtime failures. A test may add flags via a
 `// TEST-FLAGS: ...` comment at the top of the file, before any code
-(benchmarks use it for `-O2`).
+(benchmarks use it for `-O2`); a long list may be split over several such
+comments. They come after any `--extra-cxxflag` (and, under CMake, after
+`CMAKE_CXX_FLAGS`).
 Tests under `tests/static_fail/` (or `clang_only/static_fail/`,
 `gcc_only/static_fail/`) are expected **not** to compile (e.g. they trip a
 `static_assert`). Each must name the error it expects in a
@@ -43,13 +45,14 @@ goes in a `// EXPECT-ERROR-CLANG:` or `// EXPECT-ERROR-GCC:` comment
 ```
 
 A misspelt or misplaced directive fails the test instead of being ignored.
-CTest reads the directives with the same code as `run_tests.py`
-(`test_simple/source_directives.py`), so it builds each test with its
-`TEST-FLAGS` and rejects the same mistakes. That code runs when a test is
-built (and again whenever it changes, without re-running CMake), so building
-the tests needs Python 3.7 or newer; configure with `-DBUILD_TESTING=OFF` to
-build without them. A test whose directives are invalid fails to build, as it
-would with a compile error.
+CMake reads the directives with the same code as `run_tests.py`
+(`test_simple/source_directives.py`), so it builds each test and benchmark
+with its `TEST-FLAGS` and rejects the same mistakes. That code runs when a
+test is built (and again whenever it changes, without re-running CMake), so
+building the tests and benchmarks needs Python 3.7 or newer; configure with
+`-DBUILD_TESTING=OFF` to skip them. A test whose directives are invalid fails
+to build, as it would with a compile error. Both runners only compile a
+`static_fail` test, never link it.
 
 The repo is **self-contained**: `--build-compilers` builds clang from its own
 `clang-p2996` submodule into `build/` — no externally pre-built compiler needed.

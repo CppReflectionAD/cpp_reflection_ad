@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import functools
 import json
 import os
 import platform
@@ -86,8 +85,10 @@ else:
 # placed like `// EXPECT-ERROR:`. Flags that only one compiler understands go
 # in a `// TEST-FLAGS-<COMPILER>:` variant (e.g. `// TEST-FLAGS-CLANG:`), which
 # is appended after the shared flags when building with that compiler and
-# ignored by every other one. Both are read by
-# test_simple/source_directives.read_test_directives, as CTest reads them.
+# ignored by every other one. A long list may be split over several
+# directives. Both are read by test_simple/source_directives.read_test_directives,
+# as CTest reads them, and come after --extra-cxxflag, as CTest puts them after
+# CMAKE_CXX_FLAGS.
 
 
 @dataclass(frozen=True)
@@ -296,7 +297,8 @@ def parse_args() -> argparse.Namespace:
         "--extra-cxxflag",
         action="append",
         default=[],
-        help="Additional compiler flag. Repeat to pass multiple flags.",
+        help="Additional compiler flag, before each test's own TEST-FLAGS. "
+        "Repeat to pass multiple flags.",
     )
     parser.add_argument(
         "--verbose",
@@ -544,13 +546,6 @@ def is_static_fail(test_file: Path, base_dir: Path) -> bool:
     if parts[:1] in ((CLANG_ONLY_DIR,), (GCC_ONLY_DIR,)):
         parts = parts[1:]
     return parts[:1] == (STATIC_FAIL_DIR,)
-
-
-@functools.lru_cache(maxsize=None)
-def read_test_comments(test_file: Path) -> tuple[source_directives.Comment, ...]:
-    """The comments of a test, read and lexed once for every compiler and
-    every directive family. Raises DirectiveError if it can't be read."""
-    return source_directives.read_comments(test_file)
 
 
 def ensure_submodule(source_dir: Path, args: argparse.Namespace) -> None:
@@ -1043,8 +1038,8 @@ def compile_and_maybe_run(
     # Directives are read before compiling, so a test that can't pass
     # doesn't cost a build.
     try:
-        directives = source_directives.read_test_directives(
-            read_test_comments(test_file), spec.name, expect_compile_failure
+        directives = source_directives.load_test_directives(
+            test_file, spec.name, expect_compile_failure
         )
     except source_directives.DirectiveError as error:
         return TestResult(
@@ -1061,10 +1056,12 @@ def compile_and_maybe_run(
         f"-std={args.std}",
         *spec.cxxflags,
         *include_flags,
-        *directives.flags,
         *args.extra_cxxflag,
-        # Last, so they win; the checker parses the output they produce.
-        *(compile_fail_check.DIAGNOSTIC_FLAGS if expect_compile_failure else ()),
+        # After the user's, as CTest puts them after CMAKE_CXX_FLAGS.
+        *compile_fail_check.compile_flags(directives, expect_compile_failure),
+        # A compile-fail test is only compiled, so no linker output reaches
+        # the checker.
+        *(["-c"] if expect_compile_failure else []),
         str(test_file),
         "-o",
         str(output_path),

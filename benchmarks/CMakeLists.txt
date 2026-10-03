@@ -4,16 +4,9 @@
 # appear in `ctest` runs or the tests/ discovery glob.
 # ---------------------------------------------------------------------------
 
-# Detect compiler family
-if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    set(_is_clang TRUE)
-    set(_is_gcc FALSE)
-elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-    set(_is_clang FALSE)
-    set(_is_gcc TRUE)
-else()
-    message(FATAL_ERROR "Unsupported compiler: ${CMAKE_CXX_COMPILER_ID}")
-endif()
+# _is_clang / _is_gcc and test_flags() come from the top-level CMakeLists.txt.
+# A benchmark declares the flags it needs (-O2, a constant-evaluation budget)
+# in `// TEST-FLAGS:` comments, which test_flags() reads, as run_tests.py does.
 
 if(_is_clang)
     get_filename_component(_clang_bin "${CMAKE_CXX_COMPILER}" DIRECTORY)
@@ -24,9 +17,6 @@ if(_is_clang)
         -fexpansion-statements
         -stdlib=libc++
         -isystem "${_clang_root}/include/c++/v1"
-        # High-order Taylor derivatives build a large DAG at compile time, past
-        # the default 1M constant-evaluation step budget.
-        -fconstexpr-steps=16000000
     )
     if(APPLE)
         execute_process(COMMAND xcrun --show-sdk-path
@@ -36,9 +26,7 @@ if(_is_clang)
         endif()
     endif()
 elseif(_is_gcc)
-    set(_reflect_flags -freflection -fconstexpr-ops-limit=96000000)
-else()
-    message(FATAL_ERROR "Unsupported compiler: ${CMAKE_CXX_COMPILER_ID}")
+    set(_reflect_flags -freflection)
 endif()
 
 # ---------------------------------------------------------------------------
@@ -46,6 +34,7 @@ endif()
 # ---------------------------------------------------------------------------
 function(add_reflect_benchmark name source)
     add_executable(${name} ${source})
+    test_flags(${name} "${source}" FALSE)
     target_compile_options(${name} PRIVATE
         -std=c++2c
         ${_reflect_flags}

@@ -332,11 +332,12 @@ EXPECT_ERROR = DirectiveFamily.with_compiler_variants(
     "EXPECT-ERROR",
     "text",
     # A `//` comment (including `///` and `//!`) that reads like an
-    # EXPECT-ERROR directive: the hyphen or underscore spelling with or
-    # without a colon (and with any suffix), or the spaced spelling with one
-    # (so prose like "expected errors are listed below" is left alone).
+    # EXPECT-ERROR directive: the hyphen or underscore spelling, whatever
+    # follows it (a colon or not, any suffix: `_GCC`, `-CLNAG`, `S`), or the
+    # spaced spelling with a colon (so prose like "expected errors are listed
+    # below" is left alone).
     near_miss=re.compile(
-        r"//[/!]*\s*expect(?:ed)?(?:[-_]errors?\b|\s+errors?\s*:)", re.IGNORECASE
+        r"//[/!]*\s*expect(?:ed)?(?:[-_]error|\s+errors?\s*:)", re.IGNORECASE
     ),
 )
 # `// TEST-FLAGS: <flags>`: extra flags to compile the test with (e.g. -O2
@@ -346,14 +347,15 @@ TEST_FLAGS = DirectiveFamily.with_compiler_variants(
     "flags",
     # Likewise for TEST-FLAGS, so a misspelt directive is an error rather
     # than flags silently dropped.
-    near_miss=re.compile(r"//[/!]*\s*test(?:[-_]flags\b|\s+flags\s*:)", re.IGNORECASE),
+    near_miss=re.compile(r"//[/!]*\s*test(?:[-_]flag|\s+flags\s*:)", re.IGNORECASE),
 )
 
 
 class TestDirectives(NamedTuple):
     """What a test declares for one compiler."""
 
-    # Its `// TEST-FLAGS:` flags, then its `// TEST-FLAGS-<COMPILER>:` ones.
+    # The flags of its `// TEST-FLAGS:` directives, then those of its
+    # `// TEST-FLAGS-<COMPILER>:` ones, each in file order.
     flags: tuple[str, ...]
     # The <text> of each `// EXPECT-ERROR:` / `-<COMPILER>:` directive; ()
     # for a test that must compile.
@@ -368,24 +370,27 @@ def read_test_directives(
 
     A test that must fail to compile (`must_fail`, a static_fail/ test) must
     have at least one non-empty EXPECT-ERROR directive for `compiler`; any
-    other test must have none. If a TEST-FLAGS directive appears more than
-    once, the last wins. Raises DirectiveError if a directive is malformed,
-    misplaced or empty, its flags don't parse, or the rules above are broken.
+    other test must have none. A long list of flags may be split over
+    several TEST-FLAGS directives. Raises DirectiveError if a directive is
+    malformed, misplaced or empty, its flags don't parse, or the rules above
+    are broken; the directives for every compiler are checked, not only
+    those for `compiler`, so a test is valid for all compilers or for none.
     """
-    flag_directives = for_compiler(
-        read_directives(comments, TEST_FLAGS), "TEST-FLAGS", compiler
-    )
-
-    def last_flags(name: str) -> list[str]:
-        matching = [d for d in flag_directives if d.name == name]
-        if not matching:
-            return []
+    flag_directives = read_directives(comments, TEST_FLAGS)
+    parsed: dict[Directive, list[str]] = {}
+    for directive in flag_directives:
         try:
-            return shlex.split(matching[-1].text)
+            parsed[directive] = shlex.split(directive.text)
         except ValueError as error:
-            raise DirectiveError(f"line {matching[-1].line}: {error}") from None
-
-    flags = last_flags("TEST-FLAGS") + last_flags(f"TEST-FLAGS-{compiler.upper()}")
+            raise DirectiveError(f"line {directive.line}: {error}") from None
+    applying = for_compiler(flag_directives, "TEST-FLAGS", compiler)
+    flags = [
+        flag
+        for name in ("TEST-FLAGS", f"TEST-FLAGS-{compiler.upper()}")
+        for directive in applying
+        if directive.name == name
+        for flag in parsed[directive]
+    ]
 
     error_directives = read_directives(comments, EXPECT_ERROR)
     if not must_fail:
