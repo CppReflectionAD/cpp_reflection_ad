@@ -75,7 +75,7 @@ _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 # Quotes are normalized on both sides of a match, so that a directive copied
 # from gcc's output in a UTF-8 locale (‘foo’) matches the ASCII quotes it
 # prints under COMPILE_ENV, and the other way round.
-_QUOTES = str.maketrans({"‘": "'", "’": "'", "“": '"', "”": '"'})
+_QUOTES = str.maketrans({"\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"'})
 # The header line of a diagnostic, from clang or gcc:
 #   <file>:<line>[:<col>]: <kind>: <message>
 #   <pseudo-file>: <kind>: <message>   (`<command-line>`, `<built-in>`)
@@ -106,7 +106,15 @@ _LINKER_FAILED = "linker command failed"
 # prints them by default): an indented bullet line under the error, `•` or
 # `*`. Source lines the compilers echo are indented too, but start with the
 # `<line> |` or `|` gutter that DIAGNOSTIC_FLAGS asks for.
-_NESTED_NOTE_RE = re.compile(r"^ +[•*] (?P<message>.*)$")
+_NESTED_NOTE_RE = re.compile(r"^ +[\u2022*] (?P<message>.*)$")
+# gcc's context lines, which it prints between a diagnostic's notes too
+# (`In file included from ...:` before a note in a header): the include
+# stack, `<file>: In function ...:` / `At global scope:`, and
+# `<file>:<line>:<col>:   required from ...`.
+_CONTEXT_RE = re.compile(
+    r"^(?:In file included from |In module imported at "
+    r"|\S.*?: (?:In |At global scope:)|\S.*?:\d+(?::\d+)?:   )"
+)
 # What a compiler prints when it crashes, which no test may pass by: an ICE
 # (gcc), the driver's report that cc1/cc1plus died, a crash in clang's
 # frontend.
@@ -171,8 +179,8 @@ def error_diagnostics(output: str) -> list[tuple[str, ...]]:
     only in a note), whether as `note:` lines or as gcc's nested bullet
     lines. Notes belong to the diagnostic just before them, so those after a
     warning, or after any other line that isn't indented (a diagnostic of
-    another kind, build-tool output), belong to no error. gcc's
-    `sorry, unimplemented:` counts as an error.
+    another kind, build-tool output) other than gcc's context lines, belong
+    to no error. gcc's `sorry, unimplemented:` counts as an error.
     """
     diagnostics: list[list[str]] = []
     current: list[str] | None = None
@@ -183,7 +191,7 @@ def error_diagnostics(output: str) -> list[tuple[str, ...]]:
             if nested:
                 if current is not None:
                     current.append(nested.group("message"))
-            elif line[:1] not in ("", " "):
+            elif line[:1] not in ("", " ") and not _CONTEXT_RE.match(line):
                 current = None
             continue
         prefix, kind, message = match.group("prefix", "kind", "message")
