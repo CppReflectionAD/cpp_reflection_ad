@@ -27,7 +27,6 @@
 
 #include <limits>
 #include <type_traits>
-#include <utility>
 
 namespace cx {
 namespace detail {
@@ -47,15 +46,8 @@ template <typename T> constexpr T sqrt_succ(T y) {
 // (Dekker's product, splitting each factor in half by Veltkamp), and m - p is
 // exact by Sterbenz's lemma.
 template <typename T> constexpr bool exact_le(T m, T a, T b) {
-  constexpr T split =
-      T(1ull << ((std::numeric_limits<T>::digits + 1) / 2)) + T(1);
-  const auto halves = [](T v) {
-    const T t = split * v;
-    const T hi = t - (t - v);
-    return std::pair<T, T>{hi, v - hi};
-  };
-  const auto [a_hi, a_lo] = halves(a);
-  const auto [b_hi, b_lo] = halves(b);
+  const auto [a_hi, a_lo] = split(a);
+  const auto [b_hi, b_lo] = split(b);
   const T p = a * b;
   const T q = ((a_hi * b_hi - p) + a_hi * b_lo + a_lo * b_hi) + a_lo * b_lo;
   return m - p <= q;
