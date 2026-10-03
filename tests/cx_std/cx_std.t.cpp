@@ -1,0 +1,108 @@
+// cx_std accuracy: each constexpr function against <cmath>, in ulps, over the
+// ranges the discontinuity analysis and limit algebra evaluate them on, plus
+// the special values and the extremes constant evaluation must get through.
+
+#include "cx_erfc.hpp"
+#include "cx_exp.hpp"
+#include "cx_log.hpp"
+#include "cx_sqrt.hpp"
+#include "cx_trig.hpp"
+#include <test_simple_include.hpp>
+
+#include <bit>
+#include <cmath>
+#include <cstdint>
+#include <limits>
+
+namespace {
+
+constexpr double inf = std::numeric_limits<double>::infinity();
+
+// Distance between two doubles in units in the last place.
+double ulps(double a, double b) {
+  if (a == b)
+    return 0.0;
+  if (std::isnan(a) || std::isnan(b))
+    return inf;
+  const auto key = [](double d) {
+    const std::int64_t i = std::bit_cast<std::int64_t>(d);
+    return i < 0 ? std::numeric_limits<std::int64_t>::min() - i : i;
+  };
+  return std::fabs(static_cast<double>(key(a) - key(b)));
+}
+
+// Largest ulp error of cx_f against std_f over n points of [lo, hi], spaced
+// evenly or (log_spaced) geometrically.
+template <class CxF, class StdF>
+double max_ulps(CxF cx_f, StdF std_f, double lo, double hi,
+                bool log_spaced = false, int n = 20000) {
+  double worst = 0.0;
+  for (int i = 0; i <= n; ++i) {
+    const double t = static_cast<double>(i) / n;
+    const double x =
+        log_spaced ? lo * std::pow(hi / lo, t) : lo + (hi - lo) * t;
+    worst = std::fmax(worst, ulps(cx_f(x), std_f(x)));
+  }
+  return worst;
+}
+
+// Constant evaluation gets through the extremes: overflow, underflow,
+// subnormals, and the depth of each series.
+static_assert(cx::exp(1e5) == inf && cx::exp(-1e5) == 0.0);
+static_assert(cx::exp(709.0) > 8e307 && cx::exp(-744.0) > 0.0);
+static_assert(cx::log(5e-324) < -744.0 && cx::log(1e308) > 709.0);
+static_assert(cx::sqrt(5e-324) > 0.0 && cx::sqrt(1e308) > 1e153);
+static_assert(cx::erfc(26.0) > 0.0 && cx::erfc(30.0) == 0.0);
+static_assert(cx::erfc(0.5) > 0.47 && cx::erfc(-3.0) < 2.0);
+static_assert(cx::sin(1e5) != 0.0 && cx::cos(-1e5) != 0.0);
+
+// Special values
+static_assert(cx::exp(0.0) == 1.0 && cx::exp(-inf) == 0.0 &&
+              cx::exp(inf) == inf);
+static_assert(cx::log(1.0) == 0.0 && cx::log(0.0) == -inf &&
+              cx::log(inf) == inf && cx::log(-1.0) != cx::log(-1.0));
+static_assert(cx::sqrt(0.0) == 0.0 && cx::sqrt(inf) == inf &&
+              cx::sqrt(-1.0) != cx::sqrt(-1.0));
+static_assert(cx::erfc(0.0) == 1.0 && cx::erfc(inf) == 0.0 &&
+              cx::erfc(-inf) == 2.0);
+static_assert(cx::sin(0.0) == 0.0 && cx::cos(0.0) == 1.0 &&
+              cx::sin(inf) != cx::sin(inf) && cx::cos(-inf) != cx::cos(-inf));
+
+} // namespace
+
+int main() {
+  const auto cx_exp = [](double x) { return cx::exp(x); };
+  const auto std_exp = [](double x) { return std::exp(x); };
+  const auto cx_log = [](double x) { return cx::log(x); };
+  const auto std_log = [](double x) { return std::log(x); };
+  const auto cx_sqrt = [](double x) { return cx::sqrt(x); };
+  const auto std_sqrt = [](double x) { return std::sqrt(x); };
+  const auto cx_erfc = [](double x) { return cx::erfc(x); };
+  const auto std_erfc = [](double x) { return std::erfc(x); };
+  const auto cx_sin = [](double x) { return cx::sin(x); };
+  const auto std_sin = [](double x) { return std::sin(x); };
+  const auto cx_cos = [](double x) { return cx::cos(x); };
+  const auto std_cos = [](double x) { return std::cos(x); };
+
+  // exp: the whole range, including results that are subnormal
+  EXPECT_LESS_THAN(max_ulps(cx_exp, std_exp, -745.0, 709.7), 4.0);
+  EXPECT_LESS_THAN(max_ulps(cx_exp, std_exp, -2.0, 2.0), 4.0);
+  // log: normal and subnormal arguments, and around 1
+  EXPECT_LESS_THAN(max_ulps(cx_log, std_log, 1e-308, 1e308, true), 4.0);
+  EXPECT_LESS_THAN(max_ulps(cx_log, std_log, 5e-324, 1e-300, true), 4.0);
+  EXPECT_LESS_THAN(max_ulps(cx_log, std_log, 0.5, 2.0), 4.0);
+  // sqrt
+  EXPECT_LESS_THAN(max_ulps(cx_sqrt, std_sqrt, 5e-324, 1e308, true), 2.0);
+  // erfc: the Taylor and continued-fraction paths, out to underflow
+  EXPECT_LESS_THAN(max_ulps(cx_erfc, std_erfc, -6.0, 0.5), 8.0);
+  EXPECT_LESS_THAN(max_ulps(cx_erfc, std_erfc, 0.5, 4.0), 8.0);
+  EXPECT_LESS_THAN(max_ulps(cx_erfc, std_erfc, 4.0, 26.5), 8.0);
+  // sin / cos: small arguments and |x| up to 1e5
+  EXPECT_LESS_THAN(max_ulps(cx_sin, std_sin, -10.0, 10.0), 4.0);
+  EXPECT_LESS_THAN(max_ulps(cx_sin, std_sin, -1e5, 1e5), 4.0);
+  EXPECT_LESS_THAN(max_ulps(cx_sin, std_sin, 1e-300, 1e-3, true), 4.0);
+  EXPECT_LESS_THAN(max_ulps(cx_cos, std_cos, -10.0, 10.0), 4.0);
+  EXPECT_LESS_THAN(max_ulps(cx_cos, std_cos, -1e5, 1e5), 4.0);
+
+  TEST_END;
+}
