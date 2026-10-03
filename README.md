@@ -26,14 +26,13 @@ once a gcc engine exposes the same `ad::` interface its drivers can move up to
 binaries, and reports compile vs runtime failures. A test may add flags via a
 `// TEST-FLAGS: ...` comment (benchmarks use it for `-O2`).
 Tests under `tests/static_fail/` are expected **not** to compile (e.g. they
-trip a `static_assert`). Each must name the error it expects with one or more
-`// EXPECT-ERROR: <text>` comments; it passes only when compilation fails and
-every `<text>` appears (literally) in the message of an error diagnostic, so a
-test broken for an unrelated reason (e.g. a bad include) still fails. A
-misspelt or misplaced `EXPECT-ERROR` is an error, not ignored. Like
-`// TEST-FLAGS:`, each directive goes on a line of its own, anywhere in the
-file. Both `run_tests.py` and CTest use the same checker,
-`test_simple/compile_fail_check.py` (so CTest needs Python 3.7 or newer).
+trip a `static_assert`). Each must name the error it expects in a
+`// EXPECT-ERROR: <text>` comment on a line of its own, where `<text>` is part
+of the compiler's error message. Use one comment per expected error:
+
+```cpp
+// EXPECT-ERROR: ad::inverse requires an explicit inverse plan
+```
 
 The repo is **self-contained**: `--build-compilers` builds clang from its own
 `clang-p2996` submodule into `build/` — no externally pre-built compiler needed.
