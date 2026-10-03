@@ -26,6 +26,16 @@ inline double fn_sqrt_neg(double x) { return std::sqrt(x); }
 // log(x - y): discontinuous when the denominator x - y <= 0.
 inline double fn_log_diff(double x, double y) { return std::log(x - y); }
 
+// Poles where sin or cos takes a value: a narrow Sin / Cos range must reach
+// the extrema between its ends.
+inline double fn_inv_sin_plus_half(double x) {
+  return 1.0 / (std::sin(x) + 0.5);
+}
+inline double fn_inv_sin_minus(double x) { return 1.0 / (std::sin(x) - 0.95); }
+inline double fn_inv_cos_plus_half(double x) {
+  return 1.0 / (std::cos(x) + 0.5);
+}
+
 // A branch whose dead side contains a domain error. On a box where the
 // condition is decidable, only the live side is checked.
 inline double branch_log(double x) { return x > 0.0 ? std::log(x) : 0.0; }
@@ -117,12 +127,12 @@ static_assert(ad::is_continuous_on<^^clamp_to>(ad::Interval{-3.0, 3.0},
                                                ad::Interval{0.0, 0.0},
                                                ad::Interval{1.0, 1.0}));
 
-// A branch nested inside a larger expression. The boxes below are all at least
-// 2π wide in `t = k*x`, which is not incidental: narrower intervals through a
-// Sin/Cos node do not compile today. See the LIMITATION on sin_range in
-// is_continuous.hpp.
-//   t in [7,20]: the branch is live, and sin_range takes its wide-interval path
+// A branch nested inside a larger expression.
+//   t in [7,20]: the branch is live, and wider than 2π
 static_assert(ad::is_continuous_on<^^smooth_step>(ad::Interval{7.0, 20.0},
+                                                  ad::Interval{1.0, 1.0}));
+//   t in [0.5,2]: the branch is live, and narrower
+static_assert(ad::is_continuous_on<^^smooth_step>(ad::Interval{0.5, 2.0},
                                                   ad::Interval{1.0, 1.0}));
 //   t in [-20,-7]: the sin branch is dead and never evaluated at all
 static_assert(ad::is_continuous_on<^^smooth_step>(ad::Interval{-20.0, -7.0},
@@ -130,6 +140,24 @@ static_assert(ad::is_continuous_on<^^smooth_step>(ad::Interval{-20.0, -7.0},
 //   t straddling 0: undecidable branch, so reported as a jump
 static_assert(!ad::is_continuous_on<^^smooth_step>(ad::Interval{-20.0, 20.0},
                                                    ad::Interval{1.0, 1.0}));
+
+// Sin / Cos narrower than 2π: bounded by their values at the ends, and by ±1
+// where an extremum lies between them.
+//   sin on [1,2] is in [0.84, 1]: sin + 0.5 is never 0
+static_assert(ad::is_continuous_on<^^fn_inv_sin_plus_half>(ad::Interval{1.0,
+                                                                        2.0}));
+//   sin(3) and sin(6.78) are both positive, but sin reaches -1 at 3π/2
+static_assert(!ad::is_continuous_on<^^fn_inv_sin_plus_half>(ad::Interval{
+    3.0, 6.78}));
+//   sin(1) and sin(2) are both below 0.95, but sin reaches 1 at π/2
+static_assert(!ad::is_continuous_on<^^fn_inv_sin_minus>(ad::Interval{1.0,
+                                                                     2.0}));
+//   cos on [-1,1] is in [0.54, 1]; cos(2) and cos(4.5) are both above -0.5,
+//   but cos reaches -1 at π
+static_assert(ad::is_continuous_on<^^fn_inv_cos_plus_half>(ad::Interval{-1.0,
+                                                                        1.0}));
+static_assert(!ad::is_continuous_on<^^fn_inv_cos_plus_half>(ad::Interval{2.0,
+                                                                         4.5}));
 
 // --- two_arg(x,y) = x*y + exp(x)  — entire ---
 static_assert(ad::is_continuous_on<^^two_arg>(ad::Interval{-5.0, 5.0},
