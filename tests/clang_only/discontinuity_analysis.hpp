@@ -613,6 +613,13 @@ inline constexpr int kClusterUlps = 4;
 // How far either side of a point a jump must keep its sign to be more than
 // rounding (see analyze).
 inline constexpr int kKinkUlps = 4;
+// The kink check probes beyond a point's group. A crossing rooted between the
+// group and a probe must be in the group, and forced, or its flip there would
+// read as the jump vanishing (`s > k && s < k + 6 ulps` probed 8 ulps above
+// k).
+static_assert(kKinkUlps <= kClusterUlps,
+              "discontinuity_analysis: the kink check must not probe past "
+              "the crossings grouped into a point");
 
 // Trailing zero bits in x's significand: more means a shorter number.
 constexpr int roundness(double x) {
