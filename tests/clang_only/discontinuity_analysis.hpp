@@ -462,11 +462,16 @@ constexpr double node_tangent(const std::array<double, N> &val,
 
 template <std::size_t N> struct Sweep {
   std::array<double, N> val = {};
-  std::array<double, N> tan = {};   // derivative in the target
-  std::array<bool, N> reached = {}; // evaluated: Fn reaches it for some target
-  // Reached, and true (may_hold) or false (may_fail) for some target when
-  // read as a condition. Neither, if not reached.
+  std::array<double, N> tan = {}; // derivative in the target
+  // True (may_hold) or false (may_fail) for some target when read as a
+  // condition. A node Fn reaches is one or both; one it never reaches is
+  // neither.
   std::array<bool, N> may_hold = {}, may_fail = {};
+
+  // Evaluated: Fn reaches node i for some target.
+  constexpr bool reached(std::size_t i) const {
+    return may_hold[i] || may_fail[i];
+  }
 };
 
 // Values and target derivatives of every node needed to place the crossings,
@@ -490,7 +495,6 @@ constexpr auto sweep(const std::array<double, NumArgs> &in, double x) {
         if (!s.may_hold[guard])
           continue;
       }
-      s.reached[i] = true;
       s.val[i] = node_value<Fn, i, Target>(s.val, in, x);
       s.tan[i] = node_tangent<Fn, i, Target>(s.val, s.tan);
       if constexpr (!dep[i].varies) {
@@ -683,7 +687,7 @@ analyze(const std::array<double, NumArgs> &in) {
       // at k = 0) or not finite (`s > 1 / k` at k = 0: never true), or if
       // the root is beyond the doubles.
       const double r =
-          at_zero.reached[i] && slope != 0.0 && is_finite(g0) &&
+          at_zero.reached(i) && slope != 0.0 && is_finite(g0) &&
                   is_finite(slope)
               ? -(g0 / slope) + 0.0 // `+ 0.0` turns a -0 root into 0
               : kNaN;
