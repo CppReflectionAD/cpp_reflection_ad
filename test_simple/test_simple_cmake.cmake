@@ -114,9 +114,14 @@ function(compile_check group filelist fail)
         string(REPLACE / "." target ${target})
         set(target_name "${group}.static.${target}")
         set(test_name "${target}")
-        # Compiled, never linked, so that only the compiler's diagnostics
-        # reach compile_fail_check.py.
-        add_library(${target_name} OBJECT "${_source}")
+        # A test that must fail is compiled, never linked, so that only the
+        # compiler's diagnostics reach compile_fail_check.py; one that must
+        # compile is linked too, as run_tests.py does.
+        if(fail)
+            add_library(${target_name} OBJECT "${_source}")
+        else()
+            add_executable(${target_name} "${_source}")
+        endif()
         test_flags(${target_name} "${_source}" ${fail})
         set_target_properties(${target_name} PROPERTIES EXCLUDE_FROM_ALL true EXCLUDE_FROM_DEFAULT_BUILD true)
         target_compile_options(${target_name} PRIVATE
