@@ -1,6 +1,7 @@
 #include "discontinuity_analysis.hpp"
 #include <test_simple_include.hpp>
 
+#include <algorithm>
 #include <cmath>
 
 // Test functions with different numbers of discontinuities
@@ -300,6 +301,22 @@ double inexact_tangential_kink(double spot, double strike) {
   return (spot > strike / 3.0) ? (3.0 * spot - strike) * (3.0 * spot - strike)
                                : 0.0;
 }
+double capped_inexact_kink(double spot, double strike) {
+  return (spot > strike / 3.0) ? std::min(3.0 * spot - strike, 1.0) : 0.0;
+}
+// ... and a jump through max and min is measured like any other
+double floored_digital(double spot, double strike) {
+  return (spot > strike) ? std::max(spot - strike, 1.0)
+                         : std::min(spot - strike, 0.0);
+}
+// max and min of error-bounded values pick the operand Fn does, but the
+// other's error bounds the result too
+using ad::detail_disc::Ball;
+using ad::detail_disc::BallCxMath;
+static_assert(BallCxMath::max(Ball{1.0, 0.0}, Ball{0.9, 0.5}).mid == 1.0 &&
+              BallCxMath::max(Ball{1.0, 0.0}, Ball{0.9, 0.5}).rad == 0.5);
+static_assert(BallCxMath::min(Ball{1.0, 0.25}, Ball{0.9, 0.0}).mid == 0.9 &&
+              BallCxMath::min(Ball{1.0, 0.25}, Ball{0.9, 0.0}).rad == 0.25);
 
 // The same crossing written two ways. They meet at strike / 1.1 in exact
 // arithmetic but are rooted a few ulps apart, and Fn's own sides can be
@@ -817,7 +834,8 @@ int main() {
   EXPECT_EQUAL(disc_far_rebate.amplitude(0), 1.0);
   {
     // Kinks with inexact roots, odd or even order, report nothing anywhere.
-    int odd_points = 0, scaled_points = 0, tangential_points = 0;
+    int odd_points = 0, scaled_points = 0, tangential_points = 0,
+        capped_points = 0;
     for (int i = 1; i <= 400; ++i) {
       const double strike = 0.37 * i;
       odd_points +=
@@ -831,16 +849,26 @@ int main() {
       tangential_points += ad::get_discontinuity_points_and_amplitudes_rt<
                                ^^inexact_tangential_kink, 0>(strike)
                                .size();
+      capped_points +=
+          ad::get_discontinuity_points_and_amplitudes_rt<^^capped_inexact_kink,
+                                                         0>(strike)
+              .size();
     }
     EXPECT_EQUAL(odd_points, 0);
     EXPECT_EQUAL(scaled_points, 0);
     EXPECT_EQUAL(tangential_points, 0);
+    EXPECT_EQUAL(capped_points, 0);
     // ... at compile time too: 7.03 / 3 is not a double
     EXPECT_TRUE(
         (ad::get_discontinuity_points_and_amplitudes<^^inexact_tangential_kink,
                                                      0>(7.03)
              .empty()));
   }
+  constexpr auto disc_floored =
+      ad::get_discontinuity_points_and_amplitudes<^^floored_digital, 0>(100.0);
+  EXPECT_EQUAL(disc_floored.size(), 1);
+  EXPECT_EQUAL(disc_floored.point(0), 100.0);
+  EXPECT_EQUAL(disc_floored.amplitude(0), 1.0);
   constexpr auto disc_sqrt =
       ad::get_discontinuity_points_and_amplitudes<^^sqrt_rebate, 0>(100.0);
   EXPECT_EQUAL(disc_sqrt.size(), 1);

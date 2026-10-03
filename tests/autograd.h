@@ -203,6 +203,14 @@ struct BuiltinMath {
   template <typename T> [[gnu::always_inline]] static constexpr T neg(T a) {
     return -a;
   }
+  template <typename T>
+  [[gnu::always_inline]] static constexpr T max(T a, T b) {
+    return (a < b) ? b : a;
+  }
+  template <typename T>
+  [[gnu::always_inline]] static constexpr T min(T a, T b) {
+    return (b < a) ? b : a;
+  }
   template <OpKind Op, typename T>
   [[gnu::always_inline]] static constexpr T unary(T x) {
     if constexpr (Op == OpKind::Sin)
@@ -275,9 +283,9 @@ template <OpKind Op, typename Math = BuiltinMath, typename T>
   else if constexpr (Op == OpKind::Abs)
     return (a < T{0}) ? Math::neg(a) : a;
   else if constexpr (Op == OpKind::Max)
-    return (a < b) ? b : a;
+    return Math::max(a, b);
   else if constexpr (Op == OpKind::Min)
-    return (b < a) ? b : a;
+    return Math::min(a, b);
   else
     static_assert(false, "primal: not a scalar op (see op_has_primal)");
 }

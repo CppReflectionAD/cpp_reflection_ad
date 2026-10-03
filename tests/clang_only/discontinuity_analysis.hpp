@@ -350,6 +350,12 @@ struct IeeeCxMath {
     return a / b;
   }
   [[gnu::always_inline]] static constexpr double neg(double a) { return -a; }
+  [[gnu::always_inline]] static constexpr double max(double a, double b) {
+    return (a < b) ? b : a;
+  }
+  [[gnu::always_inline]] static constexpr double min(double a, double b) {
+    return (b < a) ? b : a;
+  }
 
   template <OpKind Op>
   [[gnu::always_inline]] static constexpr double unary(double x) {
@@ -442,6 +448,14 @@ struct BallCxMath {
   [[gnu::always_inline]] static constexpr Ball neg(Ball a) {
     return {-a.mid, a.rad};
   }
+  // The operand Fn picks, but the other's error bounds the result too:
+  // |max(A, B) - max(a, b)| <= max(|A - a|, |B - b|), and so for min.
+  [[gnu::always_inline]] static constexpr Ball max(Ball a, Ball b) {
+    return {M::max(a.mid, b.mid), max(a.rad, b.rad)};
+  }
+  [[gnu::always_inline]] static constexpr Ball min(Ball a, Ball b) {
+    return {M::min(a.mid, b.mid), max(a.rad, b.rad)};
+  }
 
   template <OpKind Op>
   [[gnu::always_inline]] static constexpr Ball unary(Ball a) {
@@ -497,11 +511,6 @@ constexpr T node_value(const std::array<T, N> &val,
       return T{in[I]};
   } else if constexpr (op == OpKind::Const) {
     return T{static_cast<double>([:n.leaf:])};
-  } else if constexpr (std::is_same_v<T, Ball> &&
-                       (op == OpKind::Max || op == OpKind::Min)) {
-    // primal() returns one operand, but the other's error bounds it too.
-    return {primal<op, BallCxMath>(val[a], val[b], val[c]).mid,
-            BallCxMath::max(val[a].rad, val[b].rad)};
   } else if constexpr (op_has_primal(op)) {
     return primal<op, MathFor<T>>(val[a], val[b], val[c]);
   } else {
