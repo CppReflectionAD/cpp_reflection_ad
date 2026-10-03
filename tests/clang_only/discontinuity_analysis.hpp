@@ -935,6 +935,13 @@ analyze(const std::array<double, NumArgs> &in) {
     // exactly the bound is 0, and any jump is reported (`s > k ? s - k + 1 :
     // 0` at k = 1e16).
     const double bound = 2.0 * (from_right.rad + from_left.rad);
+    // An unbounded side -- a value on the way that is not finite, though Fn
+    // is (`1 / (1 + exp(k))` at k = 1000) -- cannot tell them apart: an
+    // error, not a silently dropped jump.
+    if (jump != 0.0 && bound == kInf)
+      throw "discontinuity_analysis: Fn's error near a crossing point cannot "
+            "be bounded (a value on the way there is not finite), so its "
+            "jump cannot be told from rounding";
     if (jump != 0.0 && BallCxMath::abs(jump) > bound)
       result.add_point_with_amplitude(point, jump);
   }

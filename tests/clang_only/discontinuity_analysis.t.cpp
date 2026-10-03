@@ -231,6 +231,11 @@ double ratio_digital(double spot, double k) {
 double product_digital(double spot, double k) {
   return (spot * k > 1.0) ? 1.0 : 0.0;
 }
+// A jump whose side passes through a value that is not finite (exp(1000)
+// overflows) cannot be bounded, so it is an error, not a dropped jump.
+double overflowing_rebate(double spot, double k) {
+  return (spot > k) ? 1.0 + 1.0 / (1.0 + std::exp(k)) : 0.0;
+}
 
 // A crossing behind a guard that cannot hold is never reached, nested or not:
 // at k <= 0 the inner `spot > k` is dead, so it is not rooted at k, where
@@ -1025,6 +1030,23 @@ int main() {
       (ad::get_discontinuity_points_and_amplitudes<^^product_digital, 0>(0.0)
            .size()),
       0);
+
+  // So is a jump whose error cannot be bounded
+  bool unbounded_rejected = false;
+  try {
+    (void)
+        ad::get_discontinuity_points_and_amplitudes_rt<^^overflowing_rebate, 0>(
+            1000.0);
+  } catch (const char *) {
+    unbounded_rejected = true;
+  }
+  EXPECT_TRUE(unbounded_rejected);
+  // ... while short of the overflow it is measured as usual
+  constexpr auto disc_rebate =
+      ad::get_discontinuity_points_and_amplitudes<^^overflowing_rebate, 0>(
+          100.0);
+  EXPECT_EQUAL(disc_rebate.size(), 1);
+  EXPECT_NEAR_REL(disc_rebate.amplitude(0), 1.0, 1e-15);
 
   // More points than MaxPoints is an error, not a silent omission
   bool overflow_rejected = false;
