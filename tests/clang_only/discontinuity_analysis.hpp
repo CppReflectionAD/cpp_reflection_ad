@@ -43,8 +43,10 @@
 //
 // It is an error (a compile error from the consteval entry points, an
 // exception from _rt) for Fn not to be finite on either side of a crossing
-// point -- a pole such as `s > 0 ? k / s : 0` is not a jump -- or to have
-// more points than MaxPoints.
+// point -- a pole such as `s > 0 ? k / s : 0` is not a jump -- for a
+// crossing's slope in the target not to be finite at the fixed values (`s / k
+// > 1` at k = 0, which does jump at s = 0, but also `s * (k - k) > 0` at
+// k = inf, which never flips), or to have more points than MaxPoints.
 
 #include "../autograd.h"
 #include "../cx_std/cx_erfc.hpp"
@@ -747,12 +749,22 @@ analyze(const std::array<double, NumArgs> &in) {
                       "values that do not depend on it, and ?: on conditions "
                       "that do not)");
       const auto [g0, slope] = gap<Fn, i>(at_zero);
+      // A slope that is not finite means a coefficient inside g is infinite
+      // (`s / k > 1` at k = 0): g is then ±inf or NaN except where that
+      // term's own value crosses 0, which is not solved for. An error rather
+      // than a missed jump, even where g turns out never to flip (`s * (k -
+      // k) > 0` at k = inf). Once a coefficient is infinite, no affine op
+      // makes it finite again, so with a finite slope every one is finite.
+      if (at_zero.reached(i) && !is_finite(slope))
+        throw "discontinuity_analysis: a crossing's slope in the target is "
+              "not finite (as for s / k > 1 at k = 0), so its point cannot "
+              "be placed";
       // No root if Fn never reaches the crossing, if g is flat (`s * k > 1`
-      // at k = 0) or not finite (`s > 1 / k` at k = 0: never true), or if
-      // the root is beyond the doubles.
+      // at k = 0) or, with every coefficient finite, its constant is not
+      // (`s > 1 / k` at k = 0: -inf for every target, never true), or if the
+      // root is beyond the doubles.
       const double r =
-          at_zero.reached(i) && slope != 0.0 && is_finite(g0) &&
-                  is_finite(slope)
+          at_zero.reached(i) && slope != 0.0 && is_finite(g0)
               ? -(g0 / slope) + 0.0 // `+ 0.0` turns a -0 root into 0
               : kNaN;
       if (is_finite(r)) {

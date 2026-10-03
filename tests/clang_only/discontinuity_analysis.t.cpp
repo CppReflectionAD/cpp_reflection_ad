@@ -223,6 +223,15 @@ double reciprocal_above_zero(double spot, double k) {
   return (spot > 0.0) ? k / spot : 0.0;
 }
 
+// A crossing scaled by an infinite coefficient cannot be placed: s / k > 1 at
+// k = 0 jumps at s = 0, but its slope is inf
+double ratio_digital(double spot, double k) {
+  return (spot / k > 1.0) ? 1.0 : 0.0;
+}
+double product_digital(double spot, double k) {
+  return (spot * k > 1.0) ? 1.0 : 0.0;
+}
+
 // A crossing behind a guard that cannot hold is never reached, nested or not:
 // at k <= 0 the inner `spot > k` is dead, so it is not rooted at k, where
 // the other branch's 1 / spot is a pole
@@ -914,6 +923,35 @@ int main() {
     pole_rejected = true;
   }
   EXPECT_TRUE(pole_rejected);
+
+  // So is a crossing whose slope is not finite, not a silently missed jump
+  const auto infinite_slope_rejected = [](auto analyze) {
+    try {
+      (void)analyze();
+    } catch (const char *) {
+      return true;
+    }
+    return false;
+  };
+  EXPECT_TRUE(infinite_slope_rejected([] {
+    return ad::get_discontinuity_points_and_amplitudes_rt<^^ratio_digital, 0>(
+        0.0);
+  }));
+  EXPECT_EQUAL(ratio_digital(1e-9, 0.0) - ratio_digital(-1e-9, 0.0), 1.0);
+  EXPECT_TRUE(infinite_slope_rejected([] {
+    return ad::get_discontinuity_points_and_amplitudes_rt<^^product_digital, 0>(
+        std::numeric_limits<double>::infinity());
+  }));
+  // ... while a finite one, or a flat one, is placed as before
+  constexpr auto disc_ratio =
+      ad::get_discontinuity_points_and_amplitudes<^^ratio_digital, 0>(2.0);
+  EXPECT_EQUAL(disc_ratio.size(), 1);
+  EXPECT_EQUAL(disc_ratio.point(0), 2.0);
+  EXPECT_EQUAL(disc_ratio.amplitude(0), 1.0);
+  EXPECT_EQUAL(
+      (ad::get_discontinuity_points_and_amplitudes<^^product_digital, 0>(0.0)
+           .size()),
+      0);
 
   // More points than MaxPoints is an error, not a silent omission
   bool overflow_rejected = false;
