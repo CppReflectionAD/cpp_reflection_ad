@@ -993,29 +993,56 @@ analyze(const std::array<double, NumArgs> &in) {
     order[at] = c;
   }
 
-  DiscontinuityPointsWithAmplitudes<MaxPoints> result;
   // Roots each within kClusterUlps of the one before are one point, measured
   // once: they are often one crossing in exact arithmetic (`s * 1.1 > k`
   // and `s / 0.9 > k / 0.99`), and Fn's own arithmetic can make a
   // comparison's sides exactly equal on a run of doubles between them, so
   // measured apart each could lose the other's share of the jump. The point
-  // is the shortest of their roots (as in snap), the lowest on a tie.
-  for (std::size_t first = 0; first < ordered;) {
-    std::size_t last = first;
-    while (last + 1 < ordered &&
-           root[order[last + 1]] <= step_ulps(root[order[last]], kClusterUlps))
-      ++last;
-    const double lowest = root[order[first]], highest = root[order[last]];
-    double point = lowest;
-    for (std::size_t k = first + 1; k <= last; ++k)
-      if (roundness(root[order[k]]) > roundness(point))
-        point = root[order[k]];
-    first = last + 1;
+  // is the shortest of their roots (as in snap), the lowest on a tie. Group g
+  // is order[first[g]..last[g]].
+  std::array<std::size_t, N> group_of = {}, first = {}, last = {};
+  std::array<double, N> point = {};
+  std::size_t groups = 0;
+  for (std::size_t k = 0; k < ordered; ++groups) {
+    first[groups] = k;
+    point[groups] = root[order[k]];
+    group_of[order[k]] = groups;
+    while (k + 1 < ordered &&
+           root[order[k + 1]] <= step_ulps(root[order[k]], kClusterUlps)) {
+      ++k;
+      group_of[order[k]] = groups;
+      if (roundness(root[order[k]]) > roundness(point[groups]))
+        point[groups] = root[order[k]];
+    }
+    last[groups] = k++;
+  }
+
+  // How far from its point each group's exact roots can be: each one's gap
+  // is affine, so its root is its gap at the point, give or take the gap's
+  // rounding error, over its slope (0 where that gap is computed exactly).
+  // One pass over the crossings, each adding to its own group's.
+  std::array<double, N> roots_within = {};
+  template for (constexpr std::size_t i : ordering_crossings_of<Fn, Target>) {
+    if (makes_point[i]) {
+      const std::size_t g = group_of[i];
+      const Ball gap = gap_at<Fn, Target, i>(in, Ball{point[g], 0.0}, at_zero);
+      const double d = IeeeCxMath::add(BallCxMath::abs(gap.mid), gap.rad);
+      const double within =
+          BallCxMath::abs(slope_of[i]) > 0.0
+              ? IeeeCxMath::div(d, BallCxMath::abs(slope_of[i]))
+              : kInf;
+      roots_within[g] =
+          within == within ? BallCxMath::max(roots_within[g], within) : kInf;
+    }
+  }
+
+  DiscontinuityPointsWithAmplitudes<MaxPoints> result;
+  for (std::size_t g = 0; g < groups; ++g) {
     // Every crossing rooted in the group's span takes its outcome above it
     // on the right and below it on the left: `==` / `!=` and conditions,
     // their outcome off the point on both.
-    const double from = step_ulps(lowest, -kClusterUlps),
-                 to = step_ulps(highest, kClusterUlps);
+    const double from = step_ulps(root[order[first[g]]], -kClusterUlps),
+                 to = step_ulps(root[order[last[g]]], kClusterUlps);
     std::array<signed char, N> right, left;
     right.fill(-1);
     left.fill(-1);
@@ -1025,25 +1052,9 @@ analyze(const std::array<double, NumArgs> &in) {
       right[j] = above[j];
       left[j] = below[j];
     }
-    // How far from `point` the group's exact roots can be: each one's gap is
-    // affine, so its root is its gap at the point, give or take the gap's
-    // rounding error, over its slope (0 where that gap is computed exactly).
-    double roots_within = 0.0;
-    template for (constexpr std::size_t i : ordering_crossings_of<Fn, Target>) {
-      if (rooted[i] && from <= root[i] && root[i] <= to) {
-        const Ball g = gap_at<Fn, Target, i>(in, Ball{point, 0.0}, at_zero);
-        const double d = IeeeCxMath::add(BallCxMath::abs(g.mid), g.rad);
-        const double within =
-            BallCxMath::abs(slope_of[i]) > 0.0
-                ? IeeeCxMath::div(d, BallCxMath::abs(slope_of[i]))
-                : kInf;
-        roots_within =
-            within == within ? BallCxMath::max(roots_within, within) : kInf;
-      }
-    }
     // Fn's right and left limits there, and how far from them the exact
     // values can be with the target anywhere the roots can be.
-    const Ball target{point, roots_within};
+    const Ball target{point[g], roots_within[g]};
     const Ball from_right = value_with<Fn, Target>(in, target, right);
     const Ball from_left = value_with<Fn, Target>(in, target, left);
     if (!is_finite(from_right.mid) || !is_finite(from_left.mid))
@@ -1072,7 +1083,7 @@ analyze(const std::array<double, NumArgs> &in) {
             "be bounded (a value on the way there has none, as for a divisor "
             "that may be 0), so its jump cannot be told from rounding";
     if (jump != 0.0 && BallCxMath::abs(jump) > bound)
-      result.add_point_with_amplitude(point, jump);
+      result.add_point_with_amplitude(point[g], jump);
   }
 
   return result;
