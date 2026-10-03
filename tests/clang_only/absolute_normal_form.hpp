@@ -28,7 +28,7 @@
 // switching coefficients are 0.5 and -0.5 respectively.
 //
 
-#include "autograd.h" // for ad::Node, ad::OpKind, ad::build_nodes<>
+#include "../autograd.h" // for ad::Node, ad::OpKind, ad::build_nodes<>
 
 #include <array>
 #include <cstddef>
