@@ -63,6 +63,15 @@ double digital_call(double spot, double strike) {
   return (spot > strike) ? 1.0 : 0.0;
 }
 
+// #67: `==` / `!=` differ from their surroundings only at a single point, so
+// their left and right limits agree and there is no jump to report.
+double eq_payoff(double spot, double strike) {
+  return (spot == strike) ? 1.0 : 0.0;
+}
+double ne_payoff(double spot, double strike) {
+  return (spot != strike) ? 1.0 : 0.0;
+}
+
 // Test function that measures the actual jump on the function itself
 double measure_jump_on_function(double (*payoff)(double, double), double strike,
                                 double epsilon = 1e-8) {
@@ -232,6 +241,22 @@ int main() {
   // If the bug existed, both would report +1 instead of having opposite signs
   // Digital put should be negative, digital call should be positive
   EXPECT_EQUAL(disc_put.amplitude(0) < disc_call.amplitude(0), true);
+
+  // #67: equality comparisons are not discontinuities
+  EXPECT_EQUAL((ad::get_discontinuity_points<^^eq_payoff, 0>(100.0).size()), 0);
+  EXPECT_EQUAL((ad::get_discontinuity_points<^^ne_payoff, 0>(100.0).size()), 0);
+  EXPECT_EQUAL(
+      (ad::get_discontinuity_points_and_amplitudes<^^eq_payoff, 0>(100.0)
+           .size()),
+      0);
+  EXPECT_EQUAL(
+      (ad::get_discontinuity_points_and_amplitudes<^^ne_payoff, 0>(100.0)
+           .size()),
+      0);
+  EXPECT_EQUAL(
+      (ad::get_discontinuity_points_and_amplitudes_rt<^^eq_payoff, 0>(100.0)
+           .size()),
+      0);
 
   TEST_END;
 }

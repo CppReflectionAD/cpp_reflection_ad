@@ -52,7 +52,7 @@ constexpr double comparison_jump_sign(OpKind op, double slope) {
     return -slope_sign;
   if (op == OpKind::Gt || op == OpKind::Ge)
     return slope_sign;
-  return 1.0;
+  return 0.0; // Eq/Ne: no step (#67)
 }
 
 } // namespace detail_disc
@@ -174,9 +174,13 @@ namespace detail_disc {
 template <info Fn>
 inline constexpr auto nodes_of = std::define_static_array(build_nodes<Fn>());
 
-constexpr bool is_comparison(OpKind op) {
+// The comparisons whose outcome flips as the target crosses a point. `==` and
+// `!=` are left out: they take their other outcome only at the point itself,
+// so the function's left and right limits there are equal and there is no
+// jump (a single point carries no probability mass; see #67).
+constexpr bool is_ordering(OpKind op) {
   return op == OpKind::Lt || op == OpKind::Le || op == OpKind::Gt ||
-         op == OpKind::Ge || op == OpKind::Eq || op == OpKind::Ne;
+         op == OpKind::Ge;
 }
 
 constexpr bool is_arithmetic(OpKind op) {
@@ -302,7 +306,7 @@ analyze(const std::array<double, NumArgs> &in) {
   DiscontinuityCollectorWithAmplitudes<MaxPoints> collector;
 
   template for (constexpr Node n : nodes) {
-    if constexpr (is_comparison(n.op)) {
+    if constexpr (is_ordering(n.op)) {
       constexpr double slope = boundary_slope<Fn, n.self, Target, NumArgs>();
       if constexpr (slope != 0.0) {
         const double point = boundary_point<Fn, n.self, Target>(in);
