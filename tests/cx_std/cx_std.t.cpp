@@ -94,6 +94,15 @@ static_assert(cx::sqrt(5e-324) > 0.0 && cx::sqrt(1e308) > 1e153);
 static_assert(cx::sqrt(8.9049066160978575e+299) == 9.4365812750687717e+149);
 static_assert(cx::erfc(26.0) > 0.0 && cx::erfc(30.0) == 0.0);
 static_assert(cx::erfc(0.5) > 0.47 && cx::erfc(-3.0) < 2.0);
+// ... and stays cheap: 1000 calls over [0.5, 1], where the continued fraction
+// it replaced ran about 2000 levels each, fit clang's default step limit
+constexpr double erfc_sum = [] {
+  double sum = 0.0;
+  for (int i = 0; i < 1000; ++i)
+    sum += cx::erfc(0.5 + i / 2000.0);
+  return sum;
+}();
+static_assert(erfc_sum > 0.0);
 static_assert(cx::sin(1e5) != 0.0 && cx::cos(-1e5) != 0.0);
 // Beyond the Cody-Waite range, the reduction is exact (Payne-Hanek): the
 // correctly rounded values (from mpmath), where the three-part reduction gave
@@ -149,7 +158,7 @@ int main() {
   // sqrt: correctly rounded, as IEEE requires of std::sqrt
   EXPECT_LESS_THAN(max_ulps(cx_sqrt, std_sqrt, 5e-324, 1e308, true), 0.5);
   EXPECT_LESS_THAN(max_ulps(cx_sqrt, std_sqrt, 1.0, 4.0, false, 1000000), 0.5);
-  // erfc: the Taylor and continued-fraction paths, out to underflow
+  // erfc: the Taylor and Chebyshev paths, out to underflow
   EXPECT_LESS_THAN(max_ulps(cx_erfc, std_erfc, -6.0, 0.5), 8.0);
   EXPECT_LESS_THAN(max_ulps(cx_erfc, std_erfc, 0.5, 4.0), 8.0);
   EXPECT_LESS_THAN(max_ulps(cx_erfc, std_erfc, 4.0, 26.5), 8.0);
