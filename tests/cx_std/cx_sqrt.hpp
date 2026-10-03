@@ -23,9 +23,10 @@
 #ifndef CX_STD_CX_SQRT_HPP
 #define CX_STD_CX_SQRT_HPP
 
+#include "cx_exp.hpp"
+
 #include <limits>
 #include <type_traits>
-#include <utility>
 
 namespace cx {
 namespace detail {
@@ -45,15 +46,8 @@ template <typename T> constexpr T sqrt_succ(T y) {
 // (Dekker's product, splitting each factor in half by Veltkamp), and m - p is
 // exact by Sterbenz's lemma.
 template <typename T> constexpr bool exact_le(T m, T a, T b) {
-  constexpr T split =
-      T(1ull << ((std::numeric_limits<T>::digits + 1) / 2)) + T(1);
-  const auto halves = [](T v) {
-    const T t = split * v;
-    const T hi = t - (t - v);
-    return std::pair<T, T>{hi, v - hi};
-  };
-  const auto [a_hi, a_lo] = halves(a);
-  const auto [b_hi, b_lo] = halves(b);
+  const auto [a_hi, a_lo] = split(a);
+  const auto [b_hi, b_lo] = split(b);
   const T p = a * b;
   const T q = ((a_hi * b_hi - p) + a_hi * b_lo + a_lo * b_hi) + a_lo * b_lo;
   return m - p <= q;
@@ -61,25 +55,12 @@ template <typename T> constexpr bool exact_le(T m, T a, T b) {
 
 // Core: x is finite and positive.
 template <typename T> constexpr T sqrt_core(T x) {
-  constexpr T two_64 = T(18446744073709551616.0); // 2^64
-  T m = x;
-  T scale = T(1);
-  while (m >= two_64 * two_64) {
-    m /= two_64 * two_64;
-    scale *= two_64;
+  auto [m, e] = binary_exponent(x);
+  if (e % 2 != 0) {
+    m *= T(2);
+    --e;
   }
-  while (m < T(1) / (two_64 * two_64)) {
-    m *= two_64 * two_64;
-    scale /= two_64;
-  }
-  while (m >= T(4)) {
-    m /= T(4);
-    scale *= T(2);
-  }
-  while (m < T(1)) {
-    m *= T(4);
-    scale /= T(2);
-  }
+  const T scale = pow2<T>(e / 2);
   T y = T(0.5) * (m + T(1));
   for (;;) {
     const T next = T(0.5) * (y + m / y);

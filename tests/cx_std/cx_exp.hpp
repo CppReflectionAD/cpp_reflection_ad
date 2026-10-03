@@ -63,6 +63,51 @@ template <typename T> constexpr T pow2(int k) {
   return result;
 }
 
+// v = hi + lo exactly, each half of T's significand (Veltkamp's split), so
+// products of halves are exact: the core of an error-free product (Dekker).
+// |v| must be well within range: v · 2^(digits/2) must not overflow.
+template <typename T> struct Halves {
+  T hi, lo;
+};
+template <typename T> constexpr Halves<T> split(T v) {
+  constexpr T splitter =
+      pow2<T>((std::numeric_limits<T>::digits + 1) / 2) + T(1);
+  const T t = splitter * v;
+  const T hi = t - (t - v);
+  return {hi, v - hi};
+}
+
+// x = m · 2^e with m ∈ [1, 2), for finite positive x (frexp, scaled by 2).
+// Scaling by powers of two is exact. The coarse steps are 2^64, within even
+// float's range: a larger one overflows there, which GCC rejects during
+// constant evaluation.
+template <typename T> struct BinaryExponent {
+  T m;
+  int e;
+};
+template <typename T> constexpr BinaryExponent<T> binary_exponent(T x) {
+  constexpr T two_64 = pow2<T>(64);
+  T m = x;
+  int e = 0;
+  while (m >= two_64) {
+    m /= two_64;
+    e += 64;
+  }
+  while (m < T(1) / two_64) {
+    m *= two_64;
+    e -= 64;
+  }
+  while (m >= T(2)) {
+    m /= T(2);
+    ++e;
+  }
+  while (m < T(1)) {
+    m *= T(2);
+    --e;
+  }
+  return {m, e};
+}
+
 // Nearest integer to x, |x| small enough to fit an int.
 template <typename T> constexpr int round_to_int(T x) {
   return static_cast<int>(x < T(0) ? x - T(0.5) : x + T(0.5));

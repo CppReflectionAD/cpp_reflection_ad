@@ -49,7 +49,9 @@
 // point -- a pole such as `s > 0 ? k / s : 0` is not a jump -- for a
 // crossing's slope in the target not to be finite at the fixed values (`s / k
 // > 1` at k = 0, which does jump at s = 0, but also `s * (k - k) > 0` at
-// k = inf, which never flips), or to have more points than MaxPoints.
+// k = inf, which never flips), for its sides to overflow with the target at
+// 0 (`(s - k) * 1e10 > 0` at k = 1e300), for a jump's rounding error not to
+// be bounded, or to have more points than MaxPoints.
 
 #include "../autograd.h"
 #include "../cx_std/cx_erfc.hpp"
@@ -311,6 +313,21 @@ constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
 
 constexpr bool is_finite(double x) { return x == x && x != kInf && x != -kInf; }
 
+// x moved k ulps up (k > 0) or down (k < 0), through ±0, stopping at ±inf.
+constexpr double step_ulps(double x, int k) {
+  const auto up = [](double v) {
+    if (v == 0.0)
+      return std::numeric_limits<double>::denorm_min();
+    const std::uint64_t bits = std::bit_cast<std::uint64_t>(v);
+    return std::bit_cast<double>(v > 0.0 ? bits + 1 : bits - 1);
+  };
+  for (; k > 0 && is_finite(x); --k)
+    x = up(x);
+  for (; k < 0 && is_finite(x); ++k)
+    x = -up(-x);
+  return x;
+}
+
 // primal()'s arithmetic here: IEEE results even during constant evaluation,
 // where an operation that divides by zero or produces a NaN otherwise stops
 // the build. A NaN or infinity is produced directly instead, so a target-free
@@ -350,6 +367,12 @@ struct IeeeCxMath {
     return a / b;
   }
   [[gnu::always_inline]] static constexpr double neg(double a) { return -a; }
+  [[gnu::always_inline]] static constexpr double max(double a, double b) {
+    return (a < b) ? b : a;
+  }
+  [[gnu::always_inline]] static constexpr double min(double a, double b) {
+    return (b < a) ? b : a;
+  }
 
   template <OpKind Op>
   [[gnu::always_inline]] static constexpr double unary(double x) {
@@ -371,9 +394,11 @@ struct IeeeCxMath {
 // A value with a bound on its error, for telling a jump from rounding (see
 // analyze). `mid` is the value exactly as IeeeCxMath computes it; the value
 // in exact arithmetic -- the arguments as given, the target anywhere within
-// its own rad of its mid -- is within `rad` of `mid`. An infinite rad (as
-// for any value that is not finite) bounds nothing. Comparisons read `mid`,
-// as Fn's do its value.
+// its own rad of its mid -- is within `rad` of `mid`. An infinite mid is an
+// overflow: the exact value has mid's sign and a magnitude of at least the
+// largest double less `rad`, infinity included (so an input or constant that
+// is itself ±inf is {±inf, 0}). An infinite rad, as for a NaN mid, bounds
+// nothing. Comparisons read `mid`, as Fn's do its value.
 struct Ball {
   double mid = 0.0;
   double rad = 0.0;
@@ -391,33 +416,66 @@ constexpr double mid_of(Ball x) { return x.mid; }
 
 // primal()'s arithmetic on Balls: the mids as IeeeCxMath computes them, the
 // radii by the usual first-principles bounds (midpoint-radius interval
-// arithmetic). The radii are computed only from finite values, so they can
-// overflow to inf but never become NaN, which would stop the build.
+// arithmetic), and an overflow's by the least magnitude its exact value can
+// have, so that what Fn computes from it (1 / (1 + exp(1000))) stays bounded.
+// The radii are computed only from finite values, so they can overflow to inf
+// but never become NaN, which would stop the build.
 struct BallCxMath {
   using M = IeeeCxMath;
   // One rounding: at most half an ulp, |r|·2^-53, plus the smallest
   // subnormal where a product or quotient underflows.
   static constexpr double kHalfUlp = 0x1p-53;
   static constexpr double kTiny = std::numeric_limits<double>::denorm_min();
+  static constexpr double kMax = std::numeric_limits<double>::max();
   // cx_std's error, in the same units: 8 ulps, against a measured worst of 5
   // (erfc).
   static constexpr double kCxError = 16.0;
 
   static constexpr double abs(double x) { return x < 0.0 ? -x : x; }
   static constexpr double max(double a, double b) { return a < b ? b : a; }
-  // No bound: a value that is not finite, or an operand with none.
-  static constexpr bool unbounded(double mid, Ball a, Ball b = {}) {
-    return !is_finite(mid) || a.rad == kInf || b.rad == kInf;
+  static constexpr double min(double a, double b) { return b < a ? b : a; }
+  // No bound: a NaN, or an operand with none.
+  static constexpr bool bounded(Ball a) {
+    return a.mid == a.mid && a.rad != kInf;
   }
-  // cx_std's error at a result r.
+  static constexpr bool unbounded(double mid, Ball a, Ball b = {}) {
+    return mid != mid || !bounded(a) || !bounded(b);
+  }
+  // cx_std's error at a result r. (16 · 2^-53 is a power of two, so this
+  // rounds as 16 · |r| · 2^-53 would, without overflowing past 1e307.)
   static constexpr double cx_error(double r) {
-    return kCxError * abs(r) * kHalfUlp + kTiny;
+    return abs(r) * (kCxError * kHalfUlp) + kTiny;
+  }
+  // The least magnitude a's exact value can have, or 0.
+  static constexpr double least_of(Ball a) {
+    const double least = is_finite(a.mid) ? abs(a.mid) - a.rad : kMax - a.rad;
+    return least > 0.0 ? least : 0.0;
+  }
+  // The most: a's reach from 0, for a finite mid.
+  static constexpr double most_of(Ball a) { return abs(a.mid) + a.rad; }
+  // An overflow to mid = ±inf whose exact value is at least `least` in
+  // magnitude: no bound unless that is more than 0, which fixes the sign.
+  static constexpr Ball overflow(double mid, double least) {
+    if (!(least > 0.0))
+      return {mid, kInf};
+    return {mid, least < kMax ? kMax - least : 0.0};
   }
 
   [[gnu::always_inline]] static constexpr Ball add(Ball a, Ball b) {
     const double mid = M::add(a.mid, b.mid);
     if (unbounded(mid, a, b))
       return {mid, kInf};
+    if (!is_finite(mid)) {
+      // Finite mids: their exact sum is past the largest double, and the
+      // radii move it by at most their sum. Past an infinite operand (of
+      // mid's sign), a finite one moves it by at most its reach, and another
+      // infinite one only further out.
+      const bool a_finite = is_finite(a.mid), b_finite = is_finite(b.mid);
+      return overflow(mid, a_finite && b_finite ? kMax - (a.rad + b.rad)
+                           : a_finite           ? least_of(b) - most_of(a)
+                           : b_finite           ? least_of(a) - most_of(b)
+                                      : max(least_of(a), least_of(b)));
+    }
     // A sum that rounds to 0, or to a subnormal, is exact.
     return {mid, a.rad + b.rad + abs(mid) * kHalfUlp};
   }
@@ -428,19 +486,55 @@ struct BallCxMath {
     const double mid = M::mul(a.mid, b.mid);
     if (unbounded(mid, a, b))
       return {mid, kInf};
+    if (!is_finite(mid))
+      return overflow(mid, least_of(a) * least_of(b));
+    // A finite product has finite operands.
     const bool exact = a.mid == 0.0 || b.mid == 0.0;
     return {mid, abs(a.mid) * b.rad + abs(b.mid) * a.rad + a.rad * b.rad +
                      (exact ? 0.0 : abs(mid) * kHalfUlp + kTiny)};
   }
   [[gnu::always_inline]] static constexpr Ball div(Ball a, Ball b) {
     const double mid = M::div(a.mid, b.mid);
-    if (unbounded(mid, a, b) || b.rad >= abs(b.mid))
+    if (unbounded(mid, a, b))
       return {mid, kInf};
+    if (!is_finite(b.mid)) {
+      // A finite value over an overflow: mid is ±0, and the exact quotient
+      // is at most a's reach over b's least magnitude.
+      const double least = least_of(b);
+      if (!(least > 0.0))
+        return {mid, kInf};
+      return {mid, most_of(a) / least + kTiny};
+    }
+    if (b.rad >= abs(b.mid))
+      return {mid, kInf};
+    if (!is_finite(mid))
+      return overflow(mid, least_of(a) / most_of(b));
     return {mid, (a.rad + abs(mid) * b.rad) / (abs(b.mid) - b.rad) +
                      abs(mid) * kHalfUlp + kTiny};
   }
   [[gnu::always_inline]] static constexpr Ball neg(Ball a) {
     return {-a.mid, a.rad};
+  }
+  // The operand Fn picks, but the other's error bounds the result too:
+  // |max(A, B) - max(a, b)| <= max(|A - a|, |B - b|), and so for min.
+  [[gnu::always_inline]] static constexpr Ball max(Ball a, Ball b) {
+    const double mid = M::max(a.mid, b.mid);
+    if (unbounded(mid, a, b))
+      return {mid, kInf};
+    if (is_finite(a.mid) && is_finite(b.mid))
+      return {mid, max(a.rad, b.rad)};
+    // With an overflow, by the operand Fn picks (p) and the other (q).
+    const Ball p = (a.mid < b.mid) ? b : a, q = (a.mid < b.mid) ? a : b;
+    if (p.mid == kInf) // max(P, Q) >= P
+      return p;
+    if (p.mid == -kInf) // both below -least
+      return overflow(mid, min(least_of(p), least_of(q)));
+    // q is below -least, which must not reach P
+    return -least_of(q) <= p.mid - p.rad ? p : Ball{mid, kInf};
+  }
+  [[gnu::always_inline]] static constexpr Ball min(Ball a, Ball b) {
+    // Picks as M::min does: b where b < a, else a.
+    return neg(max(neg(a), neg(b)));
   }
 
   template <OpKind Op>
@@ -449,15 +543,23 @@ struct BallCxMath {
     if (unbounded(mid, a))
       return {mid, kInf};
     if constexpr (Op == OpKind::Sin || Op == OpKind::Cos) {
-      // |sin'| and |cos'| are at most 1
+      // |sin'| and |cos'| are at most 1 (and sin and cos of ±inf are NaN)
       return {mid, (a.rad < 2.0 ? a.rad : 2.0) + cx_error(mid)};
     } else {
       // exp, log, sqrt and erfc are monotone: the exact values over a's
-      // range lie between those at its ends.
-      if (a.rad == 0.0)
+      // range lie between those at its ends. Those are rounded outward: to
+      // nearest, a.mid ± a.rad can land inside the range, or on a.mid itself
+      // when a.rad is under half an ulp of it, and |f'| times what is lost
+      // can be well over cx_error (exp(x) or erfc(x) at large x). An
+      // overflow's range runs out to ±inf.
+      if (a.rad == 0.0 && is_finite(a.mid) && is_finite(mid))
         return {mid, cx_error(mid)};
-      double lo = a.mid - a.rad;
-      const double hi = a.mid + a.rad;
+      double lo = a.mid == kInf    ? step_ulps(kMax - a.rad, -1)
+                  : a.mid == -kInf ? -kInf
+                                   : step_ulps(a.mid - a.rad, -1);
+      const double hi = a.mid == -kInf  ? step_ulps(a.rad - kMax, 1)
+                        : a.mid == kInf ? kInf
+                                        : step_ulps(a.mid + a.rad, 1);
       if constexpr (Op == OpKind::Log) {
         if (!(lo > 0.0))
           return {mid, kInf};
@@ -466,11 +568,20 @@ struct BallCxMath {
       }
       const double f_lo = M::template unary<Op>(lo);
       const double f_hi = M::template unary<Op>(hi);
-      if (!is_finite(f_lo) || !is_finite(f_hi))
+      if (is_finite(mid)) {
+        if (!is_finite(f_lo) || !is_finite(f_hi))
+          return {mid, kInf};
+        return {mid, max(abs(f_hi - mid) + cx_error(f_hi),
+                         abs(mid - f_lo) + cx_error(f_lo)) +
+                         cx_error(mid)};
+      }
+      // An overflow, of exp, log or sqrt, which increase: at least f_lo,
+      // less its error (cx_std overflows only past the largest double, give
+      // or take that error).
+      if (mid != kInf)
         return {mid, kInf};
-      return {mid, max(abs(f_hi - mid) + cx_error(f_hi),
-                       abs(mid - f_lo) + cx_error(f_lo)) +
-                       cx_error(mid)};
+      return overflow(mid, is_finite(f_lo) ? f_lo - cx_error(f_lo)
+                                           : kMax - cx_error(kMax));
     }
   }
 };
@@ -497,11 +608,6 @@ constexpr T node_value(const std::array<T, N> &val,
       return T{in[I]};
   } else if constexpr (op == OpKind::Const) {
     return T{static_cast<double>([:n.leaf:])};
-  } else if constexpr (std::is_same_v<T, Ball> &&
-                       (op == OpKind::Max || op == OpKind::Min)) {
-    // primal() returns one operand, but the other's error bounds it too.
-    return {primal<op, BallCxMath>(val[a], val[b], val[c]).mid,
-            BallCxMath::max(val[a].rad, val[b].rad)};
   } else if constexpr (op_has_primal(op)) {
     return primal<op, MathFor<T>>(val[a], val[b], val[c]);
   } else {
@@ -630,6 +736,33 @@ consteval std::vector<std::size_t> gap_cone() {
 template <info Fn, std::size_t I>
 inline constexpr auto gap_cone_of = std::define_static_array(gap_cone<Fn, I>());
 
+// Whether crossing I's gap, in a sweep where it is not finite, is so because
+// arithmetic on the target overflowed there: a +, -, * or / that depends on
+// the target, or the comparison's own lhs - rhs, of finite values. Otherwise
+// a target-free value is not finite, and so is the gap for every target.
+template <info Fn, std::size_t Target, std::size_t I, std::size_t N>
+constexpr bool target_overflows(const Sweep<N> &s) {
+  static constexpr auto nodes = nodes_of<Fn>;
+  static constexpr auto dep = target_dependence_of<Fn, Target>;
+  constexpr OpKind crossing_op = nodes[I].op;
+  constexpr std::size_t lhs = nodes[I].a, rhs = nodes[I].b;
+  if constexpr (is_comparison(crossing_op)) {
+    if (is_finite(s.val[lhs]) && is_finite(s.val[rhs]))
+      return true;
+  }
+  bool overflowed = false;
+  template for (constexpr std::size_t j : gap_cone_of<Fn, I>) {
+    constexpr OpKind op = nodes[j].op;
+    constexpr std::size_t a = nodes[j].a, b = nodes[j].b;
+    if constexpr (dep[j].varies && (op == OpKind::Add || op == OpKind::Sub ||
+                                    op == OpKind::Mul || op == OpKind::Div)) {
+      if (!is_finite(s.val[j]) && is_finite(s.val[a]) && is_finite(s.val[b]))
+        overflowed = true;
+    }
+  }
+  return overflowed;
+}
+
 // Crossing I's gap (as gap() reads it from a sweep) with the target at x, a
 // double or a Ball, evaluating only the nodes it reads. A node is skipped, as
 // sweep() skips it, if its guard can never hold; `reach` is any sweep, since
@@ -653,21 +786,6 @@ constexpr T gap_at(const std::array<double, NumArgs> &in, T x,
     return MathFor<T>::sub(val[a], val[b]);
   else
     return val[I];
-}
-
-// x moved k ulps up (k > 0) or down (k < 0), through ±0.
-constexpr double step_ulps(double x, int k) {
-  const auto up = [](double v) {
-    if (v == 0.0)
-      return std::numeric_limits<double>::denorm_min();
-    const std::uint64_t bits = std::bit_cast<std::uint64_t>(v);
-    return std::bit_cast<double>(v > 0.0 ? bits + 1 : bits - 1);
-  };
-  for (; k > 0; --k)
-    x = up(x);
-  for (; k < 0; ++k)
-    x = -up(-x);
-  return x;
 }
 
 // How far a root is moved to where crossing I's sides are equal (see snap).
@@ -825,10 +943,19 @@ analyze(const std::array<double, NumArgs> &in) {
         throw "discontinuity_analysis: a crossing's slope in the target is "
               "not finite (as for s / k > 1 at k = 0), so its point cannot "
               "be placed";
+      // A constant that is not finite because Fn's arithmetic on the target
+      // overflowed at 0 (`(s - k) * 1e10 > 0` at k = 1e300, which flips at
+      // s = k) is not the one that places the root, which then cannot be
+      // placed: an error, not a missed jump.
+      if (at_zero.reached(i) && !is_finite(g0) &&
+          target_overflows<Fn, Target, i>(at_zero))
+        throw "discontinuity_analysis: a crossing's sides overflow with the "
+              "target at 0 (as (s - k) * 1e10 > 0 does at k = 1e300), so its "
+              "point cannot be placed";
       // No root if Fn never reaches the crossing, if g is flat (`s * k > 1`
       // at k = 0) or, with every coefficient finite, its constant is not
-      // (`s > 1 / k` at k = 0: -inf for every target, never true), or if the
-      // root is beyond the doubles.
+      // because a target-free value is not (`s > 1 / k` at k = 0: -inf for
+      // every target, never true), or if the root is beyond the doubles.
       const double r =
           at_zero.reached(i) && slope != 0.0 && is_finite(g0)
               ? -(g0 / slope) + 0.0 // `+ 0.0` turns a -0 root into 0
@@ -866,29 +993,56 @@ analyze(const std::array<double, NumArgs> &in) {
     order[at] = c;
   }
 
-  DiscontinuityPointsWithAmplitudes<MaxPoints> result;
   // Roots each within kClusterUlps of the one before are one point, measured
   // once: they are often one crossing in exact arithmetic (`s * 1.1 > k`
   // and `s / 0.9 > k / 0.99`), and Fn's own arithmetic can make a
   // comparison's sides exactly equal on a run of doubles between them, so
   // measured apart each could lose the other's share of the jump. The point
-  // is the shortest of their roots (as in snap), the lowest on a tie.
-  for (std::size_t first = 0; first < ordered;) {
-    std::size_t last = first;
-    while (last + 1 < ordered &&
-           root[order[last + 1]] <= step_ulps(root[order[last]], kClusterUlps))
-      ++last;
-    const double lowest = root[order[first]], highest = root[order[last]];
-    double point = lowest;
-    for (std::size_t k = first + 1; k <= last; ++k)
-      if (roundness(root[order[k]]) > roundness(point))
-        point = root[order[k]];
-    first = last + 1;
+  // is the shortest of their roots (as in snap), the lowest on a tie. Group g
+  // is order[first[g]..last[g]].
+  std::array<std::size_t, N> group_of = {}, first = {}, last = {};
+  std::array<double, N> point = {};
+  std::size_t groups = 0;
+  for (std::size_t k = 0; k < ordered; ++groups) {
+    first[groups] = k;
+    point[groups] = root[order[k]];
+    group_of[order[k]] = groups;
+    while (k + 1 < ordered &&
+           root[order[k + 1]] <= step_ulps(root[order[k]], kClusterUlps)) {
+      ++k;
+      group_of[order[k]] = groups;
+      if (roundness(root[order[k]]) > roundness(point[groups]))
+        point[groups] = root[order[k]];
+    }
+    last[groups] = k++;
+  }
+
+  // How far from its point each group's exact roots can be: each one's gap
+  // is affine, so its root is its gap at the point, give or take the gap's
+  // rounding error, over its slope (0 where that gap is computed exactly).
+  // One pass over the crossings, each adding to its own group's.
+  std::array<double, N> roots_within = {};
+  template for (constexpr std::size_t i : ordering_crossings_of<Fn, Target>) {
+    if (makes_point[i]) {
+      const std::size_t g = group_of[i];
+      const Ball gap = gap_at<Fn, Target, i>(in, Ball{point[g], 0.0}, at_zero);
+      const double d = IeeeCxMath::add(BallCxMath::abs(gap.mid), gap.rad);
+      const double within =
+          BallCxMath::abs(slope_of[i]) > 0.0
+              ? IeeeCxMath::div(d, BallCxMath::abs(slope_of[i]))
+              : kInf;
+      roots_within[g] =
+          within == within ? BallCxMath::max(roots_within[g], within) : kInf;
+    }
+  }
+
+  DiscontinuityPointsWithAmplitudes<MaxPoints> result;
+  for (std::size_t g = 0; g < groups; ++g) {
     // Every crossing rooted in the group's span takes its outcome above it
     // on the right and below it on the left: `==` / `!=` and conditions,
     // their outcome off the point on both.
-    const double from = step_ulps(lowest, -kClusterUlps),
-                 to = step_ulps(highest, kClusterUlps);
+    const double from = step_ulps(root[order[first[g]]], -kClusterUlps),
+                 to = step_ulps(root[order[last[g]]], kClusterUlps);
     std::array<signed char, N> right, left;
     right.fill(-1);
     left.fill(-1);
@@ -898,25 +1052,9 @@ analyze(const std::array<double, NumArgs> &in) {
       right[j] = above[j];
       left[j] = below[j];
     }
-    // How far from `point` the group's exact roots can be: each one's gap is
-    // affine, so its root is its gap at the point, give or take the gap's
-    // rounding error, over its slope (0 where that gap is computed exactly).
-    double roots_within = 0.0;
-    template for (constexpr std::size_t i : ordering_crossings_of<Fn, Target>) {
-      if (rooted[i] && from <= root[i] && root[i] <= to) {
-        const Ball g = gap_at<Fn, Target, i>(in, Ball{point, 0.0}, at_zero);
-        const double d = IeeeCxMath::add(BallCxMath::abs(g.mid), g.rad);
-        const double within =
-            BallCxMath::abs(slope_of[i]) > 0.0
-                ? IeeeCxMath::div(d, BallCxMath::abs(slope_of[i]))
-                : kInf;
-        roots_within =
-            within == within ? BallCxMath::max(roots_within, within) : kInf;
-      }
-    }
     // Fn's right and left limits there, and how far from them the exact
     // values can be with the target anywhere the roots can be.
-    const Ball target{point, roots_within};
+    const Ball target{point[g], roots_within[g]};
     const Ball from_right = value_with<Fn, Target>(in, target, right);
     const Ball from_left = value_with<Fn, Target>(in, target, left);
     if (!is_finite(from_right.mid) || !is_finite(from_left.mid))
@@ -935,15 +1073,17 @@ analyze(const std::array<double, NumArgs> &in) {
     // exactly the bound is 0, and any jump is reported (`s > k ? s - k + 1 :
     // 0` at k = 1e16).
     const double bound = 2.0 * (from_right.rad + from_left.rad);
-    // An unbounded side -- a value on the way that is not finite, though Fn
-    // is (`1 / (1 + exp(k))` at k = 1000) -- cannot tell them apart: an
-    // error, not a silently dropped jump.
+    // An unbounded side -- a value on the way with no bound on its error, as
+    // a divisor that may be 0 (`1 / (k * 0.1 * 10 - k)` at k = 3, which is
+    // rounding alone) or a NaN, though Fn is finite -- cannot tell them
+    // apart: an error, not a silently dropped jump. (An overflow alone is
+    // bounded: `1 / (1 + exp(k))` at k = 1000 is within 1e-308 of 0.)
     if (jump != 0.0 && bound == kInf)
       throw "discontinuity_analysis: Fn's error near a crossing point cannot "
-            "be bounded (a value on the way there is not finite), so its "
-            "jump cannot be told from rounding";
+            "be bounded (a value on the way there has none, as for a divisor "
+            "that may be 0), so its jump cannot be told from rounding";
     if (jump != 0.0 && BallCxMath::abs(jump) > bound)
-      result.add_point_with_amplitude(point, jump);
+      result.add_point_with_amplitude(point[g], jump);
   }
 
   return result;

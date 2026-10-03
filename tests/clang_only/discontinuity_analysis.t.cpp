@@ -1,6 +1,7 @@
 #include "discontinuity_analysis.hpp"
 #include <test_simple_include.hpp>
 
+#include <algorithm>
 #include <cmath>
 
 // Test functions with different numbers of discontinuities
@@ -231,10 +232,32 @@ double ratio_digital(double spot, double k) {
 double product_digital(double spot, double k) {
   return (spot * k > 1.0) ? 1.0 : 0.0;
 }
-// A jump whose side passes through a value that is not finite (exp(1000)
-// overflows) cannot be bounded, so it is an error, not a dropped jump.
+// ... nor one whose sides overflow with spot at 0, though Fn computes them
+// finitely near the point: at k = 1e300 the first jumps at k, and at
+// k = 1e308 the second at about k (where 2 * spot overflows)
+double scaled_gap_digital(double spot, double k) {
+  return ((spot - k) * 1e10 > 0.0) ? 1.0 : 0.0;
+}
+double doubled_spot_digital(double spot, double k) {
+  return (2.0 * spot - k > k) ? 1.0 : 0.0;
+}
+// ... while one that is not finite because a value without spot is not
+// never flips, and has no point: spot > inf at k = 0 and at k = 1000
+double reciprocal_strike_digital(double spot, double k) {
+  return (spot > 1.0 / k) ? 1.0 : 0.0;
+}
+double exp_strike_digital(double spot, double k) {
+  return (spot > std::exp(k)) ? 1.0 : 0.0;
+}
+// A jump whose side passes through an overflow is still bounded: exp(1000)
+// is past the largest double, so 1 / (1 + exp(1000)) is within 1e-308 of 0.
 double overflowing_rebate(double spot, double k) {
   return (spot > k) ? 1.0 + 1.0 / (1.0 + std::exp(k)) : 0.0;
+}
+// ... while one whose side has no bound is an error, not a dropped jump: at
+// k = 3 the divisor is 4.4e-16, which is rounding alone and may as well be 0
+double rounding_rebate(double spot, double k) {
+  return (spot > k) ? 1.0 / (k * 0.1 * 10.0 - k) : 0.0;
 }
 
 // A crossing behind a guard that cannot hold is never reached, nested or not:
@@ -300,6 +323,48 @@ double inexact_tangential_kink(double spot, double strike) {
   return (spot > strike / 3.0) ? (3.0 * spot - strike) * (3.0 * spot - strike)
                                : 0.0;
 }
+double capped_inexact_kink(double spot, double strike) {
+  return (spot > strike / 3.0) ? std::min(3.0 * spot - strike, 1.0) : 0.0;
+}
+// ... and a jump through max and min is measured like any other
+double floored_digital(double spot, double strike) {
+  return (spot > strike) ? std::max(spot - strike, 1.0)
+                         : std::min(spot - strike, 0.0);
+}
+// max and min of error-bounded values pick the operand Fn does, but the
+// other's error bounds the result too
+using ad::detail_disc::Ball;
+using ad::detail_disc::BallCxMath;
+static_assert(BallCxMath::max(Ball{1.0, 0.0}, Ball{0.9, 0.5}).mid == 1.0 &&
+              BallCxMath::max(Ball{1.0, 0.0}, Ball{0.9, 0.5}).rad == 0.5);
+static_assert(BallCxMath::min(Ball{1.0, 0.25}, Ball{0.9, 0.0}).mid == 0.9 &&
+              BallCxMath::min(Ball{1.0, 0.25}, Ball{0.9, 0.0}).rad == 0.25);
+// A function's bound covers its argument's whole range, even a radius under
+// half an ulp of it (which mid ± rad, rounded to nearest, loses): exp(x) moves
+// by e^x · rad, erfc(x) by about 2x · erfc(x) · rad, here well over the
+// functions' own error
+static_assert(BallCxMath::unary<ad::OpKind::Exp>(Ball{600.0, 5e-14}).rad >=
+              5e-14 * cx::exp(600.0));
+static_assert(BallCxMath::unary<ad::OpKind::Erfc>(Ball{20.0, 1e-15}).rad >=
+              40.0 * 1e-15 * cx::erfc(20.0));
+// An overflow is bounded below: past the largest double, with its sign
+constexpr Ball exp_1000 = BallCxMath::unary<ad::OpKind::Exp>(Ball{1000.0, 0.0});
+constexpr Ball over_exp_1000 =
+    BallCxMath::div(Ball{1.0, 0.0}, BallCxMath::add(Ball{1.0, 0.0}, exp_1000));
+static_assert(exp_1000.rad < 1e300 && over_exp_1000.mid == 0.0 &&
+              over_exp_1000.rad < 1e-307);
+static_assert(BallCxMath::mul(Ball{-1e300, 1e290}, Ball{1e10, 0.0}).mid ==
+                  -std::numeric_limits<double>::infinity() &&
+              BallCxMath::mul(Ball{-1e300, 1e290}, Ball{1e10, 0.0}).rad == 0.0);
+static_assert(
+    BallCxMath::unary<ad::OpKind::Exp>(BallCxMath::neg(exp_1000)).rad < 1e-307);
+// ... unless its sign is not known, or an operand has no bound
+static_assert(BallCxMath::mul(exp_1000, Ball{1e-300, 1e-300}).rad ==
+              std::numeric_limits<double>::infinity());
+static_assert(BallCxMath::add(exp_1000, Ball{-1e308, 1e308}).rad ==
+              std::numeric_limits<double>::infinity());
+static_assert(BallCxMath::div(Ball{1.0, 0.0}, Ball{4.4e-16, 6.7e-16}).rad ==
+              std::numeric_limits<double>::infinity());
 
 // The same crossing written two ways. They meet at strike / 1.1 in exact
 // arithmetic but are rooted a few ulps apart, and Fn's own sides can be
@@ -817,7 +882,8 @@ int main() {
   EXPECT_EQUAL(disc_far_rebate.amplitude(0), 1.0);
   {
     // Kinks with inexact roots, odd or even order, report nothing anywhere.
-    int odd_points = 0, scaled_points = 0, tangential_points = 0;
+    int odd_points = 0, scaled_points = 0, tangential_points = 0,
+        capped_points = 0;
     for (int i = 1; i <= 400; ++i) {
       const double strike = 0.37 * i;
       odd_points +=
@@ -831,16 +897,26 @@ int main() {
       tangential_points += ad::get_discontinuity_points_and_amplitudes_rt<
                                ^^inexact_tangential_kink, 0>(strike)
                                .size();
+      capped_points +=
+          ad::get_discontinuity_points_and_amplitudes_rt<^^capped_inexact_kink,
+                                                         0>(strike)
+              .size();
     }
     EXPECT_EQUAL(odd_points, 0);
     EXPECT_EQUAL(scaled_points, 0);
     EXPECT_EQUAL(tangential_points, 0);
+    EXPECT_EQUAL(capped_points, 0);
     // ... at compile time too: 7.03 / 3 is not a double
     EXPECT_TRUE(
         (ad::get_discontinuity_points_and_amplitudes<^^inexact_tangential_kink,
                                                      0>(7.03)
              .empty()));
   }
+  constexpr auto disc_floored =
+      ad::get_discontinuity_points_and_amplitudes<^^floored_digital, 0>(100.0);
+  EXPECT_EQUAL(disc_floored.size(), 1);
+  EXPECT_EQUAL(disc_floored.point(0), 100.0);
+  EXPECT_EQUAL(disc_floored.amplitude(0), 1.0);
   constexpr auto disc_sqrt =
       ad::get_discontinuity_points_and_amplitudes<^^sqrt_rebate, 0>(100.0);
   EXPECT_EQUAL(disc_sqrt.size(), 1);
@@ -1003,7 +1079,7 @@ int main() {
   EXPECT_TRUE(pole_rejected);
 
   // So is a crossing whose slope is not finite, not a silently missed jump
-  const auto infinite_slope_rejected = [](auto analyze) {
+  const auto rejected = [](auto analyze) {
     try {
       (void)analyze();
     } catch (const char *) {
@@ -1011,12 +1087,12 @@ int main() {
     }
     return false;
   };
-  EXPECT_TRUE(infinite_slope_rejected([] {
+  EXPECT_TRUE(rejected([] {
     return ad::get_discontinuity_points_and_amplitudes_rt<^^ratio_digital, 0>(
         0.0);
   }));
   EXPECT_EQUAL(ratio_digital(1e-9, 0.0) - ratio_digital(-1e-9, 0.0), 1.0);
-  EXPECT_TRUE(infinite_slope_rejected([] {
+  EXPECT_TRUE(rejected([] {
     return ad::get_discontinuity_points_and_amplitudes_rt<^^product_digital, 0>(
         std::numeric_limits<double>::infinity());
   }));
@@ -1030,18 +1106,65 @@ int main() {
       (ad::get_discontinuity_points_and_amplitudes<^^product_digital, 0>(0.0)
            .size()),
       0);
+  // So is one whose sides overflow with the target at 0
+  EXPECT_TRUE(rejected([] {
+    return ad::get_discontinuity_points_and_amplitudes_rt<^^scaled_gap_digital,
+                                                          0>(1e300);
+  }));
+  EXPECT_EQUAL(scaled_gap_digital(1e300 * (1 + 1e-15), 1e300) -
+                   scaled_gap_digital(1e300 * (1 - 1e-15), 1e300),
+               1.0);
+  EXPECT_TRUE(rejected([] {
+    return ad::get_discontinuity_points_and_amplitudes_rt<
+        ^^doubled_spot_digital, 0>(1e308);
+  }));
+  // ... short of the overflow, both are placed as before
+  constexpr auto disc_scaled_gap =
+      ad::get_discontinuity_points_and_amplitudes<^^scaled_gap_digital, 0>(
+          100.0);
+  EXPECT_EQUAL(disc_scaled_gap.size(), 1);
+  EXPECT_EQUAL(disc_scaled_gap.point(0), 100.0);
+  EXPECT_EQUAL(disc_scaled_gap.amplitude(0), 1.0);
+  EXPECT_EQUAL(
+      (ad::get_discontinuity_points_and_amplitudes<^^doubled_spot_digital, 0>(
+           100.0)
+           .point(0)),
+      100.0);
+  // ... while a gap not finite for every target has no point, and no error
+  EXPECT_EQUAL(
+      (ad::get_discontinuity_points_and_amplitudes<^^reciprocal_strike_digital,
+                                                   0>(0.0)
+           .size()),
+      0);
+  EXPECT_EQUAL(
+      (ad::get_discontinuity_points_and_amplitudes<^^exp_strike_digital, 0>(
+           1000.0)
+           .size()),
+      0);
 
   // So is a jump whose error cannot be bounded
   bool unbounded_rejected = false;
   try {
-    (void)
-        ad::get_discontinuity_points_and_amplitudes_rt<^^overflowing_rebate, 0>(
-            1000.0);
+    (void)ad::get_discontinuity_points_and_amplitudes_rt<^^rounding_rebate, 0>(
+        3.0);
   } catch (const char *) {
     unbounded_rejected = true;
   }
   EXPECT_TRUE(unbounded_rejected);
-  // ... while short of the overflow it is measured as usual
+  EXPECT_TRUE(rounding_rebate(3.0 + 1e-9, 3.0) > 1e15);
+  // ... while one through an overflow is measured, at compile time too, as
+  // it is short of the overflow
+  constexpr auto disc_overflowed =
+      ad::get_discontinuity_points_and_amplitudes<^^overflowing_rebate, 0>(
+          1000.0);
+  EXPECT_EQUAL(disc_overflowed.size(), 1);
+  EXPECT_EQUAL(disc_overflowed.point(0), 1000.0);
+  EXPECT_EQUAL(disc_overflowed.amplitude(0), 1.0);
+  EXPECT_EQUAL(
+      (ad::get_discontinuity_points_and_amplitudes_rt<^^overflowing_rebate, 0>(
+           1000.0)
+           .amplitude(0)),
+      1.0);
   constexpr auto disc_rebate =
       ad::get_discontinuity_points_and_amplitudes<^^overflowing_rebate, 0>(
           100.0);
