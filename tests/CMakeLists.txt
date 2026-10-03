@@ -1,5 +1,5 @@
-# _is_clang / _is_gcc, _reflect_flags and test_flags() come from the
-# top-level CMakeLists.txt.
+# _compiler, _reflect_flags and test_flags() come from the top-level
+# CMakeLists.txt.
 
 # ---------------------------------------------------------------------------
 # Helper: register one test executable
@@ -13,7 +13,7 @@ function(add_reflect_test name source)
     )
     target_include_directories(${name} PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}"
-        "${CMAKE_SOURCE_DIR}/test_simple"
+        "${_test_simple_dir}"
     )
     add_test(NAME ${name} COMMAND ${name})
 endfunction()
@@ -32,11 +32,11 @@ file(GLOB_RECURSE _gcc_only_static_fail CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURR
     "${CMAKE_CURRENT_SOURCE_DIR}/gcc_only/static_fail/*.cpp")
 
 set(_must_compile ${_common})
-if(_is_clang)
+if(_compiler STREQUAL "clang")
     list(APPEND _must_compile ${_clang_only})
     list(APPEND _static_fail ${_clang_only_static_fail})
 endif()
-if(_is_gcc)
+if(_compiler STREQUAL "gcc")
     list(APPEND _must_compile ${_gcc_only})
     list(APPEND _static_fail ${_gcc_only_static_fail})
 endif()

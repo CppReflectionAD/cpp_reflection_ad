@@ -56,10 +56,13 @@ else:  # run as a script; its directory isn't on sys.path under `python3 -P`
 # compilers write English and ASCII quotes (an NLS-enabled gcc otherwise
 # translates `error:` and quotes with ‘’ in a UTF-8 locale). The forced
 # `<line> |` gutter on echoed source lines keeps a source line such as
-# ` * comment` from reading as one of gcc's nested notes; it must come after
-# any other diagnostic flags, so that it wins.
+# ` * comment` from reading as one of gcc's nested notes, and an unlimited
+# message length keeps a message on its header line (with
+# `-fmessage-length=<n>`, clang wraps it onto indented lines, which are not
+# searched); they must come after any other diagnostic flags, so that they
+# win.
 COMPILE_ENV = {"LC_ALL": "C"}
-DIAGNOSTIC_FLAGS = ("-fdiagnostics-show-line-numbers",)
+DIAGNOSTIC_FLAGS = ("-fdiagnostics-show-line-numbers", "-fmessage-length=0")
 
 # Colours and other CSI sequences, and the OSC 8 hyperlinks gcc wraps around
 # an option name when URLs are enabled (`-fdiagnostics-urls=always`), which
@@ -115,6 +118,10 @@ _CONTEXT_RE = re.compile(
     r"^(?:In file included from |In module imported at "
     r"|\S.*?: (?:In |At global scope:)|\S.*?:\d+(?::\d+)?:   )"
 )
+# clang's count of the diagnostics it printed, after the last of them.
+_SUMMARY_RE = re.compile(
+    r"^\d+ (?:warnings?|errors?)(?: and \d+ errors?)? generated\.$"
+)
 # A note that only says where the error was reached from, which may name
 # any function or type on the way (`ad::inverse<double>`), so it is not
 # searched: clang's template instantiation and constexpr call stacks and
@@ -151,8 +158,8 @@ def compile_flags(
 
     Both runners build a test with these: run_tests.py on its command line,
     with --extra-cxxflag as `extra`; CTest through the response file
-    test_directives_cmake.py writes, with no `extra` (CMake puts the user's
-    CMAKE_CXX_FLAGS first, so a test's flags win over them there).
+    test_directives_cmake.py writes, with CMAKE_CXX_FLAGS and those of the
+    build type as `extra`.
     """
     return (
         directives.flags + tuple(extra) + (DIAGNOSTIC_FLAGS if must_fail else ())
@@ -180,16 +187,35 @@ def error_diagnostics(output: str) -> list[tuple[str, ...]]:
     Each is the error's message followed by the messages of the notes that
     follow it (clang, for one, gives the reason a constant expression failed
     only in a note), whether as `note:` lines or as gcc's nested bullet
-    lines, except backtrace notes (see _BACKTRACE_NOTE_RE). Notes belong to the diagnostic just before them, so those after a
+    lines, except backtrace notes (see _BACKTRACE_NOTE_RE). A message with
+    newlines in it (a static_assert message built at compile time) goes on
+    over the lines that aren't indented straight after its header, up to
+    the source line the compiler echoes, joined to them with newlines.
+    Notes belong to the diagnostic just before them, so those after a
     warning, or after any other line that isn't indented (a diagnostic of
     another kind, build-tool output) other than gcc's context lines, belong
     to no error. gcc's `sorry, unimplemented:` counts as an error.
     """
     diagnostics: list[list[str]] = []
     current: list[str] | None = None
+    # Whether the line before was a header or a line of its message, so an
+    # unindented line goes on with that message; and the diagnostic whose
+    # last message that is, if the message is searched.
+    in_message = False
+    message_of: list[str] | None = None
     for line in _ANSI_ESCAPE_RE.sub("", output).translate(_QUOTES).splitlines():
         match = _DIAGNOSTIC_HEADER_RE.match(line)
         if not match:
+            if (
+                in_message
+                and line[:1] != " "
+                and not _CONTEXT_RE.match(line)
+                and not _SUMMARY_RE.match(line)
+            ):
+                if message_of is not None:
+                    message_of[-1] += "\n" + line
+                continue
+            in_message = False
             nested = _NESTED_NOTE_RE.match(line)
             if nested:
                 if current is not None and not _BACKTRACE_NOTE_RE.match(
@@ -200,14 +226,18 @@ def error_diagnostics(output: str) -> list[tuple[str, ...]]:
                 current = None
             continue
         prefix, kind, message = match.group("prefix", "kind", "message")
+        in_message = True
+        message_of = None
         if prefix is not None and not _is_compiler(prefix):
             current = None
         elif kind == "note":
             if current is not None and not _BACKTRACE_NOTE_RE.match(message):
                 current.append(message)
+                message_of = current
         elif kind in _ERROR_KINDS:
             current = [message]
             diagnostics.append(current)
+            message_of = current
         else:
             current = None
     return [tuple(diagnostic) for diagnostic in diagnostics]

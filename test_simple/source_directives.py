@@ -387,11 +387,12 @@ def read_test_directives(
             parsed[directive] = shlex.split(directive.text)
         except ValueError as error:
             raise DirectiveError(f"line {directive.line}: {error}") from None
-    applying = for_compiler(flag_directives, "TEST-FLAGS", compiler)
+    # The shared directives' flags first, so a compiler's own can override
+    # them.
     flags = [
         flag
         for name in ("TEST-FLAGS", f"TEST-FLAGS-{compiler.upper()}")
-        for directive in applying
+        for directive in flag_directives
         if directive.name == name
         for flag in parsed[directive]
     ]

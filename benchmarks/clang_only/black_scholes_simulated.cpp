@@ -1,3 +1,5 @@
+// TEST-FLAGS-CLANG: -fconstexpr-steps=16000000
+
 #include <chrono>
 #include <cmath>
 #include <cstdint>

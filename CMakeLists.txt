@@ -3,9 +3,10 @@ project(reflection_ad CXX)
 
 # Building the tests and benchmarks reads their directives with Python 3.7 or
 # newer (see test_simple/test_simple_cmake.cmake); turn this off to configure
-# without them.
-option(BUILD_TESTING "Build the tests under tests/ and benchmarks/" ON)
-if(NOT BUILD_TESTING)
+# without them. Off by default when this project is a subproject of another.
+option(REFLECTION_AD_BUILD_TESTING "Build the tests under tests/ and benchmarks/"
+       ${PROJECT_IS_TOP_LEVEL})
+if(NOT REFLECTION_AD_BUILD_TESTING)
     return()
 endif()
 
@@ -15,12 +16,8 @@ endif()
 # _compiler is the name test directives use for it (`// TEST-FLAGS-CLANG:`).
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     set(_compiler clang)
-    set(_is_clang TRUE)
-    set(_is_gcc   FALSE)
 elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     set(_compiler gcc)
-    set(_is_clang FALSE)
-    set(_is_gcc   TRUE)
 else()
     message(FATAL_ERROR "Unsupported compiler: ${CMAKE_CXX_COMPILER_ID}. "
                         "Select a clang-p2996 or gcc-reflect kit.")
@@ -29,7 +26,7 @@ endif()
 # ---------------------------------------------------------------------------
 # Reflection compile flags, for the tests and the benchmarks
 # ---------------------------------------------------------------------------
-if(_is_clang)
+if(_compiler STREQUAL "clang")
     # Derive the compiler root from the executable path (bin/../)
     get_filename_component(_clang_bin "${CMAKE_CXX_COMPILER}" DIRECTORY)
     get_filename_component(_clang_root "${_clang_bin}" DIRECTORY)
@@ -56,7 +53,7 @@ else() # GCC
     )
 endif()
 
-include("${CMAKE_SOURCE_DIR}/test_simple/test_simple_cmake.cmake")
+include("${CMAKE_CURRENT_SOURCE_DIR}/test_simple/test_simple_cmake.cmake")
 
 enable_testing()
 add_subdirectory(tests)

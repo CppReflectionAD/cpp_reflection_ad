@@ -27,8 +27,8 @@ binaries, and reports compile vs runtime failures. A test may add flags via a
 `// TEST-FLAGS: ...` comment at the top of the file, before any code
 (benchmarks use it for `-O2`); a long list may be split over several such
 comments. Any `--extra-cxxflag` comes after them, so it can override them
-(under CMake they come after `CMAKE_CXX_FLAGS`, so there a test's own flags
-win).
+(under CMake, `CMAKE_CXX_FLAGS` and the build type's flags come after them, so
+`-DCMAKE_CXX_FLAGS=-O0` undoes a benchmark's `-O2`).
 Tests under `tests/static_fail/` (or `clang_only/static_fail/`,
 `gcc_only/static_fail/`) are expected **not** to compile (e.g. they trip a
 `static_assert`). Each must name the error it expects in a
@@ -51,7 +51,8 @@ CMake reads the directives with the same code as `run_tests.py`
 benchmark with its `TEST-FLAGS` and rejects the same mistakes. That code runs when a
 test is built (and again whenever it changes, without re-running CMake), so
 building the tests and benchmarks needs Python 3.7 or newer; configure with
-`-DBUILD_TESTING=OFF` to skip them. A test whose directives are invalid fails
+`-DREFLECTION_AD_BUILD_TESTING=OFF` to skip them (it is off by default when
+this project is added to another with `add_subdirectory`). A test whose directives are invalid fails
 to build, as it would with a compile error. Both runners only compile a
 `static_fail` test, never link it.
 

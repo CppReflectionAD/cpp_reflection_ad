@@ -4,8 +4,8 @@
 # appear in `ctest` runs or the tests/ discovery glob.
 # ---------------------------------------------------------------------------
 
-# _is_clang / _is_gcc, _reflect_flags and test_flags() come from the
-# top-level CMakeLists.txt. A benchmark declares the flags it needs (-O2, a
+# _compiler, _reflect_flags and test_flags() come from the top-level
+# CMakeLists.txt. A benchmark declares the flags it needs (-O2, a
 # constant-evaluation budget) in `// TEST-FLAGS:` comments, which test_flags()
 # reads, as run_tests.py does.
 
@@ -21,7 +21,7 @@ function(add_reflect_benchmark name source)
     )
     target_include_directories(${name} PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}"
-        "${CMAKE_SOURCE_DIR}/tests"
+        "${PROJECT_SOURCE_DIR}/tests"
     )
     # Intentionally no add_test() — benchmarks are run manually.
 endfunction()
@@ -37,7 +37,7 @@ foreach(_src IN LISTS _common_benchmarks)
     add_reflect_benchmark(${_name} "${_src}")
 endforeach()
 
-if(_is_clang)
+if(_compiler STREQUAL "clang")
     foreach(_src IN LISTS _clang_only_benchmarks)
         get_filename_component(_name "${_src}" NAME_WE)
         add_reflect_benchmark(${_name} "${_src}")

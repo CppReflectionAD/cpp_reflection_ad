@@ -2,20 +2,24 @@
 """Write the response file that gives a CTest test the flags its directives say.
 
 The build runs this for each test (test_flags in test_simple_cmake.cmake),
-before compiling it and again whenever the test changes, so that CTest builds
-a test with the same TEST-FLAGS as run_tests.py, and rejects the same invalid
-directives, from the same reader (source_directives.read_test_directives):
+before compiling it and again whenever the test or the user's flags change,
+so that CTest builds a test with the same flags as run_tests.py, and rejects
+the same invalid directives, from the same reader
+(source_directives.read_test_directives):
 
     test_directives_cmake.py --compiler <clang|gcc> --source <file.cpp>
-        --output <file.rsp> [--must-fail]
+        --user-flags-file <file> --output <file.rsp> [--must-fail]
 
-The response file, which the compiler reads as `@<file.rsp>` after
-CMAKE_CXX_FLAGS and the target's own options (when compiling the test, and
-when linking it if it is an executable), holds
-compile_fail_check.compile_flags: the test's TEST-FLAGS for the compiler,
-then, for a test that must fail to compile, the diagnostic flags. It is
-rewritten only when they change, so that a change to the test that leaves
-its flags alone, or to these scripts, doesn't recompile every test.
+The response file, which the compiler reads as `@<file.rsp>` after the
+target's own options (when compiling the test, and when linking it if it is
+an executable), holds compile_fail_check.compile_flags: the test's
+TEST-FLAGS for the compiler, then the user's flags (CMAKE_CXX_FLAGS and
+those of the build type, which test_simple_cmake.cmake writes to <file>;
+split as a shell would), so that they override the test's, as
+--extra-cxxflag does in run_tests.py, then, for a test that must fail to
+compile, the diagnostic flags. It is rewritten only when they change, so
+that a change to the test that leaves its flags alone, or to these scripts,
+doesn't recompile every test.
 
 If the test's directives are invalid, this prints why, removes the response
 file and fails, so building the test fails.
@@ -25,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import shlex
 import sys
 from pathlib import Path
 
@@ -49,13 +54,15 @@ def response_file_argument(argument: str) -> str:
     return _RESPONSE_FILE_SPECIAL_RE.sub(r"\\\1", argument)
 
 
-def test_flags(path: Path, compiler: str, must_fail: bool) -> list[str]:
+def test_flags(
+    path: Path, compiler: str, must_fail: bool, user_flags: list[str]
+) -> list[str]:
     """The flags to compile the test at `path` with.
 
     Raises DirectiveError if its directives are invalid.
     """
     directives = source_directives.load_test_directives(path, compiler, must_fail)
-    return list(compile_fail_check.compile_flags(directives, must_fail))
+    return list(compile_fail_check.compile_flags(directives, must_fail, user_flags))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -65,12 +72,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--compiler", choices=source_directives.COMPILERS, required=True)
     parser.add_argument("--source", type=Path, required=True)
+    parser.add_argument("--user-flags-file", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--must-fail", action="store_true")
     args = parser.parse_args(argv)
 
+    user_flags = shlex.split(args.user_flags_file.read_text(encoding="utf-8"))
     try:
-        flags = test_flags(args.source, args.compiler, args.must_fail)
+        flags = test_flags(args.source, args.compiler, args.must_fail, user_flags)
     except source_directives.DirectiveError as error:
         # No response file, so the build reruns this once the test is fixed.
         try:
