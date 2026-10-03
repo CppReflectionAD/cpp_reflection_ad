@@ -119,6 +119,16 @@ class CompilerSpec:
     cxxflags: tuple[str, ...] = ()
 
 
+def opt_level_flag(level: str) -> str:
+    """The -O flag for an --opt-level value: 3, O3 and -O3 all mean -O3."""
+    name = level.removeprefix("-").removeprefix("O")
+    if not (name.isdigit() or name in ("s", "z", "g", "fast")):
+        raise argparse.ArgumentTypeError(
+            f"{level!r} is not an optimization level (0, 2, s, O3, -Og, ...)"
+        )
+    return f"-O{name}"
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -275,13 +285,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--opt-level",
         default="-O3",
-        type=lambda level: level if level.startswith("-") else f"-{level}",
+        type=opt_level_flag,
         help=(
-            "Optimization flag for every test and benchmark build, matching "
-            "CMake's Release build: O0, O2, Os, ... (or -O0 with '=', as in "
-            "--opt-level=-O0). A test's TEST-FLAGS and --extra-cxxflag come "
-            "later on the command line, so either can override it. "
-            "Default: -O3."
+            "Optimization level for every test and benchmark build, matching "
+            "CMake's Release build: 0, 2, s, fast, ... (O2 and -O2 also work; "
+            "-O2 needs '=', as in --opt-level=-O2). A test's TEST-FLAGS and "
+            "--extra-cxxflag come later on the command line, so either can "
+            "override it. Default: -O3."
         ),
     )
     parser.add_argument(
