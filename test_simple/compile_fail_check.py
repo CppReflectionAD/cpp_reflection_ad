@@ -6,18 +6,19 @@ in one or more
 
     // EXPECT-ERROR: <text>
 
-lines in the comment block at the top of the file. It passes only if
-compilation fails and each <text> appears literally (not as a regex) in an
-error diagnostic of its own: the error's message or the message of one of the
-notes the compiler attaches to it. At least one directive is required, so a
-test that fails for an unrelated reason (a broken include, a typo) does not
-pass by accident. Anything that reads like a misspelt directive
+comments at the top of the file, before any code (see source_directives). It
+passes only if compilation fails and each <text> appears literally (not as a
+regex) in an error diagnostic of its own: the error's message or the message
+of one of the notes the compiler attaches to it (`note:` lines, or the
+indented `•` lines of gcc's nested diagnostics). At least one directive is
+required, so a test that fails for an unrelated reason (a broken include, a
+typo) does not pass by accident. Anything that reads like a misspelt directive
 (`//EXPECT-ERROR:`, `// expected-error:`, `// EXPECT-ERROR <text>`) or like a
-directive outside that comment block (`foo(); // EXPECT-ERROR: <text>`) is
-rejected rather than silently ignored. The directives are read before anything
-is compiled, so a test without a valid one fails at once.
+directive after code (`foo(); // EXPECT-ERROR: <text>`) is rejected rather
+than silently ignored. The directives are read before anything is compiled, so
+a test without a valid one fails at once.
 
-This is the single implementation of that rule: run_tests.py imports it, and
+This is the single implementation of that check: run_tests.py imports it, and
 CTest runs it as a script around the build of each compile_check(... TRUE)
 target:
 
@@ -27,102 +28,67 @@ target:
 from __future__ import annotations
 
 import argparse
-import io
 import re
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PurePath
 
+if __package__:
+    from . import source_directives
+else:  # run as a script; its directory isn't on sys.path under `python3 -P`
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import source_directives
+
+DirectiveError = source_directives.DirectiveError
+read_source = source_directives.read_source
 
 EXPECT_ERROR_DIRECTIVE = "// EXPECT-ERROR:"
-# A `//` comment (including `///` and `//!`) that reads like an EXPECT-ERROR
-# directive: the hyphen or underscore spelling with or without a colon, or the
-# spaced spelling with one (so prose like "expected errors are listed below"
-# is left alone). A line that matches this but is not an exact directive is a
-# mistake, not something to skip.
-_NEAR_MISS_RE = re.compile(
-    r"//[/!]*\s*expect(?:ed)?(?:[-_]errors?\b|\s+errors?\s*:)", re.IGNORECASE
+EXPECT_ERROR = source_directives.DirectiveFamily(
+    pattern=re.compile(r"// (?P<name>EXPECT-ERROR):"),
+    # A `//` comment (including `///` and `//!`) that reads like an
+    # EXPECT-ERROR directive: the hyphen or underscore spelling with or
+    # without a colon, or the spaced spelling with one (so prose like
+    # "expected errors are listed below" is left alone).
+    near_miss=re.compile(
+        r"//[/!]*\s*expect(?:ed)?(?:[-_]errors?\b|\s+errors?\s*:)", re.IGNORECASE
+    ),
+    usage=f"{EXPECT_ERROR_DIRECTIVE} <text>",
 )
-# String and character literals, and `/* ... */` comments that close on the
-# same line, are blanked out before a line of code is searched for a
-# directive-like comment.
-_NOT_A_COMMENT_RE = re.compile(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])+\'|/\*.*?\*/')
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 # The header line of a diagnostic, from clang or gcc:
 #   <file>:<line>[:<col>]: <kind>: <message>
 #   <pseudo-file>: <kind>: <message>   (`<command-line>`, `<built-in>`)
-#   <tool>: <kind>: <message>          (`clang++`, `cc1plus`, `/usr/bin/ld`)
+#   <tool>: <kind>: <message>          (`clang++`, `cc1plus`; see below)
 #   <kind>: <message>
 # Only <message> is searched. Matching the whole line would let text that
 # happens to occur in the file path match any error at all, and the
 # compilers echo source lines (which may contain `error:` inside a string
 # literal) indented under the header, so those never match.
 _DIAGNOSTIC_HEADER_RE = re.compile(
-    r"^(?:(?:\S.*?:\d+(?::\d+)?|<[^>]+>|[\w./+-]+): )?"
+    r"^(?:(?:\S.*?:\d+(?::\d+)?|<[^>]+>|(?P<tool>[\w./+-]+)): )?"
     r"(?P<kind>(?:fatal )?error|warning|note|remark): (?P<message>.*)$"
 )
-
-
-class DirectiveError(ValueError):
-    """The test's `// EXPECT-ERROR:` directives are missing or malformed."""
-
-
-def leading_comment_lines(source: str) -> list[tuple[int, str]]:
-    """Return (line number, stripped line) for the comment block atop `source`.
-
-    The block is every line before the first one that is neither blank nor a
-    `//` comment; it is where test directives (`// EXPECT-ERROR:` here,
-    `// TEST-FLAGS:` in run_tests.py) go. Only the block is read, not the
-    whole file.
-    """
-    lines = []
-    for number, line in enumerate(io.StringIO(source), start=1):
-        stripped = line.strip()
-        if stripped and not stripped.startswith("//"):
-            break
-        lines.append((number, stripped))
-    return lines
-
-
-def read_comment_directives(source: str, directive: str) -> list[tuple[int, str]]:
-    """Return (line number, text) for every `<directive> <text>` line in `source`.
-
-    The one placement rule for test directives: the directive starts a line
-    of the comment block at the top of the file (see leading_comment_lines),
-    after optional indentation; <text> is the rest of that line, stripped.
-    """
-    return [
-        (number, line[len(directive) :].strip())
-        for number, line in leading_comment_lines(source)
-        if line.startswith(directive)
-    ]
+# A <tool> header counts only if the tool is the compiler (driver or cc1),
+# not the linker (`collect2`, `ld.lld`) or the build tool (`ninja`, `make`);
+# nor does the driver's report that the linker failed.
+_COMPILER_TOOL_RE = re.compile(r"clang|gcc|g\+\+|c\+\+|cc1")
+_LINKER_FAILED = "linker command failed"
+# A note in gcc's nested diagnostics (how the gcc trunk this repo builds
+# prints them by default): an indented bullet line under the error, `•` or,
+# outside a UTF-8 locale, `*`. Source lines the compilers echo are indented
+# too, but start with a `<line> |` or `|` gutter.
+_NESTED_NOTE_RE = re.compile(r"^ +[\u2022*] (?P<message>.*)$")
 
 
 def parse_expected_errors(source: str) -> tuple[str, ...]:
     """Return the <text> of every `// EXPECT-ERROR: <text>` in `source`."""
-    header = leading_comment_lines(source)
-    expected = []
-    for number, line in header:
-        if line.startswith(EXPECT_ERROR_DIRECTIVE):
-            text = line[len(EXPECT_ERROR_DIRECTIVE) :].strip()
-            if not text:
-                raise DirectiveError(
-                    f"line {number}: empty `{EXPECT_ERROR_DIRECTIVE}` directive"
-                )
-            expected.append(text)
-        elif _NEAR_MISS_RE.match(line):
+    directives = source_directives.read_directives(source, EXPECT_ERROR)
+    for directive in directives:
+        if not directive.text:
             raise DirectiveError(
-                f"line {number}: malformed directive {line!r}; write "
-                f"`{EXPECT_ERROR_DIRECTIVE} <text>`"
+                f"line {directive.line}: empty `{EXPECT_ERROR_DIRECTIVE}` directive"
             )
-    body = list(io.StringIO(source))[len(header) :]
-    for number, line in enumerate(body, start=len(header) + 1):
-        if _NEAR_MISS_RE.search(_NOT_A_COMMENT_RE.sub("", line)):
-            raise DirectiveError(
-                f"line {number}: directive {line.strip()!r} is below the "
-                f"first line of code; put `{EXPECT_ERROR_DIRECTIVE} <text>` "
-                "in the comment block at the top of the file"
-            )
+    expected = [directive.text for directive in directives]
     if not expected:
         raise DirectiveError(
             f"no `{EXPECT_ERROR_DIRECTIVE} <text>` directive; a compile-fail "
@@ -136,16 +102,25 @@ def error_diagnostics(output: str) -> list[tuple[str, ...]]:
 
     Each is the error's message followed by the messages of the notes that
     follow it (clang, for one, gives the reason a constant expression failed
-    only in a note). Notes after a warning belong to the warning.
+    only in a note), whether as `note:` lines or as gcc's nested bullet
+    lines. Notes after a warning belong to the warning.
     """
     diagnostics: list[list[str]] = []
     current: list[str] | None = None
     for line in _ANSI_ESCAPE_RE.sub("", output).splitlines():
         match = _DIAGNOSTIC_HEADER_RE.match(line)
         if not match:
+            nested = _NESTED_NOTE_RE.match(line)
+            if nested and current is not None:
+                current.append(nested.group("message"))
             continue
-        kind, message = match.group("kind", "message")
-        if kind == "note":
+        tool, kind, message = match.group("tool", "kind", "message")
+        if tool is not None and (
+            not _COMPILER_TOOL_RE.search(PurePath(tool).name)
+            or message.startswith(_LINKER_FAILED)
+        ):
+            current = None
+        elif kind == "note":
             if current is not None:
                 current.append(message)
         elif kind.endswith("error"):
@@ -206,18 +181,20 @@ def check(expected: tuple[str, ...], returncode: int, output: str) -> str | None
     return None
 
 
-def read_source(path: Path) -> str:
-    return path.read_text(encoding="utf-8", errors="replace")
-
-
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    # No docstring under `python3 -OO`.
+    parser = argparse.ArgumentParser(
+        description=__doc__.splitlines()[0] if __doc__ else None
+    )
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("command", nargs="+", help="build command (after --)")
     args = parser.parse_args(argv)
 
     try:
         expected = parse_expected_errors(read_source(args.source))
+    except OSError as error:
+        print(f"{args.source}: cannot read the test: {error}")
+        return 1
     except DirectiveError as error:
         print(f"{args.source}: {error}")
         return 1

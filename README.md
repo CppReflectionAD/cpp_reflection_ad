@@ -24,11 +24,11 @@ once a gcc engine exposes the same `ad::` interface its drivers can move up to
 `run_tests.py` selects `clang`/`gcc`/both, compiles every `.cpp` under `tests/`
 (respecting the `clang_only`/`gcc_only`/shared dirs), optionally runs the
 binaries, and reports compile vs runtime failures. A test may add flags via a
-`// TEST-FLAGS: ...` line in the comment block at the top of the file
+`// TEST-FLAGS: ...` comment at the top of the file, before any code
 (benchmarks use it for `-O2`).
 Tests under `tests/static_fail/` are expected **not** to compile (e.g. they
 trip a `static_assert`). Each must name the error it expects in a
-`// EXPECT-ERROR: <text>` line in the comment block at the top of the file,
+`// EXPECT-ERROR: <text>` comment at the top of the file, before any code,
 where `<text>` is part of the compiler's error message or of a note attached to
 that error. Use one comment per expected error; each must match a different
 error:
