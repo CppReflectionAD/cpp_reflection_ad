@@ -1,6 +1,6 @@
 # compile_check(... TRUE) tests are checked by compile_fail_check.py, the same
 # checker run_tests.py uses.
-find_package(Python3 REQUIRED COMPONENTS Interpreter)
+find_package(Python3 3.7 REQUIRED COMPONENTS Interpreter)
 
 function(compile_check group filelist fail)
     foreach(testfile IN LISTS filelist)

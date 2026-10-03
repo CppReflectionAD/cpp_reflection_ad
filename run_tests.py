@@ -74,12 +74,15 @@ else:
     DEFAULT_GCC_SYNC_FROM = os.environ.get("REFLECT_GCC_SYNC_FROM", "")
 
 # Per-test compile flags are declared inline via a `// TEST-FLAGS: ...` comment
-# in the first few lines of a test (e.g. benchmarks that need -O2). Flags that
-# only one compiler understands go in a `// TEST-FLAGS-<COMPILER>: ...` variant
-# (e.g. `// TEST-FLAGS-CLANG:`), which is appended after the shared flags when
-# building with that compiler and ignored by every other one.
+# on a line of its own (e.g. benchmarks that need -O2), placed like
+# `// EXPECT-ERROR:` (see compile_fail_check.read_comment_directives). Flags
+# that only one compiler understands go in a `// TEST-FLAGS-<COMPILER>: ...`
+# variant (e.g. `// TEST-FLAGS-CLANG:`), which is appended after the shared
+# flags when building with that compiler and ignored by every other one.
 TEST_FLAGS_DIRECTIVE = "// TEST-FLAGS:"
-TEST_FLAGS_SCAN_LINES = 10
+# compile_fail_reason of a static_fail result that was never checked, so that
+# such a result fails instead of passing by default.
+COMPILE_FAIL_UNCHECKED = "not checked against its `// EXPECT-ERROR:` directives"
 
 
 @dataclass(frozen=True)
@@ -94,16 +97,22 @@ class CommandResult:
 class TestResult:
     compiler: str
     test_file: Path
-    compile_result: CommandResult
+    # None if the test was not compiled (a static_fail test whose
+    # `// EXPECT-ERROR:` directives are missing or malformed).
+    compile_result: CommandResult | None
     run_result: CommandResult | None
     expect_compile_failure: bool = False
     # Why a static_fail test failed (see compile_fail_check.check), or None.
-    compile_fail_reason: str | None = None
+    compile_fail_reason: str | None = COMPILE_FAIL_UNCHECKED
 
     @property
     def compile_ok(self) -> bool:
+        if self.compile_result is None:
+            return False
         if self.expect_compile_failure:
-            return self.compile_fail_reason is None
+            return (
+                self.compile_result.returncode != 0 and self.compile_fail_reason is None
+            )
         return self.compile_result.returncode == 0
 
     @property
@@ -511,32 +520,27 @@ def discover_tests(
 
 
 def parse_test_flags(test_file: Path, compiler_name: str) -> list[str]:
-    """Read the inline `// TEST-FLAGS: ...` directives from the top of a test.
+    """Read the inline `// TEST-FLAGS: ...` directives of a test.
 
     Lets a single test declare extra compile flags (e.g. `-O2` for benchmarks)
     without special-casing it in the harness. Flags from the shared directive
     come first, followed by those from the `// TEST-FLAGS-<COMPILER>:` variant
     for `compiler_name`, so a test can ask for something only one compiler
     spells (e.g. clang's `-fconstexpr-steps`) without breaking the others.
-    Returns [] if neither directive is present.
+    Returns [] if neither directive is present; if one appears more than once,
+    the last wins.
     """
     specific_directive = f"{TEST_FLAGS_DIRECTIVE[:-1]}-{compiler_name.upper()}:"
-    shared: list[str] = []
-    specific: list[str] = []
     try:
-        with test_file.open("r", encoding="utf-8", errors="replace") as handle:
-            for _ in range(TEST_FLAGS_SCAN_LINES):
-                line = handle.readline()
-                if not line:
-                    break
-                stripped = line.strip()
-                if stripped.startswith(specific_directive):
-                    specific = shlex.split(stripped[len(specific_directive) :])
-                elif stripped.startswith(TEST_FLAGS_DIRECTIVE):
-                    shared = shlex.split(stripped[len(TEST_FLAGS_DIRECTIVE) :])
+        source = compile_fail_check.read_source(test_file)
     except OSError:
-        pass
-    return shared + specific
+        return []
+
+    def last_flags(directive: str) -> list[str]:
+        directives = compile_fail_check.read_comment_directives(source, directive)
+        return shlex.split(directives[-1][1]) if directives else []
+
+    return last_flags(TEST_FLAGS_DIRECTIVE) + last_flags(specific_directive)
 
 
 def ensure_submodule(source_dir: Path, args: argparse.Namespace) -> None:
@@ -1037,6 +1041,22 @@ def compile_and_maybe_run(
     ]
     relative_path = test_file.relative_to(ROOT)
     expect_compile_failure = test_file.relative_to(base_dir).parts[0] == STATIC_FAIL_DIR
+    expected_errors: tuple[str, ...] = ()
+    if expect_compile_failure:
+        # Before compiling, so a test that can't pass doesn't cost a build.
+        try:
+            expected_errors = compile_fail_check.parse_expected_errors(
+                compile_fail_check.read_source(test_file)
+            )
+        except compile_fail_check.DirectiveError as error:
+            return TestResult(
+                compiler=spec.name,
+                test_file=test_file,
+                compile_result=None,
+                run_result=None,
+                expect_compile_failure=True,
+                compile_fail_reason=str(error),
+            )
     log(f"[{spec.name}] compiling {relative_path} ...")
     compile_result = run_command(compile_command, cwd=ROOT, verbose=args.verbose)
 
@@ -1052,7 +1072,7 @@ def compile_and_maybe_run(
     compile_fail_reason = None
     if expect_compile_failure:
         compile_fail_reason = compile_fail_check.check(
-            compile_fail_check.read_source(test_file),
+            expected_errors,
             compile_result.returncode,
             # Newline-separated so the last stdout line can't run into stderr.
             f"{compile_result.stdout}\n{compile_result.stderr}",
@@ -1086,11 +1106,16 @@ def print_test_result(result: TestResult) -> None:
     relative_path = result.test_file.relative_to(ROOT)
     if not result.compile_ok:
         if result.expect_compile_failure:
-            summary, *details = (result.compile_fail_reason or "").splitlines()
+            summary, *details = (
+                result.compile_fail_reason or "expected a compile error, but it compiled"
+            ).splitlines()
             print(f"[FAIL][{result.compiler}][compile] {relative_path} ({summary})")
             if details:
                 print(indent_block("\n".join(details)))
-            if result.compile_result.returncode != 0:
+            if (
+                result.compile_result is not None
+                and result.compile_result.returncode != 0
+            ):
                 print(indent_block(render_command_failure(result.compile_result)))
             return
         print(f"[FAIL][{result.compiler}][compile] {relative_path}")
