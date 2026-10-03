@@ -24,9 +24,47 @@ once a gcc engine exposes the same `ad::` interface its drivers can move up to
 `run_tests.py` selects `clang`/`gcc`/both, compiles every `.cpp` under `tests/`
 (respecting the `clang_only`/`gcc_only`/shared dirs), optionally runs the
 binaries, and reports compile vs runtime failures. A test may add flags via a
-`// TEST-FLAGS: ...` comment near its top (benchmarks use it for `-O2`).
-Tests under `tests/static_fail/` are expected **not** to compile (e.g. they
-trip a `static_assert`); they pass only when compilation fails.
+`// TEST-FLAGS: ...` comment at the top of the file, before any code
+(benchmarks use it for `-O2`); a long list may be split over several such
+comments. A relative path in them (`-I extra`, `-include extra/x.hpp`) is
+relative to the test's directory, under both runners: they pass it to the
+compiler as an absolute path. Any `--extra-cxxflag` comes after them, so it can override them
+(under CMake, `CMAKE_CXX_FLAGS` and the build type's flags come after them, so
+`-DCMAKE_CXX_FLAGS=-O0` undoes a benchmark's `-O2`).
+Tests under `tests/static_fail/` (or `clang_only/static_fail/`,
+`gcc_only/static_fail/`) are expected **not** to compile (e.g. they trip a
+`static_assert`). Each must name the error it expects in a
+`// EXPECT-ERROR: <text>` comment at the top of the file, before any code,
+where `<text>` is part of the compiler's error message or of a note attached to
+that error (not of a note that only says where the error was reached from, such
+as `in instantiation of ... requested here`). Use one comment per expected
+error; each must match a different error. For example:
+
+```cpp
+// EXPECT-ERROR: ad::inverse requires an explicit inverse plan
+```
+
+Text that only one compiler prints goes in a `// EXPECT-ERROR-CLANG:` or
+`// EXPECT-ERROR-GCC:` comment (`TEST-FLAGS` has the same variants). These
+match the same `static_assert` failure, which each compiler explains in its
+own words; as each compiler reports it in a single error, the test has one
+directive per compiler, not a shared one as well:
+
+```cpp
+// EXPECT-ERROR-CLANG: due to requirement 'is_invertible<
+// EXPECT-ERROR-GCC: 'ad::is_invertible<^^fn_square>()' evaluates to false
+```
+
+A misspelt or misplaced directive fails the test instead of being ignored.
+CMake reads the directives with the same code as `run_tests.py`
+(`test_simple/source_directives.py`), so it compiles and links each test and
+benchmark with its `TEST-FLAGS` and rejects the same mistakes. That code runs when a
+test is built (and again whenever it changes, without re-running CMake), so
+building the tests and benchmarks needs Python 3.7 or newer; configure with
+`-DREFLECTION_AD_BUILD_TESTING=OFF` to skip them (it is off by default when
+this project is added to another with `add_subdirectory`). A test whose directives are invalid fails
+to build, as it would with a compile error. Both runners only compile a
+`static_fail` test, never link it.
 
 The repo is **self-contained**: `--build-compilers` builds clang from its own
 `clang-p2996` submodule into `build/` — no externally pre-built compiler needed.

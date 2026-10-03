@@ -15,15 +15,25 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent
+# The script's directory is not on sys.path under `python3 -P` /
+# PYTHONSAFEPATH, or when run_tests is imported from elsewhere.
+sys.path.insert(0, str(ROOT))
+
+from test_simple import compile_fail_check, source_directives  # noqa: E402
+
 TESTS_DIR = ROOT / "tests"
 BENCHMARKS_DIR = ROOT / "benchmarks"
 BUILD_ROOT = ROOT / "build"
 ARTIFACTS_DIR = BUILD_ROOT / "artifacts"
 CLANG_ONLY_DIR = "clang_only"
 GCC_ONLY_DIR = "gcc_only"
-# Tests under tests/static_fail/ must be rejected by the compiler (e.g. by a
-# static_assert); they pass only when compilation fails. Mirrors the
-# compile_check(... TRUE) registration in tests/CMakeLists.txt.
+# Tests under tests/static_fail/ (or clang_only/static_fail/,
+# gcc_only/static_fail/) must be rejected by the compiler (e.g. by a
+# static_assert) with the error(s) their `// EXPECT-ERROR: <text>` comments
+# name; see test_simple/compile_fail_check.py, which CTest also uses for the
+# compile_check(... TRUE) registrations in tests/CMakeLists.txt. Any other
+# test with an EXPECT-ERROR directive fails (see
+# test_simple/source_directives.read_test_directives).
 STATIC_FAIL_DIR = "static_fail"
 
 # The clang reflection fork is built from the clang-p2996 submodule (override
@@ -70,14 +80,6 @@ else:
     DEFAULT_GCC_PATCHES_DIR = os.environ.get("REFLECT_GCC_PATCHES_DIR", "")
     DEFAULT_GCC_SYNC_FROM = os.environ.get("REFLECT_GCC_SYNC_FROM", "")
 
-# Per-test compile flags are declared inline via a `// TEST-FLAGS: ...` comment
-# in the first few lines of a test (e.g. benchmarks that need -O2). Flags that
-# only one compiler understands go in a `// TEST-FLAGS-<COMPILER>: ...` variant
-# (e.g. `// TEST-FLAGS-CLANG:`), which is appended after the shared flags when
-# building with that compiler and ignored by every other one.
-TEST_FLAGS_DIRECTIVE = "// TEST-FLAGS:"
-TEST_FLAGS_SCAN_LINES = 10
-
 
 @dataclass(frozen=True)
 class CommandResult:
@@ -91,14 +93,23 @@ class CommandResult:
 class TestResult:
     compiler: str
     test_file: Path
-    compile_result: CommandResult
+    # None if the test was not compiled: it couldn't be read, or its
+    # `// TEST-FLAGS:` or `// EXPECT-ERROR:` directives are malformed.
+    compile_result: CommandResult | None
     run_result: CommandResult | None
-    expect_compile_failure: bool = False
+    expect_compile_failure: bool
+    # Why the test failed when that isn't just the compiler's exit status:
+    # the reason it wasn't compiled, or why a static_fail test failed (see
+    # compile_fail_check.check). None otherwise.
+    compile_fail_reason: str | None
 
     @property
     def compile_ok(self) -> bool:
-        compiled = self.compile_result.returncode == 0
-        return compiled != self.expect_compile_failure
+        if self.compile_result is None:
+            return False
+        if self.expect_compile_failure:
+            return self.compile_fail_reason is None
+        return self.compile_result.returncode == 0
 
     @property
     def run_ok(self) -> bool:
@@ -114,9 +125,13 @@ class CompilerSpec:
     executable: Path
     # Reflection flag profile for this compiler: everything the compiler needs
     # beyond -std and the source/-o pair (reflection features, stdlib, include
-    # and library paths). This is what lets the same test compile under a
-    # different compiler by simply selecting a different profile.
+    # paths). This is what lets the same test compile under a different
+    # compiler by simply selecting a different profile.
     cxxflags: tuple[str, ...] = ()
+    # The flags it also needs to link (library paths), which a compile-only
+    # command must not get: clang warns that they are unused, which
+    # -Werror makes an error.
+    ldflags: tuple[str, ...] = ()
 
 
 def parse_args() -> argparse.Namespace:
@@ -128,7 +143,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--compiler",
-        choices=("clang", "gcc", "both"),
+        choices=(*source_directives.COMPILERS, "both"),
         default="both",
         help="Compiler to use for the test run.",
     )
@@ -276,7 +291,8 @@ def parse_args() -> argparse.Namespace:
         "--extra-cxxflag",
         action="append",
         default=[],
-        help="Additional compiler flag. Repeat to pass multiple flags.",
+        help="Additional compiler flag, after each test's own TEST-FLAGS (so "
+        "it can override them). Repeat to pass multiple flags.",
     )
     parser.add_argument(
         "--verbose",
@@ -308,7 +324,14 @@ def log(message: str) -> None:
     print(f"==> {message}", flush=True)
 
 
-def run_command(command: list[str], cwd: Path | None, verbose: bool) -> CommandResult:
+def run_command(
+    command: list[str],
+    cwd: Path | None,
+    verbose: bool,
+    env: dict[str, str] | None = None,
+) -> CommandResult:
+    """Run a command, capturing its output; `env` is added to the
+    environment."""
     if verbose:
         location = str(cwd) if cwd is not None else str(ROOT)
         print(f"[{location}] $ {shlex.join(command)}")
@@ -317,6 +340,9 @@ def run_command(command: list[str], cwd: Path | None, verbose: bool) -> CommandR
         cwd=cwd,
         capture_output=True,
         text=True,
+        # A diagnostic may echo a source line that isn't UTF-8.
+        errors="replace",
+        env={**os.environ, **env} if env else None,
     )
     return CommandResult(
         command=command,
@@ -355,7 +381,7 @@ def ensure_directory(path: Path) -> None:
 
 def selected_compilers(args: argparse.Namespace) -> list[str]:
     if args.compiler == "both":
-        return ["clang", "gcc"]
+        return list(source_directives.COMPILERS)
     return [args.compiler]
 
 
@@ -392,11 +418,10 @@ def clang_cxxflags(
     """Reflection flag profile for the clang-p2996 fork.
 
     Mirrors DEMO_FLAGS in the top-level Makefile: the reflection features, the
-    libc++ stdlib, the -isystem for the installed <meta> header, and the
-    library/rpath for libc++ (all rooted at the built compiler tree).
+    libc++ stdlib and the -isystem for the installed <meta> header (rooted at
+    the built compiler tree). The libc++ library paths are clang_ldflags.
     """
     libcxx_inc = clang_root / "include" / "c++" / "v1"
-    libcxx_lib = clang_root / "lib"
     flags: list[str] = [
         "-freflection",
         "-fparameter-reflection",
@@ -404,12 +429,7 @@ def clang_cxxflags(
         "-stdlib=libc++",
         "-isystem",
         str(libcxx_inc),
-        f"-L{libcxx_lib}",
-        f"-Wl,-rpath,{libcxx_lib}",
     ]
-    for sub in libcxx_lib.glob("*linux*"):
-        if sub.is_dir():
-            flags.extend([f"-L{sub}", f"-Wl,-rpath,{sub}"])
 
     if sys.platform == "darwin":
         flags.extend(["-isysroot", macos_sdk_path(verbose)])
@@ -419,13 +439,24 @@ def clang_cxxflags(
     return tuple(flags)
 
 
+def clang_ldflags(clang_root: Path) -> tuple[str, ...]:
+    """The library path and rpath for the clang-p2996 fork's libc++ (the rest
+    of DEMO_FLAGS), which only a link uses."""
+    libcxx_lib = clang_root / "lib"
+    flags = [f"-L{libcxx_lib}", f"-Wl,-rpath,{libcxx_lib}"]
+    for sub in libcxx_lib.glob("*linux*"):
+        if sub.is_dir():
+            flags.extend([f"-L{sub}", f"-Wl,-rpath,{sub}"])
+    return tuple(flags)
+
+
 def build_specs(args: argparse.Namespace) -> dict[str, CompilerSpec]:
     clang_root = Path(args.clang_root).resolve()
     clang_source_dir = Path(args.clang_source_dir).resolve()
     gcc_source_dir = Path(args.gcc_source_dir).resolve()
     gcc_build_dir = Path(args.gcc_build_dir).resolve()
     gcc_binary_dir = gcc_build_dir / "artifacts"
-    return {
+    specs = {
         "clang": CompilerSpec(
             name="clang",
             source_dir=clang_source_dir,
@@ -438,6 +469,7 @@ def build_specs(args: argparse.Namespace) -> dict[str, CompilerSpec]:
                 else clang_root / "bin" / "clang++"
             ),
             cxxflags=clang_cxxflags(clang_root, args.gcc_toolchain, args.verbose),
+            ldflags=clang_ldflags(clang_root),
         ),
         "gcc": CompilerSpec(
             name="gcc",
@@ -452,6 +484,9 @@ def build_specs(args: argparse.Namespace) -> dict[str, CompilerSpec]:
             cxxflags=("-std=c++26", "-freflection"),
         ),
     }
+    # The test directives' `-<COMPILER>` variants are named after the specs.
+    assert tuple(specs) == source_directives.COMPILERS, tuple(specs)
+    return specs
 
 
 def is_test_applicable(test_file: Path, base_dir: Path, compiler_name: str) -> bool:
@@ -504,33 +539,13 @@ def discover_tests(
     return tests
 
 
-def parse_test_flags(test_file: Path, compiler_name: str) -> list[str]:
-    """Read the inline `// TEST-FLAGS: ...` directives from the top of a test.
-
-    Lets a single test declare extra compile flags (e.g. `-O2` for benchmarks)
-    without special-casing it in the harness. Flags from the shared directive
-    come first, followed by those from the `// TEST-FLAGS-<COMPILER>:` variant
-    for `compiler_name`, so a test can ask for something only one compiler
-    spells (e.g. clang's `-fconstexpr-steps`) without breaking the others.
-    Returns [] if neither directive is present.
-    """
-    specific_directive = f"{TEST_FLAGS_DIRECTIVE[:-1]}-{compiler_name.upper()}:"
-    shared: list[str] = []
-    specific: list[str] = []
-    try:
-        with test_file.open("r", encoding="utf-8", errors="replace") as handle:
-            for _ in range(TEST_FLAGS_SCAN_LINES):
-                line = handle.readline()
-                if not line:
-                    break
-                stripped = line.strip()
-                if stripped.startswith(specific_directive):
-                    specific = shlex.split(stripped[len(specific_directive) :])
-                elif stripped.startswith(TEST_FLAGS_DIRECTIVE):
-                    shared = shlex.split(stripped[len(TEST_FLAGS_DIRECTIVE) :])
-    except OSError:
-        pass
-    return shared + specific
+def is_static_fail(test_file: Path, base_dir: Path) -> bool:
+    """Whether `test_file` must fail to compile: it is in a static_fail/
+    directory at the top of `base_dir` or of its clang_only/ or gcc_only/."""
+    parts = test_file.relative_to(base_dir).parts[:-1]
+    if parts[:1] in ((CLANG_ONLY_DIR,), (GCC_ONLY_DIR,)):
+        parts = parts[1:]
+    return parts[:1] == (STATIC_FAIL_DIR,)
 
 
 def ensure_submodule(source_dir: Path, args: argparse.Namespace) -> None:
@@ -1018,21 +1033,47 @@ def compile_and_maybe_run(
     if base_dir == TESTS_DIR:
         include_flags.extend(["-I", str(ROOT / "test_simple")])
 
+    relative_path = test_file.relative_to(ROOT)
+    expect_compile_failure = is_static_fail(test_file, base_dir)
+    # Directives are read before compiling, so a test that can't pass
+    # doesn't cost a build.
+    try:
+        directives = source_directives.load_test_directives(
+            test_file, spec.name, expect_compile_failure
+        )
+    except source_directives.DirectiveError as error:
+        return TestResult(
+            compiler=spec.name,
+            test_file=test_file,
+            compile_result=None,
+            run_result=None,
+            expect_compile_failure=expect_compile_failure,
+            compile_fail_reason=str(error),
+        )
+
     compile_command = [
         str(spec.executable),
         f"-std={args.std}",
         *spec.cxxflags,
         *include_flags,
-        *parse_test_flags(test_file, spec.name),
-        *args.extra_cxxflag,
+        # TEST-FLAGS, then --extra-cxxflag, so the user can override them.
+        *compile_fail_check.compile_flags(
+            directives, expect_compile_failure, args.extra_cxxflag
+        ),
+        # A compile-fail test is only compiled, so no linker output reaches
+        # the checker; any other is linked too.
+        *(["-c"] if expect_compile_failure else spec.ldflags),
         str(test_file),
         "-o",
         str(output_path),
     ]
-    relative_path = test_file.relative_to(ROOT)
-    expect_compile_failure = test_file.relative_to(base_dir).parts[0] == STATIC_FAIL_DIR
     log(f"[{spec.name}] compiling {relative_path} ...")
-    compile_result = run_command(compile_command, cwd=ROOT, verbose=args.verbose)
+    compile_result = run_command(
+        compile_command,
+        cwd=ROOT,
+        verbose=args.verbose,
+        env=compile_fail_check.COMPILE_ENV if expect_compile_failure else None,
+    )
 
     run_result: CommandResult | None = None
     if (
@@ -1043,12 +1084,22 @@ def compile_and_maybe_run(
         log(f"[{spec.name}] running {relative_path} ...")
         run_result = run_command([str(output_path)], cwd=ROOT, verbose=args.verbose)
 
+    compile_fail_reason = None
+    if expect_compile_failure:
+        compile_fail_reason = compile_fail_check.check(
+            directives.expected_errors,
+            compile_result.returncode,
+            # Newline-separated so the last stdout line can't run into stderr.
+            f"{compile_result.stdout}\n{compile_result.stderr}",
+        )
+
     return TestResult(
         compiler=spec.name,
         test_file=test_file,
         compile_result=compile_result,
         run_result=run_result,
         expect_compile_failure=expect_compile_failure,
+        compile_fail_reason=compile_fail_reason,
     )
 
 
@@ -1069,11 +1120,16 @@ def render_command_failure(result: CommandResult) -> str:
 def print_test_result(result: TestResult) -> None:
     relative_path = result.test_file.relative_to(ROOT)
     if not result.compile_ok:
-        if result.expect_compile_failure:
-            print(
-                f"[FAIL][{result.compiler}][compile] {relative_path} "
-                "(expected a compile error, but it compiled)"
-            )
+        if result.compile_fail_reason is not None:
+            summary, *details = result.compile_fail_reason.splitlines()
+            print(f"[FAIL][{result.compiler}][compile] {relative_path} ({summary})")
+            if details:
+                print(indent_block("\n".join(details)))
+            if (
+                result.compile_result is not None
+                and result.compile_result.returncode != 0
+            ):
+                print(indent_block(render_command_failure(result.compile_result)))
             return
         print(f"[FAIL][{result.compiler}][compile] {relative_path}")
         print(indent_block(render_command_failure(result.compile_result)))

@@ -4,55 +4,24 @@
 # appear in `ctest` runs or the tests/ discovery glob.
 # ---------------------------------------------------------------------------
 
-# Detect compiler family
-if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    set(_is_clang TRUE)
-    set(_is_gcc FALSE)
-elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-    set(_is_clang FALSE)
-    set(_is_gcc TRUE)
-else()
-    message(FATAL_ERROR "Unsupported compiler: ${CMAKE_CXX_COMPILER_ID}")
-endif()
-
-if(_is_clang)
-    get_filename_component(_clang_bin "${CMAKE_CXX_COMPILER}" DIRECTORY)
-    get_filename_component(_clang_root "${_clang_bin}" DIRECTORY)
-    set(_reflect_flags
-        -freflection
-        -fparameter-reflection
-        -fexpansion-statements
-        -stdlib=libc++
-        -isystem "${_clang_root}/include/c++/v1"
-        # High-order Taylor derivatives build a large DAG at compile time, past
-        # the default 1M constant-evaluation step budget.
-        -fconstexpr-steps=16000000
-    )
-    if(APPLE)
-        execute_process(COMMAND xcrun --show-sdk-path
-            OUTPUT_VARIABLE _sdk OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
-        if(_sdk)
-            list(APPEND _reflect_flags -isysroot "${_sdk}")
-        endif()
-    endif()
-elseif(_is_gcc)
-    set(_reflect_flags -freflection -fconstexpr-ops-limit=96000000)
-else()
-    message(FATAL_ERROR "Unsupported compiler: ${CMAKE_CXX_COMPILER_ID}")
-endif()
+# _compiler, _reflect_flags and test_flags() come from the top-level
+# CMakeLists.txt. A benchmark declares the flags it needs (-O2, a
+# constant-evaluation budget) in `// TEST-FLAGS:` comments, which test_flags()
+# reads, as run_tests.py does.
 
 # ---------------------------------------------------------------------------
 # Helper: register one benchmark executable
 # ---------------------------------------------------------------------------
 function(add_reflect_benchmark name source)
     add_executable(${name} ${source})
+    test_flags(${name} "${source}" FALSE)
     target_compile_options(${name} PRIVATE
         -std=c++2c
         ${_reflect_flags}
     )
     target_include_directories(${name} PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}"
-        "${CMAKE_SOURCE_DIR}/tests"
+        "${PROJECT_SOURCE_DIR}/tests"
     )
     # Intentionally no add_test() — benchmarks are run manually.
 endfunction()
@@ -68,7 +37,7 @@ foreach(_src IN LISTS _common_benchmarks)
     add_reflect_benchmark(${_name} "${_src}")
 endforeach()
 
-if(_is_clang)
+if(_compiler STREQUAL "clang")
     foreach(_src IN LISTS _clang_only_benchmarks)
         get_filename_component(_name "${_src}" NAME_WE)
         add_reflect_benchmark(${_name} "${_src}")

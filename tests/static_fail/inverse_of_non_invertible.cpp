@@ -1,3 +1,4 @@
+// EXPECT-ERROR: ad::inverse requires an explicit inverse plan
 #include "../is_invertible.hpp"
 
 inline double fn_square(double x) { return x * x; }

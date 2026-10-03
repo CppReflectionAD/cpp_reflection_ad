@@ -1,61 +1,19 @@
-# ---------------------------------------------------------------------------
-# Detect compiler family from the kit-selected CMAKE_CXX_COMPILER
-# ---------------------------------------------------------------------------
-if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    set(_is_clang TRUE)
-    set(_is_gcc   FALSE)
-elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-    set(_is_clang FALSE)
-    set(_is_gcc   TRUE)
-else()
-    message(FATAL_ERROR "Unsupported compiler: ${CMAKE_CXX_COMPILER_ID}. "
-                        "Select a clang-p2996 or gcc-reflect kit.")
-endif()
-
-include("${CMAKE_SOURCE_DIR}/test_simple/test_simple_cmake.cmake")
-
-# ---------------------------------------------------------------------------
-# Reflection compile flags
-# ---------------------------------------------------------------------------
-if(_is_clang)
-    # Derive the compiler root from the executable path (bin/../)
-    get_filename_component(_clang_bin "${CMAKE_CXX_COMPILER}" DIRECTORY)
-    get_filename_component(_clang_root "${_clang_bin}" DIRECTORY)
-
-    set(_reflect_flags
-        -freflection
-        -fparameter-reflection
-        -fexpansion-statements
-        -stdlib=libc++
-        -isystem "${_clang_root}/include/c++/v1"
-    )
-
-    if(APPLE)
-        execute_process(COMMAND xcrun --show-sdk-path
-            OUTPUT_VARIABLE _sdk OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
-        if(_sdk)
-            list(APPEND _reflect_flags -isysroot "${_sdk}")
-        endif()
-    endif()
-
-else() # GCC
-    set(_reflect_flags
-        -freflection
-    )
-endif()
+# _compiler, _reflect_flags and test_flags() come from the top-level
+# CMakeLists.txt.
 
 # ---------------------------------------------------------------------------
 # Helper: register one test executable
 # ---------------------------------------------------------------------------
 function(add_reflect_test name source)
     add_executable(${name} ${source})
+    test_flags(${name} "${source}" FALSE)
     target_compile_options(${name} PRIVATE
         -std=c++2c
         ${_reflect_flags}
     )
     target_include_directories(${name} PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}"
-        "${CMAKE_SOURCE_DIR}/test_simple"
+        "${_test_simple_dir}"
     )
     add_test(NAME ${name} COMMAND ${name})
 endfunction()
@@ -66,27 +24,27 @@ endfunction()
 file(GLOB _common   CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
 file(GLOB _clang_only CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/clang_only/*.cpp")
 file(GLOB _gcc_only   CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/gcc_only/*.cpp")
-file(GLOB _static_fail CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
+file(GLOB_RECURSE _static_fail CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/static_fail/*.cpp")
+file(GLOB_RECURSE _clang_only_static_fail CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/clang_only/static_fail/*.cpp")
+file(GLOB_RECURSE _gcc_only_static_fail CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/gcc_only/static_fail/*.cpp")
 
-foreach(_src IN LISTS _common)
+set(_must_compile ${_common})
+if(_compiler STREQUAL "clang")
+    list(APPEND _must_compile ${_clang_only})
+    list(APPEND _static_fail ${_clang_only_static_fail})
+endif()
+if(_compiler STREQUAL "gcc")
+    list(APPEND _must_compile ${_gcc_only})
+    list(APPEND _static_fail ${_gcc_only_static_fail})
+endif()
+
+foreach(_src IN LISTS _must_compile)
     get_filename_component(_name "${_src}" NAME_WE)
     add_reflect_test(${_name} "${_src}")
 endforeach()
-
-if(_is_clang)
-    foreach(_src IN LISTS _clang_only)
-        get_filename_component(_name "${_src}" NAME_WE)
-        add_reflect_test(${_name} "${_src}")
-    endforeach()
-endif()
-
-if(_is_gcc)
-    foreach(_src IN LISTS _gcc_only)
-        get_filename_component(_name "${_src}" NAME_WE)
-        add_reflect_test(${_name} "${_src}")
-    endforeach()
-endif()
 
 compile_check(reflection_ad "${_static_fail}" TRUE)
 
