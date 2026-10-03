@@ -45,7 +45,7 @@ inline auto expect_near_rel(D1 val1, D2 val2, Tol tol)
     average = std::max(std::abs(v1), std::abs(v2));
   }
 
-  L rel_diff = std::abs(v1 - v2) / average;
+  L rel_diff = std::abs(v1 - v2) / std::abs(average);
 
   return std::make_tuple(rel_diff < t, rel_diff);
 }
