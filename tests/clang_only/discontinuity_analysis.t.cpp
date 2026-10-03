@@ -317,6 +317,14 @@ static_assert(BallCxMath::max(Ball{1.0, 0.0}, Ball{0.9, 0.5}).mid == 1.0 &&
               BallCxMath::max(Ball{1.0, 0.0}, Ball{0.9, 0.5}).rad == 0.5);
 static_assert(BallCxMath::min(Ball{1.0, 0.25}, Ball{0.9, 0.0}).mid == 0.9 &&
               BallCxMath::min(Ball{1.0, 0.25}, Ball{0.9, 0.0}).rad == 0.25);
+// A function's bound covers its argument's whole range, even a radius under
+// half an ulp of it (which mid ± rad, rounded to nearest, loses): exp(x) moves
+// by e^x · rad, erfc(x) by about 2x · erfc(x) · rad, here well over the
+// functions' own error
+static_assert(BallCxMath::unary<ad::OpKind::Exp>(Ball{600.0, 5e-14}).rad >=
+              5e-14 * cx::exp(600.0));
+static_assert(BallCxMath::unary<ad::OpKind::Erfc>(Ball{20.0, 1e-15}).rad >=
+              40.0 * 1e-15 * cx::erfc(20.0));
 
 // The same crossing written two ways. They meet at strike / 1.1 in exact
 // arithmetic but are rooted a few ulps apart, and Fn's own sides can be

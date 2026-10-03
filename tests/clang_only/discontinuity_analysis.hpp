@@ -311,6 +311,21 @@ constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
 
 constexpr bool is_finite(double x) { return x == x && x != kInf && x != -kInf; }
 
+// x moved k ulps up (k > 0) or down (k < 0), through ±0, stopping at ±inf.
+constexpr double step_ulps(double x, int k) {
+  const auto up = [](double v) {
+    if (v == 0.0)
+      return std::numeric_limits<double>::denorm_min();
+    const std::uint64_t bits = std::bit_cast<std::uint64_t>(v);
+    return std::bit_cast<double>(v > 0.0 ? bits + 1 : bits - 1);
+  };
+  for (; k > 0 && is_finite(x); --k)
+    x = up(x);
+  for (; k < 0 && is_finite(x); ++k)
+    x = -up(-x);
+  return x;
+}
+
 // primal()'s arithmetic here: IEEE results even during constant evaluation,
 // where an operation that divides by zero or produces a NaN otherwise stops
 // the build. A NaN or infinity is produced directly instead, so a target-free
@@ -467,11 +482,14 @@ struct BallCxMath {
       return {mid, (a.rad < 2.0 ? a.rad : 2.0) + cx_error(mid)};
     } else {
       // exp, log, sqrt and erfc are monotone: the exact values over a's
-      // range lie between those at its ends.
+      // range lie between those at its ends. Those are rounded outward: to
+      // nearest, a.mid ± a.rad can land inside the range, or on a.mid itself
+      // when a.rad is under half an ulp of it, and |f'| times what is lost
+      // can be well over cx_error (exp(x) or erfc(x) at large x).
       if (a.rad == 0.0)
         return {mid, cx_error(mid)};
-      double lo = a.mid - a.rad;
-      const double hi = a.mid + a.rad;
+      double lo = step_ulps(a.mid - a.rad, -1);
+      const double hi = step_ulps(a.mid + a.rad, 1);
       if constexpr (Op == OpKind::Log) {
         if (!(lo > 0.0))
           return {mid, kInf};
@@ -662,21 +680,6 @@ constexpr T gap_at(const std::array<double, NumArgs> &in, T x,
     return MathFor<T>::sub(val[a], val[b]);
   else
     return val[I];
-}
-
-// x moved k ulps up (k > 0) or down (k < 0), through ±0.
-constexpr double step_ulps(double x, int k) {
-  const auto up = [](double v) {
-    if (v == 0.0)
-      return std::numeric_limits<double>::denorm_min();
-    const std::uint64_t bits = std::bit_cast<std::uint64_t>(v);
-    return std::bit_cast<double>(v > 0.0 ? bits + 1 : bits - 1);
-  };
-  for (; k > 0; --k)
-    x = up(x);
-  for (; k < 0; ++k)
-    x = -up(-x);
-  return x;
 }
 
 // How far a root is moved to where crossing I's sides are equal (see snap).
