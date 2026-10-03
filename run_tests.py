@@ -13,10 +13,14 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from test_simple import compile_fail_check
-
 
 ROOT = Path(__file__).resolve().parent
+# The script's directory is not on sys.path under `python3 -P` /
+# PYTHONSAFEPATH, or when run_tests is imported from elsewhere.
+sys.path.insert(0, str(ROOT))
+
+from test_simple import compile_fail_check  # noqa: E402
+
 TESTS_DIR = ROOT / "tests"
 BENCHMARKS_DIR = ROOT / "benchmarks"
 BUILD_ROOT = ROOT / "build"
@@ -73,16 +77,13 @@ else:
     DEFAULT_GCC_PATCHES_DIR = os.environ.get("REFLECT_GCC_PATCHES_DIR", "")
     DEFAULT_GCC_SYNC_FROM = os.environ.get("REFLECT_GCC_SYNC_FROM", "")
 
-# Per-test compile flags are declared inline via a `// TEST-FLAGS: ...` comment
-# on a line of its own (e.g. benchmarks that need -O2), placed like
-# `// EXPECT-ERROR:` (see compile_fail_check.read_comment_directives). Flags
-# that only one compiler understands go in a `// TEST-FLAGS-<COMPILER>: ...`
+# Per-test compile flags are declared inline via a `// TEST-FLAGS: ...` line in
+# the comment block at the top of the file (e.g. benchmarks that need -O2),
+# placed like `// EXPECT-ERROR:` (see compile_fail_check.read_comment_directives).
+# Flags that only one compiler understands go in a `// TEST-FLAGS-<COMPILER>:`
 # variant (e.g. `// TEST-FLAGS-CLANG:`), which is appended after the shared
 # flags when building with that compiler and ignored by every other one.
 TEST_FLAGS_DIRECTIVE = "// TEST-FLAGS:"
-# compile_fail_reason of a static_fail result that was never checked, so that
-# such a result fails instead of passing by default.
-COMPILE_FAIL_UNCHECKED = "not checked against its `// EXPECT-ERROR:` directives"
 
 
 @dataclass(frozen=True)
@@ -101,18 +102,17 @@ class TestResult:
     # `// EXPECT-ERROR:` directives are missing or malformed).
     compile_result: CommandResult | None
     run_result: CommandResult | None
-    expect_compile_failure: bool = False
-    # Why a static_fail test failed (see compile_fail_check.check), or None.
-    compile_fail_reason: str | None = COMPILE_FAIL_UNCHECKED
+    expect_compile_failure: bool
+    # Why a static_fail test failed (see compile_fail_check.check), or None if
+    # it passed; always None for other tests.
+    compile_fail_reason: str | None
 
     @property
     def compile_ok(self) -> bool:
         if self.compile_result is None:
             return False
         if self.expect_compile_failure:
-            return (
-                self.compile_result.returncode != 0 and self.compile_fail_reason is None
-            )
+            return self.compile_fail_reason is None
         return self.compile_result.returncode == 0
 
     @property
@@ -519,7 +519,7 @@ def discover_tests(
     return tests
 
 
-def parse_test_flags(test_file: Path, compiler_name: str) -> list[str]:
+def parse_test_flags(source: str, compiler_name: str) -> list[str]:
     """Read the inline `// TEST-FLAGS: ...` directives of a test.
 
     Lets a single test declare extra compile flags (e.g. `-O2` for benchmarks)
@@ -527,14 +527,11 @@ def parse_test_flags(test_file: Path, compiler_name: str) -> list[str]:
     come first, followed by those from the `// TEST-FLAGS-<COMPILER>:` variant
     for `compiler_name`, so a test can ask for something only one compiler
     spells (e.g. clang's `-fconstexpr-steps`) without breaking the others.
+    Only the comment block at the top of `source` (the test's text) is read.
     Returns [] if neither directive is present; if one appears more than once,
     the last wins.
     """
     specific_directive = f"{TEST_FLAGS_DIRECTIVE[:-1]}-{compiler_name.upper()}:"
-    try:
-        source = compile_fail_check.read_source(test_file)
-    except OSError:
-        return []
 
     def last_flags(directive: str) -> list[str]:
         directives = compile_fail_check.read_comment_directives(source, directive)
@@ -1028,12 +1025,18 @@ def compile_and_maybe_run(
     if base_dir == TESTS_DIR:
         include_flags.extend(["-I", str(ROOT / "test_simple")])
 
+    # Read once for both TEST-FLAGS and EXPECT-ERROR.
+    try:
+        source = compile_fail_check.read_source(test_file)
+    except OSError:
+        source = ""
+
     compile_command = [
         str(spec.executable),
         f"-std={args.std}",
         *spec.cxxflags,
         *include_flags,
-        *parse_test_flags(test_file, spec.name),
+        *parse_test_flags(source, spec.name),
         *args.extra_cxxflag,
         str(test_file),
         "-o",
@@ -1045,9 +1048,7 @@ def compile_and_maybe_run(
     if expect_compile_failure:
         # Before compiling, so a test that can't pass doesn't cost a build.
         try:
-            expected_errors = compile_fail_check.parse_expected_errors(
-                compile_fail_check.read_source(test_file)
-            )
+            expected_errors = compile_fail_check.parse_expected_errors(source)
         except compile_fail_check.DirectiveError as error:
             return TestResult(
                 compiler=spec.name,
@@ -1106,9 +1107,7 @@ def print_test_result(result: TestResult) -> None:
     relative_path = result.test_file.relative_to(ROOT)
     if not result.compile_ok:
         if result.expect_compile_failure:
-            summary, *details = (
-                result.compile_fail_reason or "expected a compile error, but it compiled"
-            ).splitlines()
+            summary, *details = result.compile_fail_reason.splitlines()
             print(f"[FAIL][{result.compiler}][compile] {relative_path} ({summary})")
             if details:
                 print(indent_block("\n".join(details)))
