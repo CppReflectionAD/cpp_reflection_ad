@@ -313,6 +313,51 @@ template <info Fn, std::size_t Target>
 inline constexpr auto crossing_cone_of =
     std::define_static_array(crossing_cone<Fn, Target>());
 
+// Which nodes crossing i's gap reads, directly or not: its sides (or the
+// condition itself) and their operands. Not their guards: whether a node is
+// reached does not depend on the target, so any sweep already says.
+template <info Fn> consteval std::vector<char> gap_reads(std::size_t i) {
+  const auto nodes = nodes_of<Fn>;
+  std::vector<char> read(nodes.size(), 0);
+  if (is_comparison(nodes[i].op))
+    read[nodes[i].a] = read[nodes[i].b] = 1;
+  else
+    read[i] = 1;
+  for (std::size_t j = i + 1; j-- > 0;) {
+    const Node &n = nodes[j];
+    if (!read[j])
+      continue;
+    if (op_has_a(n.op))
+      read[n.a] = 1;
+    if (op_has_b(n.op))
+      read[n.b] = 1;
+    if (op_has_cond(n.op))
+      read[n.cond] = 1;
+  }
+  return read;
+}
+
+// The nodes whose target derivative some crossing's gap reads: the union of
+// their gap_reads. Only these need a tangent; a guard, or anything else in
+// the crossing cone, needs just its value.
+template <info Fn, std::size_t Target>
+consteval std::vector<char> tangent_needed() {
+  const auto crossing = crossings_of<Fn, Target>;
+  std::vector<char> needed(crossing.size(), 0);
+  for (std::size_t i = 0; i < crossing.size(); ++i) {
+    if (!crossing[i])
+      continue;
+    const std::vector<char> read = gap_reads<Fn>(i);
+    for (std::size_t j = 0; j < read.size(); ++j)
+      needed[j] = needed[j] || read[j];
+  }
+  return needed;
+}
+
+template <info Fn, std::size_t Target>
+inline constexpr auto tangent_needed_of =
+    std::define_static_array(tangent_needed<Fn, Target>());
+
 constexpr double kInf = std::numeric_limits<double>::infinity();
 constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
 
@@ -460,6 +505,7 @@ constexpr auto sweep(const std::array<double, NumArgs> &in, double x) {
   static constexpr auto nodes = nodes_of<Fn>;
   static constexpr auto dep = dependence_of<Fn, Target>;
   static constexpr auto cone = crossing_cone_of<Fn, Target>;
+  static constexpr auto needs_tangent = tangent_needed_of<Fn, Target>;
   Sweep<nodes.size()> s;
   template for (constexpr Node n : nodes) {
     if constexpr (cone[n.self]) {
@@ -470,7 +516,8 @@ constexpr auto sweep(const std::array<double, NumArgs> &in, double x) {
           continue;
       }
       s.val[i] = node_value<Fn, i, Target>(s.val, in, x);
-      s.tan[i] = node_tangent<Fn, i, Target>(s.val, s.tan);
+      if constexpr (needs_tangent[i])
+        s.tan[i] = node_tangent<Fn, i, Target>(s.val, s.tan);
       if constexpr (!dep[i].varies) {
         s.may_hold[i] = s.val[i] != 0.0;
         s.may_fail[i] = !s.may_hold[i];
@@ -504,28 +551,10 @@ constexpr std::pair<double, double> gap(const Sweep<N> &s) {
     return {s.val[I], s.tan[I]};
 }
 
-// The nodes crossing I's gap reads, directly or not, in order: its sides (or
-// the condition itself) and their operands. Not their guards: whether a node
-// is reached does not depend on the target, so any sweep already says.
+// The nodes crossing I's gap reads, in order.
 template <info Fn, std::size_t I>
 consteval std::vector<std::size_t> gap_cone() {
-  const auto nodes = nodes_of<Fn>;
-  std::vector<char> read(I + 1, 0);
-  if (is_comparison(nodes[I].op))
-    read[nodes[I].a] = read[nodes[I].b] = 1;
-  else
-    read[I] = 1;
-  for (std::size_t i = I + 1; i-- > 0;) {
-    const Node &n = nodes[i];
-    if (!read[i])
-      continue;
-    if (op_has_a(n.op))
-      read[n.a] = 1;
-    if (op_has_b(n.op))
-      read[n.b] = 1;
-    if (op_has_cond(n.op))
-      read[n.cond] = 1;
-  }
+  const std::vector<char> read = gap_reads<Fn>(I);
   std::vector<std::size_t> cone;
   for (std::size_t i = 0; i <= I; ++i)
     if (read[i])
