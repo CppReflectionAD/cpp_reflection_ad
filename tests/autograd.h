@@ -175,6 +175,90 @@ consteval bool op_is_boolean(OpKind op) {
          op == OpKind::And || op == OpKind::Or || op == OpKind::Not;
 }
 
+// The arithmetic and functions primal() evaluates with: the built-in operators
+// and <cmath>. A sweep with other needs (e.g. staying inside constant
+// evaluation) passes its own type with the same members.
+struct BuiltinMath {
+  template <typename T> static constexpr T add(T a, T b) { return a + b; }
+  template <typename T> static constexpr T sub(T a, T b) { return a - b; }
+  template <typename T> static constexpr T mul(T a, T b) { return a * b; }
+  template <typename T> static constexpr T div(T a, T b) { return a / b; }
+  template <typename T> static constexpr T neg(T a) { return -a; }
+  template <OpKind Op, typename T> static constexpr T unary(T x) {
+    if constexpr (Op == OpKind::Sin)
+      return std::sin(x);
+    else if constexpr (Op == OpKind::Cos)
+      return std::cos(x);
+    else if constexpr (Op == OpKind::Exp)
+      return std::exp(x);
+    else if constexpr (Op == OpKind::Log)
+      return std::log(x);
+    else if constexpr (Op == OpKind::Sqrt)
+      return std::sqrt(x);
+    else
+      return std::erfc(x);
+  }
+};
+
+// The ops primal() evaluates: every scalar op but the leaves, which each sweep
+// reads from its own arguments (Input) or splices (Const).
+consteval bool op_has_primal(OpKind op) {
+  return op != OpKind::Input && op != OpKind::Const && op != OpKind::Matmul &&
+         op != OpKind::Transpose && op != OpKind::Sum && op != OpKind::Relu;
+}
+
+// A node's value from the values of its operands a, b and (Select only) its
+// condition c: the primal rule every sweep shares. Select uses only the branch
+// it takes, and And / Or use b only when a leaves them undecided -- exactly
+// when b's branch was reached, so its slot was written.
+template <OpKind Op, typename Math = BuiltinMath, typename T>
+constexpr T primal(T a, T b, T c) {
+  if constexpr (Op == OpKind::Output)
+    return a;
+  else if constexpr (Op == OpKind::Add)
+    return Math::add(a, b);
+  else if constexpr (Op == OpKind::Sub)
+    return Math::sub(a, b);
+  else if constexpr (Op == OpKind::Mul)
+    return Math::mul(a, b);
+  else if constexpr (Op == OpKind::Div)
+    return Math::div(a, b);
+  else if constexpr (Op == OpKind::Neg)
+    return Math::neg(a);
+  else if constexpr (Op == OpKind::Sin || Op == OpKind::Cos ||
+                     Op == OpKind::Exp || Op == OpKind::Log ||
+                     Op == OpKind::Sqrt || Op == OpKind::Erfc)
+    return Math::template unary<Op>(a);
+  else if constexpr (Op == OpKind::Lt)
+    return (a < b) ? T{1} : T{0};
+  else if constexpr (Op == OpKind::Le)
+    return (a <= b) ? T{1} : T{0};
+  else if constexpr (Op == OpKind::Gt)
+    return (a > b) ? T{1} : T{0};
+  else if constexpr (Op == OpKind::Ge)
+    return (a >= b) ? T{1} : T{0};
+  else if constexpr (Op == OpKind::Eq)
+    return (a == b) ? T{1} : T{0};
+  else if constexpr (Op == OpKind::Ne)
+    return (a != b) ? T{1} : T{0};
+  else if constexpr (Op == OpKind::Not)
+    return (a != T{0}) ? T{0} : T{1};
+  else if constexpr (Op == OpKind::And)
+    return (a != T{0} && b != T{0}) ? T{1} : T{0};
+  else if constexpr (Op == OpKind::Or)
+    return (a != T{0} || b != T{0}) ? T{1} : T{0};
+  else if constexpr (Op == OpKind::Select)
+    return (c != T{0}) ? a : b;
+  else if constexpr (Op == OpKind::Abs)
+    return (a < T{0}) ? Math::neg(a) : a;
+  else if constexpr (Op == OpKind::Max)
+    return (a < b) ? b : a;
+  else if constexpr (Op == OpKind::Min)
+    return (b < a) ? b : a;
+  else
+    static_assert(false, "primal: not a scalar op (see op_has_primal)");
+}
+
 namespace detail {
 
 struct Ctx {

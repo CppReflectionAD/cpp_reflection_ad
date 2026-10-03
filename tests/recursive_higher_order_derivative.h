@@ -318,59 +318,8 @@ constexpr double partial_derivative(Args... args) {
         val[n.self] = in[n.self];
       else if constexpr (n.op == OpKind::Const)
         val[n.self] = static_cast<double>([:n.leaf:]);
-      else if constexpr (n.op == OpKind::Output)
-        val[n.self] = val[n.a];
-      else if constexpr (n.op == OpKind::Add)
-        val[n.self] = val[n.a] + val[n.b];
-      else if constexpr (n.op == OpKind::Sub)
-        val[n.self] = val[n.a] - val[n.b];
-      else if constexpr (n.op == OpKind::Mul)
-        val[n.self] = val[n.a] * val[n.b];
-      else if constexpr (n.op == OpKind::Div)
-        val[n.self] = val[n.a] / val[n.b];
-      else if constexpr (n.op == OpKind::Neg)
-        val[n.self] = -val[n.a];
-      else if constexpr (n.op == OpKind::Sin)
-        val[n.self] = std::sin(val[n.a]);
-      else if constexpr (n.op == OpKind::Cos)
-        val[n.self] = std::cos(val[n.a]);
-      else if constexpr (n.op == OpKind::Exp)
-        val[n.self] = std::exp(val[n.a]);
-      else if constexpr (n.op == OpKind::Log)
-        val[n.self] = std::log(val[n.a]);
-      else if constexpr (n.op == OpKind::Sqrt)
-        val[n.self] = std::sqrt(val[n.a]);
-      else if constexpr (n.op == OpKind::Erfc)
-        val[n.self] = std::erfc(val[n.a]);
-      else if constexpr (n.op == OpKind::Lt)
-        val[n.self] = (val[n.a] < val[n.b]) ? 1.0 : 0.0;
-      else if constexpr (n.op == OpKind::Le)
-        val[n.self] = (val[n.a] <= val[n.b]) ? 1.0 : 0.0;
-      else if constexpr (n.op == OpKind::Gt)
-        val[n.self] = (val[n.a] > val[n.b]) ? 1.0 : 0.0;
-      else if constexpr (n.op == OpKind::Ge)
-        val[n.self] = (val[n.a] >= val[n.b]) ? 1.0 : 0.0;
-      else if constexpr (n.op == OpKind::Eq)
-        val[n.self] = (val[n.a] == val[n.b]) ? 1.0 : 0.0;
-      else if constexpr (n.op == OpKind::Ne)
-        val[n.self] = (val[n.a] != val[n.b]) ? 1.0 : 0.0;
-      else if constexpr (n.op == OpKind::Not)
-        val[n.self] = (val[n.a] != 0.0) ? 0.0 : 1.0;
-      // Reads val[b] only when val[a] leaves it undecided -- exactly when the
-      // right operand was lowered as reachable, so its slot is written.
-      else if constexpr (n.op == OpKind::And)
-        val[n.self] = (val[n.a] != 0.0 && val[n.b] != 0.0) ? 1.0 : 0.0;
-      else if constexpr (n.op == OpKind::Or)
-        val[n.self] = (val[n.a] != 0.0 || val[n.b] != 0.0) ? 1.0 : 0.0;
-      // Select likewise reads only the branch it takes.
-      else if constexpr (n.op == OpKind::Select)
-        val[n.self] = (val[n.cond] != 0.0) ? val[n.a] : val[n.b];
-      else if constexpr (n.op == OpKind::Abs)
-        val[n.self] = (val[n.a] < 0.0) ? -val[n.a] : val[n.a];
-      else if constexpr (n.op == OpKind::Max)
-        val[n.self] = (val[n.a] < val[n.b]) ? val[n.b] : val[n.a];
-      else if constexpr (n.op == OpKind::Min)
-        val[n.self] = (val[n.b] < val[n.a]) ? val[n.b] : val[n.a];
+      else if constexpr (op_has_primal(n.op))
+        val[n.self] = primal<n.op>(val[n.a], val[n.b], val[n.cond]);
     }
   }
   return val[N - 1];

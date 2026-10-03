@@ -278,38 +278,41 @@ template <info Fn, std::size_t Target>
 inline constexpr auto crossing_operands_of =
     std::define_static_array(crossing_operands<Fn, Target>());
 
-// <cmath> is not constexpr in this toolchain, so during constant evaluation
-// the cx_std versions stand in. There is no cx_std sin/cos: a sin or cos on
-// an evaluated path only works through the runtime entry point.
-template <OpKind Op> constexpr double unary_math(double x) {
-  if consteval {
-    if constexpr (Op == OpKind::Exp)
-      return cx::exp(x);
-    else if constexpr (Op == OpKind::Log)
-      return cx::log(x);
-    else if constexpr (Op == OpKind::Sqrt)
-      return cx::sqrt(x);
-    else if constexpr (Op == OpKind::Erfc)
-      return cx::erfc(x);
-    else if constexpr (Op == OpKind::Sin)
-      return std::sin(x);
-    else
-      return std::cos(x);
-  } else {
-    if constexpr (Op == OpKind::Exp)
-      return std::exp(x);
-    else if constexpr (Op == OpKind::Log)
-      return std::log(x);
-    else if constexpr (Op == OpKind::Sqrt)
-      return std::sqrt(x);
-    else if constexpr (Op == OpKind::Erfc)
-      return std::erfc(x);
-    else if constexpr (Op == OpKind::Sin)
-      return std::sin(x);
-    else
-      return std::cos(x);
+// primal()'s arithmetic here. <cmath> is not constexpr in this toolchain, so
+// during constant evaluation the cx_std versions stand in. There is no cx_std
+// sin/cos: a sin or cos on an evaluated path only works through the runtime
+// entry point.
+struct CxMath : BuiltinMath {
+  template <OpKind Op> static constexpr double unary(double x) {
+    if consteval {
+      if constexpr (Op == OpKind::Exp)
+        return cx::exp(x);
+      else if constexpr (Op == OpKind::Log)
+        return cx::log(x);
+      else if constexpr (Op == OpKind::Sqrt)
+        return cx::sqrt(x);
+      else if constexpr (Op == OpKind::Erfc)
+        return cx::erfc(x);
+      else if constexpr (Op == OpKind::Sin)
+        return std::sin(x);
+      else
+        return std::cos(x);
+    } else {
+      if constexpr (Op == OpKind::Exp)
+        return std::exp(x);
+      else if constexpr (Op == OpKind::Log)
+        return std::log(x);
+      else if constexpr (Op == OpKind::Sqrt)
+        return std::sqrt(x);
+      else if constexpr (Op == OpKind::Erfc)
+        return std::erfc(x);
+      else if constexpr (Op == OpKind::Sin)
+        return std::sin(x);
+      else
+        return std::cos(x);
+    }
   }
-}
+};
 
 // Value of node I from the values of the nodes before it, with the target
 // input at x. Only plain copies of `n`'s fields appear in runtime code: naming
@@ -328,48 +331,8 @@ constexpr double node_value(const std::array<double, N> &val,
       return in[I];
   } else if constexpr (op == OpKind::Const) {
     return static_cast<double>([:n.leaf:]);
-  } else if constexpr (op == OpKind::Output) {
-    return val[a];
-  } else if constexpr (op == OpKind::Add) {
-    return val[a] + val[b];
-  } else if constexpr (op == OpKind::Sub) {
-    return val[a] - val[b];
-  } else if constexpr (op == OpKind::Mul) {
-    return val[a] * val[b];
-  } else if constexpr (op == OpKind::Div) {
-    return val[a] / val[b];
-  } else if constexpr (op == OpKind::Neg) {
-    return -val[a];
-  } else if constexpr (op == OpKind::Sin || op == OpKind::Cos ||
-                       op == OpKind::Exp || op == OpKind::Log ||
-                       op == OpKind::Sqrt || op == OpKind::Erfc) {
-    return unary_math<op>(val[a]);
-  } else if constexpr (op == OpKind::Lt) {
-    return val[a] < val[b] ? 1.0 : 0.0;
-  } else if constexpr (op == OpKind::Le) {
-    return val[a] <= val[b] ? 1.0 : 0.0;
-  } else if constexpr (op == OpKind::Gt) {
-    return val[a] > val[b] ? 1.0 : 0.0;
-  } else if constexpr (op == OpKind::Ge) {
-    return val[a] >= val[b] ? 1.0 : 0.0;
-  } else if constexpr (op == OpKind::Eq) {
-    return val[a] == val[b] ? 1.0 : 0.0;
-  } else if constexpr (op == OpKind::Ne) {
-    return val[a] != val[b] ? 1.0 : 0.0;
-  } else if constexpr (op == OpKind::Not) {
-    return val[a] != 0.0 ? 0.0 : 1.0;
-  } else if constexpr (op == OpKind::And) {
-    return (val[a] != 0.0 && val[b] != 0.0) ? 1.0 : 0.0;
-  } else if constexpr (op == OpKind::Or) {
-    return (val[a] != 0.0 || val[b] != 0.0) ? 1.0 : 0.0;
-  } else if constexpr (op == OpKind::Select) {
-    return val[c] != 0.0 ? val[a] : val[b];
-  } else if constexpr (op == OpKind::Abs) {
-    return val[a] < 0.0 ? -val[a] : val[a];
-  } else if constexpr (op == OpKind::Max) {
-    return val[a] < val[b] ? val[b] : val[a];
-  } else if constexpr (op == OpKind::Min) {
-    return val[b] < val[a] ? val[b] : val[a];
+  } else if constexpr (op_has_primal(op)) {
+    return primal<op, CxMath>(val[a], val[b], val[c]);
   } else {
     static_assert(false, "discontinuity_analysis: unsupported operation");
   }
