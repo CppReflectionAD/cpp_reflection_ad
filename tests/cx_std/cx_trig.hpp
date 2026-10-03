@@ -17,7 +17,8 @@
 //
 // Accuracy: within a few ulp of std::sin / std::cos for |x| < 1e6 (see
 // tests/cx_std/cx_std.t.cpp). Beyond that the three-part reduction loses
-// precision; there is no Payne–Hanek reduction.
+// precision; there is no Payne–Hanek reduction, and past |x| ≈ 7e18 the
+// result is NaN.
 
 #ifndef CX_STD_CX_TRIG_HPP
 #define CX_STD_CX_TRIG_HPP
@@ -57,6 +58,9 @@ template <typename T> constexpr T cos_kernel(T r) {
 // Core: x is finite.
 template <typename T> constexpr T trig_core(T x, bool want_cos) {
   const T q = x * static_cast<T>(inv_pio2);
+  // n must fit a long long; this far out there is no precision left anyway.
+  if (q > T(4.6e18) || q < T(-4.6e18))
+    return std::numeric_limits<T>::quiet_NaN();
   const long long n =
       static_cast<long long>(q < T(0) ? q - T(0.5) : q + T(0.5));
   const T nf = static_cast<T>(n);
