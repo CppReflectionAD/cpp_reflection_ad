@@ -1,20 +1,23 @@
-// exp_constexpr.hpp — constexpr exp via Horner-form Taylor series.
+// exp_constexpr.hpp — constexpr exp via range reduction and a Taylor series.
 //
 // Algorithm
 // ---------
-// Taylor series written in Horner form (avoids computing x^n and n!
-// separately):
-//   exp(x) = 1 + x*(1 + x/2*(1 + x/3*(... + x/N)))
+// 1. Range reduction: x = k·ln2 + r with k = round(x / ln2), so |r| ≤ ln2/2.
+//    ln2 is split into a high part with trailing zero bits and a low
+//    correction (Cody–Waite), so k·ln2_hi is exact and r keeps full precision.
+// 2. exp(r) by its Taylor series in Horner form (avoids computing r^n and n!
+//    separately):
+//      exp(r) = 1 + r*(1 + r/2*(1 + r/3*(... + r/N)))
+//    22 terms are far more than |r| ≤ 0.35 needs for double precision.
+// 3. exp(x) = exp(r) · 2^k. Scaling by a power of two is exact; 2^k is
+//    applied in two halves so neither overflows nor underflows before the
+//    result does.
 //
-// Stability:
-//   For x <= -1: compute 1/exp(-x) to avoid catastrophic cancellation in the
-//   direct series where large positive and negative terms nearly cancel.
+// Special cases: NaN → NaN, -∞ → 0, +∞ → +∞, 0 → 1. Beyond the type's range
+// the result is +∞ or 0, as std::exp.
 //
-// Special cases: NaN → NaN, -∞ → 0, +∞ → +∞, 0 → 1.
-//
-// Accuracy: 22 terms give full double precision for |x| ≤ 1, which is the
-// range used after the reciprocal trick (direct path only sees x in (-1, +∞)).
-// For large positive x the series is evaluated directly and is accurate.
+// Accuracy: within a few ulp of std::exp over the whole range (see
+// tests/cx_std/cx_std.t.cpp).
 
 #ifndef CX_STD_CX_EXP_HPP
 #define CX_STD_CX_EXP_HPP
@@ -28,6 +31,12 @@ namespace detail {
 
 constexpr std::size_t kExpTerms = 22;
 
+// ln2 = ln2_hi + ln2_lo, where ln2_hi has 32 significant bits so k·ln2_hi is
+// exact for |k| < 2^21 (the fdlibm split).
+constexpr double ln2_hi = 6.93147180369123816490e-01;
+constexpr double ln2_lo = 1.90821492927058770002e-10;
+constexpr double inv_ln2 = 1.44269504088896338700e+00;
+
 // Horner-form kernel.
 // Computes: 1 + x/(n+1) * (1 + x/(n+2) * (... * (1 + x/N)))
 // Initial call: exp_horner(x, 1, kExpTerms) gives the tail of the series
@@ -38,11 +47,42 @@ constexpr T exp_horner(T x, std::size_t n, std::size_t N) {
                 : T(1) + x / static_cast<T>(n + 1) * exp_horner(x, n + 1, N);
 }
 
+// 2^k, exactly, by repeated squaring; 2^k must be within the type's range.
+// The base is squared only while bits remain, so no step overflows (GCC
+// rejects an overflow during constant evaluation).
+template <typename T> constexpr T pow2(int k) {
+  T base = k < 0 ? T(0.5) : T(2);
+  unsigned n = static_cast<unsigned>(k < 0 ? -k : k);
+  T result = T(1);
+  for (; n != 0; n >>= 1) {
+    if (n & 1u)
+      result *= base;
+    if (n > 1u)
+      base *= base;
+  }
+  return result;
+}
+
+// Nearest integer to x, |x| small enough to fit an int.
+template <typename T> constexpr int round_to_int(T x) {
+  return static_cast<int>(x < T(0) ? x - T(0.5) : x + T(0.5));
+}
+
 // Core: x is finite and non-zero.
 template <typename T> constexpr T exp_core(T x) {
-  return x > T(-1)
-             ? T(1) + x * exp_horner(x, 1, kExpTerms) // direct Taylor
-             : T(1) / (T(1) + (-x) * exp_horner(-x, 1, kExpTerms)); // 1/exp(-x)
+  // Past the type's range the result is +∞ or 0. Return those directly:
+  // computing them by overflow is not a constant expression for GCC.
+  using limits = std::numeric_limits<T>;
+  if (x > static_cast<T>(limits::max_exponent) * static_cast<T>(ln2_hi))
+    return limits::infinity();
+  if (x < static_cast<T>(limits::min_exponent - limits::digits - 1) *
+              static_cast<T>(ln2_hi))
+    return T(0);
+  const int k = round_to_int(x * static_cast<T>(inv_ln2));
+  const T r = (x - static_cast<T>(k) * static_cast<T>(ln2_hi)) -
+              static_cast<T>(k) * static_cast<T>(ln2_lo);
+  const T exp_r = T(1) + r * exp_horner(r, 1, kExpTerms);
+  return exp_r * pow2<T>(k / 2) * pow2<T>(k - k / 2);
 }
 
 } // namespace detail

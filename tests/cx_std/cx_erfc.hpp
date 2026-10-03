@@ -1,20 +1,24 @@
-// cx_erfc.hpp — constexpr erfc via Taylor series (small |x|) and
-// continued-fraction asymptotic expansion (large |x|).
+// cx_erfc.hpp — constexpr erfc via a Taylor series (small x) and Laplace's
+// continued fraction (larger x).
 //
 // Algorithm
 // ---------
-// erfc(x) = 1 - erf(x), where
-//   erf(x) = (2/√π) · Σ_{n=0}^{N} (-1)^n · x^(2n+1) / (n! · (2n+1))
+// x < 0: erfc(x) = 2 - erfc(-x), which loses nothing since erfc(-x) < 1.
 //
-// Written in Horner form for the variable t = -x²:
-//   erf(x) = (2/√π) · x · Σ_{n=0}^{N} t^n / (n! · (2n+1))
+// 0 < x < 0.5: erfc(x) = 1 - erf(x), with
+//   erf(x) = (2/√π) · x · Σ_{n=0}^{N} t^n / (n! · (2n+1)),   t = -x²
+// in Horner form. erf(x) < 0.53 here, so the subtraction loses little.
 //
-// For |x| > 4 the Taylor series converges slowly; instead use the
-// complementary asymptotic continued-fraction approximation:
-//   erfc(x) ≈ (exp(-x²) / (x√π)) · cf(x²)
-// via the Laplace continued fraction (truncated to kCFTerms levels).
+// x ≥ 0.5: erfc(x) = exp(-x²)/√π · K(x), where K is Laplace's continued
+// fraction (Abramowitz & Stegun 7.1.14)
+//   K(x) = 1/(x + (1/2)/(x + 1/(x + (3/2)/(x + 2/(x + …)))))
+// evaluated from the inside out. It converges for every x > 0, faster as x
+// grows, so the depth is chosen from x. exp(-x²) amplifies the rounding of
+// x² by x², so x² is split exactly into hi + lo first (Veltkamp/Dekker).
 //
 // Special cases: NaN → NaN, +∞ → 0, -∞ → 2, 0 → 1.
+//
+// Accuracy: within a few ulp of std::erfc (see tests/cx_std/cx_std.t.cpp).
 
 #ifndef CX_STD_CX_ERFC_HPP
 #define CX_STD_CX_ERFC_HPP
@@ -29,9 +33,7 @@
 namespace cx {
 namespace detail {
 
-constexpr std::size_t kErfTerms =
-    28; // Taylor terms; covers double precision for |x| ≤ 4
-constexpr std::size_t kCFTerms = 30; // continued-fraction levels for |x| > 4
+constexpr std::size_t kErfTerms = 28; // Taylor terms; ample for |x| < 0.5
 
 // ---------------------------------------------------------------------------
 // Taylor path: erf(x) = (2/√π)·x · Σ_{n=0}^{N} (-x²)^n / (n!·(2n+1))
@@ -54,29 +56,39 @@ template <typename T> constexpr T erfc_taylor(T x) {
 }
 
 // ---------------------------------------------------------------------------
-// Asymptotic continued-fraction path for |x| > 4: erfc(x) via
-// the Laplace CF: erfc(x) = (e^{-x²}/(x√π)) · 1/(1 + (1/2)/(x² + ...))
-// Evaluates from the inside out (backwards recursion, N levels).
-// CF tail value for level n: (n+0.5) / (x² + cf_tail(n+1))
+// Continued-fraction path, x ≥ 0.5.
 // ---------------------------------------------------------------------------
-template <typename T> constexpr T cf_tail(T x2, std::size_t n, std::size_t N) {
-  return n >= N ? T(1)
-                : T(1) + (static_cast<T>(n) + T(0.5)) /
-                             (x2 * cf_tail(x2, n + 1, N));
+
+// Levels of K(x) for full precision: the truncation error shrinks roughly
+// like exp(-4x·√(levels/2)).
+template <typename T> constexpr std::size_t erfc_cf_levels(T x) {
+  return static_cast<std::size_t>(T(40) + T(700) / (x * x));
+}
+
+// exp(-x²), with x² = hi + lo exactly.
+template <typename T> constexpr T exp_minus_square(T x) {
+  constexpr T splitter =
+      pow2<T>((std::numeric_limits<T>::digits + 1) / 2) + T(1);
+  const T c = splitter * x;
+  const T hi = c - (c - x);
+  const T lo = x - hi;
+  return cx::exp(-(hi * hi)) * cx::exp(-(T(2) * hi * lo + lo * lo));
 }
 
 template <typename T> constexpr T erfc_cf(T x) {
-  constexpr T inv_sqrt_pi = std::numbers::inv_sqrtpi_v<T>;
-  T x2 = x * x;
-  // erfc(x) = exp(-x²) / (x · √π) · 1/cf_tail
-  T cf = cf_tail(x2, 0, kCFTerms);
-  return cx::exp(-x2) * inv_sqrt_pi / (x * cf);
+  T k = T(0); // K's tail, from the inside out
+  for (std::size_t n = erfc_cf_levels(x); n >= 1; --n)
+    k = (static_cast<T>(n) / T(2)) / (x + k);
+  return exp_minus_square(x) * std::numbers::inv_sqrtpi_v<T> / (x + k);
 }
 
-// Core: x is finite.
+// Core: x is finite and non-zero.
 template <typename T> constexpr T erfc_core(T x) {
-  return (x > T(4) || x < T(-4)) ? (x > T(0) ? erfc_cf(x) : T(2) - erfc_cf(-x))
-                                 : erfc_taylor(x);
+  if (x < T(0))
+    return T(2) - erfc_core(-x);
+  if (x > T(30)) // underflows: erfc(27.3) is below the smallest double
+    return T(0);
+  return x < T(0.5) ? erfc_taylor(x) : erfc_cf(x);
 }
 
 } // namespace detail
