@@ -26,12 +26,14 @@
 //      guess. A comparison of values that change only in steps, e.g.
 //      `(s > k ? 1 : 0) > 0.5`, needs no root of its own: it flips only where
 //      a comparison inside it does.
-//   3. At each root, evaluate the whole function with the crossings there
-//      forced to their outcome just above, and just below, the root, and
-//      those rooted a few ulps away held at their side of it. The difference
-//      is the jump. Roots with no jump are dropped, and so are those whose
-//      jump is only rounding: one that vanishes or changes sign a few ulps
-//      away, as at a kink whose root is not a double.
+//   3. Roots a few ulps apart or less are one point: often one crossing
+//      written two ways, whose roots round apart. (So two real jumps that
+//      close are reported as one, their sum.) At each point, evaluate the
+//      whole function with the crossings rooted there forced to their outcome
+//      just above, and just below, it. The difference is the jump. Points
+//      with no jump are dropped, and so are those whose jump is only
+//      rounding: one that vanishes or changes sign a few ulps away, as at a
+//      kink whose root is not a double.
 //   4. Return as a static array (assuming finite discontinuities)
 //
 // Everything is evaluated as Fn evaluates it: branches it does not take are
@@ -606,9 +608,8 @@ constexpr double step_ulps(double x, int k) {
 
 // How far a root is moved to where crossing I's sides are equal (see snap).
 inline constexpr int kSnapUlps = 4;
-// How near another crossing's root must be to a point to be held at its side
-// of it (see analyze).
-inline constexpr int kHoldUlps = 4;
+// How near the next root must be to be part of the same point (see analyze).
+inline constexpr int kClusterUlps = 4;
 // How far either side of a point a jump must keep its sign to be more than
 // rounding (see analyze).
 inline constexpr int kKinkUlps = 4;
@@ -697,16 +698,16 @@ constexpr double value_with(const std::array<double, NumArgs> &in, double x,
 //
 // Each crossing compares g with 0 (g = lhs - rhs, or the condition's value),
 // and g is affine in the target, so its value and slope at 0 place the root
-// exactly and say which outcome holds just above it. At each root of an
-// ordering comparison, the jump is Fn's right limit minus its left limit:
-// Fn evaluated at the root with every crossing rooted there forced to its
-// outcome just above, minus the same with the outcome just below. Whatever
-// sits between the comparison and the output (`!`, `&&`, `||`, nested
-// selects, scaling, other jumps at the same point) is evaluated rather than
-// pattern-matched. `==` / `!=` and conditions rooted there take their outcome
-// off the point on both sides, and crossings rooted a few ulps away the
-// outcome on their side of it. Roots with no jump, or with one that vanishes
-// or changes sign a few ulps away (rounding at a kink), are not reported.
+// exactly and say which outcome holds just above it. Roots of ordering
+// comparisons a few ulps apart or less are one point. At each point, the
+// jump is Fn's right limit minus its left limit: Fn evaluated at the point
+// with every crossing rooted there forced to its outcome just above, minus
+// the same with the outcome just below. Whatever sits between the comparison
+// and the output (`!`, `&&`, `||`, nested selects, scaling, other jumps at
+// the same point) is evaluated rather than pattern-matched. `==` / `!=` and
+// conditions rooted there take their outcome off the point on both sides.
+// Points with no jump, or with one that vanishes or changes sign a few ulps
+// away (rounding at a kink), are not reported.
 //
 // `in` holds the function's arguments; the target's slot is ignored.
 template <info Fn, std::size_t Target, std::size_t MaxPoints,
@@ -787,36 +788,49 @@ analyze(const std::array<double, NumArgs> &in) {
     }
   }
 
-  DiscontinuityCollectorWithAmplitudes<MaxPoints> collector;
-  // Crossings whose root has been measured, so each point is measured once.
-  std::array<bool, N> measured = {};
+  // The crossings that can make a point, in order of their roots.
+  std::array<std::size_t, N> order = {};
+  std::size_t ordered = 0;
   for (std::size_t c = 0; c < N; ++c) {
-    if (!makes_point[c] || measured[c])
+    if (!makes_point[c])
       continue;
-    const double point = root[c];
-    // Crossings rooted at the point take their outcome above it on the
-    // right and below it on the left. Those rooted within kHoldUlps of it
-    // take the outcome on their side of it on both, by where their roots
-    // lie rather than by Fn's arithmetic: that can make a comparison's sides
-    // exactly equal on a run of doubles, so a crossing rooted just below the
-    // point may still read false there. Such crossings are often one
-    // crossing in exact arithmetic (`s * 1.1 > k && s / 0.9 > k / 0.99`),
-    // whose jump would otherwise be lost at both roots.
-    const double lo = step_ulps(point, -kHoldUlps),
-                 hi = step_ulps(point, kHoldUlps);
+    std::size_t at = ordered++;
+    for (; at > 0 && root[c] < root[order[at - 1]]; --at)
+      order[at] = order[at - 1];
+    order[at] = c;
+  }
+
+  DiscontinuityCollectorWithAmplitudes<MaxPoints> collector;
+  // Roots each within kClusterUlps of the one before are one point, measured
+  // once: they are often one crossing in exact arithmetic (`s * 1.1 > k`
+  // and `s / 0.9 > k / 0.99`), and Fn's own arithmetic can make a
+  // comparison's sides exactly equal on a run of doubles between them, so
+  // measured apart each could lose the other's share of the jump. The point
+  // is the shortest of their roots (as in snap), the lowest on a tie.
+  for (std::size_t first = 0; first < ordered;) {
+    std::size_t last = first;
+    while (last + 1 < ordered &&
+           root[order[last + 1]] <= step_ulps(root[order[last]], kClusterUlps))
+      ++last;
+    const double lowest = root[order[first]], highest = root[order[last]];
+    double point = lowest;
+    for (std::size_t k = first + 1; k <= last; ++k)
+      if (roundness(root[order[k]]) > roundness(point))
+        point = root[order[k]];
+    first = last + 1;
+    // Every crossing rooted in the group's span takes its outcome above it
+    // on the right and below it on the left: `==` / `!=` and conditions,
+    // their outcome off the point on both.
+    const double from = step_ulps(lowest, -kClusterUlps),
+                 to = step_ulps(highest, kClusterUlps);
     std::array<signed char, N> right, left;
     right.fill(-1);
     left.fill(-1);
     for (std::size_t j = 0; j < N; ++j) {
-      if (!rooted[j] || root[j] < lo || hi < root[j])
+      if (!rooted[j] || root[j] < from || to < root[j])
         continue;
-      if (root[j] == point) {
-        right[j] = above[j];
-        left[j] = below[j];
-        measured[j] = true;
-      } else {
-        right[j] = left[j] = root[j] < point ? above[j] : below[j];
-      }
+      right[j] = above[j];
+      left[j] = below[j];
     }
     const double from_right = value_with<Fn, Target>(in, point, right);
     const double from_left = value_with<Fn, Target>(in, point, left);
@@ -828,8 +842,9 @@ analyze(const std::array<double, NumArgs> &in) {
     // A kink -- continuous where its branches meet -- has no jump at its
     // exact root, but that need not be a double, nor the point (snap finds
     // a double where the crossing's sides are equal, not the branches'), so
-    // rounding can leave a tiny one here. Measured kKinkUlps either side,
-    // with the same crossings forced, it then vanishes or changes sign; a
+    // rounding can leave a tiny one here. Measured kKinkUlps beyond either
+    // end of the group, with the same crossings forced, it then vanishes or
+    // changes sign; a
     // jump keeps its sign. A side that is not finite says nothing (`s > k ?
     // sqrt(s - k) + 1 : 0` is NaN just below k with the right side forced),
     // so the difference must not stop constant evaluation either.
@@ -841,12 +856,11 @@ analyze(const std::array<double, NumArgs> &in) {
       return is_finite(other) &&
              (other == 0.0 || (other > 0.0) != (jump > 0.0));
     };
-    if (jump != 0.0 && !disagrees(jump_at(step_ulps(point, -kKinkUlps))) &&
-        !disagrees(jump_at(step_ulps(point, kKinkUlps))))
+    if (jump != 0.0 && !disagrees(jump_at(step_ulps(lowest, -kKinkUlps))) &&
+        !disagrees(jump_at(step_ulps(highest, kKinkUlps))))
       collector.add_point_with_amplitude(point, jump);
   }
 
-  collector.sort_by_points();
   return collector.get_result();
 }
 

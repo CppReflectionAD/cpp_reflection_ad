@@ -285,6 +285,11 @@ double same_crossing_and(double spot, double strike) {
 double same_crossing_or(double spot, double strike) {
   return (spot * 1.1 > strike || spot / 0.9 > strike / 0.99) ? 1.0 : 0.0;
 }
+// ... and summed, it jumps once, by 2
+double same_crossing_sum(double spot, double strike) {
+  return ((spot * 1.1 > strike) ? 1.0 : 0.0) +
+         ((spot / 0.9 > strike / 0.99) ? 1.0 : 0.0);
+}
 
 // Functions go through cx_std in both entry points: sin/cos work at compile
 // time, and both entry points agree to the bit
@@ -847,9 +852,19 @@ int main() {
       not_one_jump +=
           either.size() != 1 || either.amplitude(0) != 1.0 ||
           std::fabs(either.point(0) - strike / 1.1) > 1e-13 * strike;
+      const auto sum =
+          ad::get_discontinuity_points_and_amplitudes_rt<^^same_crossing_sum,
+                                                         0>(strike);
+      not_one_jump += sum.size() != 1 || sum.amplitude(0) != 2.0 ||
+                      std::fabs(sum.point(0) - strike / 1.1) > 1e-13 * strike;
     }
     EXPECT_EQUAL(not_one_jump, 0);
   }
+  constexpr auto disc_same_sum =
+      ad::get_discontinuity_points_and_amplitudes<^^same_crossing_sum, 0>(
+          69.19);
+  EXPECT_EQUAL(disc_same_sum.size(), 1);
+  EXPECT_EQUAL(disc_same_sum.amplitude(0), 2.0);
 
   // Every argument but the target, in order
   constexpr auto disc_kfirst =
