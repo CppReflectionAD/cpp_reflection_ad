@@ -275,10 +275,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--opt-level",
         default="-O3",
+        type=lambda level: level if level.startswith("-") else f"-{level}",
         help=(
             "Optimization flag for every test and benchmark build, matching "
-            "CMake's Release build. A test's TEST-FLAGS and --extra-cxxflag "
-            "come later on the command line, so either can override it. "
+            "CMake's Release build: O0, O2, Os, ... (or -O0 with '=', as in "
+            "--opt-level=-O0). A test's TEST-FLAGS and --extra-cxxflag come "
+            "later on the command line, so either can override it. "
             "Default: -O3."
         ),
     )
