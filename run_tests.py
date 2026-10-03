@@ -80,16 +80,6 @@ else:
     DEFAULT_GCC_PATCHES_DIR = os.environ.get("REFLECT_GCC_PATCHES_DIR", "")
     DEFAULT_GCC_SYNC_FROM = os.environ.get("REFLECT_GCC_SYNC_FROM", "")
 
-# Per-test compile flags are declared inline via a `// TEST-FLAGS: ...` comment
-# at the top of the file, before any code (e.g. benchmarks that need -O2),
-# placed like `// EXPECT-ERROR:`. Flags that only one compiler understands go
-# in a `// TEST-FLAGS-<COMPILER>:` variant (e.g. `// TEST-FLAGS-CLANG:`), which
-# is appended after the shared flags when building with that compiler and
-# ignored by every other one. A long list may be split over several
-# directives. Both are read by test_simple/source_directives.read_test_directives,
-# as CTest reads them, and come after --extra-cxxflag, as CTest puts them after
-# CMAKE_CXX_FLAGS.
-
 
 @dataclass(frozen=True)
 class CommandResult:
@@ -297,8 +287,8 @@ def parse_args() -> argparse.Namespace:
         "--extra-cxxflag",
         action="append",
         default=[],
-        help="Additional compiler flag, before each test's own TEST-FLAGS. "
-        "Repeat to pass multiple flags.",
+        help="Additional compiler flag, after each test's own TEST-FLAGS (so "
+        "it can override them). Repeat to pass multiple flags.",
     )
     parser.add_argument(
         "--verbose",
@@ -1056,9 +1046,10 @@ def compile_and_maybe_run(
         f"-std={args.std}",
         *spec.cxxflags,
         *include_flags,
-        *args.extra_cxxflag,
-        # After the user's, as CTest puts them after CMAKE_CXX_FLAGS.
-        *compile_fail_check.compile_flags(directives, expect_compile_failure),
+        # TEST-FLAGS, then --extra-cxxflag, so the user can override them.
+        *compile_fail_check.compile_flags(
+            directives, expect_compile_failure, args.extra_cxxflag
+        ),
         # A compile-fail test is only compiled, so no linker output reaches
         # the checker.
         *(["-c"] if expect_compile_failure else []),

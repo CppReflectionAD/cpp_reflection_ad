@@ -26,8 +26,9 @@ once a gcc engine exposes the same `ad::` interface its drivers can move up to
 binaries, and reports compile vs runtime failures. A test may add flags via a
 `// TEST-FLAGS: ...` comment at the top of the file, before any code
 (benchmarks use it for `-O2`); a long list may be split over several such
-comments. They come after any `--extra-cxxflag` (and, under CMake, after
-`CMAKE_CXX_FLAGS`).
+comments. Any `--extra-cxxflag` comes after them, so it can override them
+(under CMake they come after `CMAKE_CXX_FLAGS`, so there a test's own flags
+win).
 Tests under `tests/static_fail/` (or `clang_only/static_fail/`,
 `gcc_only/static_fail/`) are expected **not** to compile (e.g. they trip a
 `static_assert`). Each must name the error it expects in a
@@ -46,8 +47,8 @@ goes in a `// EXPECT-ERROR-CLANG:` or `// EXPECT-ERROR-GCC:` comment
 
 A misspelt or misplaced directive fails the test instead of being ignored.
 CMake reads the directives with the same code as `run_tests.py`
-(`test_simple/source_directives.py`), so it builds each test and benchmark
-with its `TEST-FLAGS` and rejects the same mistakes. That code runs when a
+(`test_simple/source_directives.py`), so it compiles and links each test and
+benchmark with its `TEST-FLAGS` and rejects the same mistakes. That code runs when a
 test is built (and again whenever it changes, without re-running CMake), so
 building the tests and benchmarks needs Python 3.7 or newer; configure with
 `-DBUILD_TESTING=OFF` to skip them. A test whose directives are invalid fails

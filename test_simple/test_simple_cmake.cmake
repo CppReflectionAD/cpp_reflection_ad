@@ -9,13 +9,13 @@ set(_test_simple_dir "${CMAKE_CURRENT_LIST_DIR}")
 # Every Python script runs with -B, so that it writes no bytecode into the
 # source tree.
 set(_test_python "${Python3_EXECUTABLE}" -B)
-# The build's compiler, as test directives name it (`// TEST-FLAGS-CLANG:`),
-# which the including file (the top-level CMakeLists.txt) sets as _compiler.
+# _compiler is the build's compiler, as test directives name it
+# (`// TEST-FLAGS-CLANG:`), which the including file (the top-level
+# CMakeLists.txt) sets.
 if(NOT _compiler MATCHES "^(clang|gcc)$")
     message(FATAL_ERROR "Set _compiler to clang or gcc before including "
                         "test_simple_cmake.cmake")
 endif()
-set(_test_directives_compiler ${_compiler})
 
 # test_flags(<target> <source> <must_fail>)
 #
@@ -24,9 +24,11 @@ set(_test_directives_compiler ${_compiler})
 # compile_fail_check.py parses. test_directives_cmake.py writes them to a
 # response file, which the compiler reads after CMAKE_CXX_FLAGS and the
 # target's own options, before <source> is compiled and again whenever it
-# changes; so editing a test doesn't re-run CMake. The script rewrites the
-# response file only when the flags change (Ninja then restats it), so a
-# change that leaves them alone recompiles nothing else. If the directives of
+# changes; so editing a test doesn't re-run CMake. An executable <target> is
+# linked with them too, as run_tests.py compiles and links in one command.
+# The script rewrites the response file only when the flags change (Ninja
+# then restats it), so a change that leaves them alone recompiles nothing
+# else. If the directives of
 # <source> are invalid, building <target> fails with the reason.
 function(test_flags target source must_fail)
     set(_rsp "${CMAKE_CURRENT_BINARY_DIR}/test_flags/${target}.rsp")
@@ -35,7 +37,7 @@ function(test_flags target source must_fail)
     endif()
     add_custom_command(OUTPUT "${_rsp}"
         COMMAND ${_test_python} "${_test_simple_dir}/test_directives_cmake.py"
-            --compiler ${_test_directives_compiler} --source "${source}"
+            --compiler ${_compiler} --source "${source}"
             --output "${_rsp}" ${_must_fail}
         DEPENDS "${source}"
             "${_test_simple_dir}/test_directives_cmake.py"
@@ -49,6 +51,11 @@ function(test_flags target source must_fail)
     target_sources(${target} PRIVATE "${_rsp}")
     set_property(SOURCE "${source}" APPEND PROPERTY OBJECT_DEPENDS "${_rsp}")
     set_property(SOURCE "${source}" APPEND PROPERTY COMPILE_OPTIONS "@${_rsp}")
+    get_target_property(_type ${target} TYPE)
+    if(_type STREQUAL "EXECUTABLE")
+        target_link_options(${target} PRIVATE "@${_rsp}")
+        set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS "${_rsp}")
+    endif()
 endfunction()
 
 function(compile_check group filelist fail)
@@ -81,7 +88,7 @@ function(compile_check group filelist fail)
             # Must fail with the error(s) its `// EXPECT-ERROR:` comments name.
             add_test(NAME ${test_name} COMMAND ${_test_python}
                 "${_test_simple_dir}/compile_fail_check.py"
-                --source "${_source}" --compiler ${_test_directives_compiler}
+                --source "${_source}" --compiler ${_compiler}
                 -- ${CMAKE_COMMAND} --build "${CMAKE_BINARY_DIR}" --target ${target_name})
         else()
             add_test(NAME ${test_name} COMMAND ${CMAKE_COMMAND} --build "${CMAKE_BINARY_DIR}" --target ${target_name})

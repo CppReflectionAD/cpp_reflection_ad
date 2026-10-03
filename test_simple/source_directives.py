@@ -57,10 +57,11 @@ class DirectiveFamily:
     the name in group "name"; `near_miss` matches the start of a `//` comment
     at the top of the file that reads like one (it should also match every
     well-formed one). `misplaced` matches the directive's own name, in upper
-    case and with `-` or `_`, then any `-<SUFFIX>` and a colon: a `//`
-    comment after code, or a line of a `/* */` comment, that starts with it
-    is a directive in the wrong place. (Prose such as `// expected error:
-    none` or `// EXPECT-ERROR handling below` after code is left alone.)
+    case and with `-` or `_`, then any suffix (`S`, `-GCC`, `_CLNAG`) and a
+    colon: a `//` comment after code, or a line of a `/* */` comment, that
+    starts with it is a directive in the wrong place. (Prose such as
+    `// expected error: none` or `// EXPECT-ERROR handling below` after code
+    is left alone.)
     `usage` is how a well-formed directive is written, for error messages.
     """
 
@@ -81,7 +82,7 @@ class DirectiveFamily:
         return cls(
             pattern=re.compile(rf"// (?P<name>{re.escape(name)}(?:-(?:{variants}))?):"),
             near_miss=near_miss,
-            misplaced=re.compile(rf"{spelled}(?:[-_]\w+)?\s*:"),
+            misplaced=re.compile(rf"{spelled}[-\w]*\s*:"),
             usage=f"`// {name}: <{argument}>`, or `// {name}-<{variants}>: "
             f"<{argument}>` for one compiler",
         )
@@ -326,28 +327,31 @@ def read_directives(
     return directives
 
 
+def _near_miss(first: str, second: str) -> re.Pattern[str]:
+    """A `//` comment (including `///` and `//!`) that reads like a directive
+    named by the words `first` and `second` (upper-case regexes): the two
+    joined by `-` or `_`, in any case, with any suffix (`S`, `_GCC`,
+    `-CLNAG`), then a colon; that in upper case without the colon; or the
+    two spaced apart, in upper case, then a colon. So prose that only uses
+    the words (`// test_flags.cpp: ...`, `// Expected error: none`,
+    `// expect_error() ...`) is left alone."""
+    joined = rf"{first}[-_]{second}"
+    return re.compile(
+        rf"//[/!]*\s*(?:(?i:{joined})[-\w]*\s*:|{joined}[-\w]*(?:\s|$)"
+        rf"|{first}\s+{second}\s*:)"
+    )
+
+
 # `// EXPECT-ERROR: <text>`: an error a compile-fail test must fail with
 # (see compile_fail_check).
 EXPECT_ERROR = DirectiveFamily.with_compiler_variants(
-    "EXPECT-ERROR",
-    "text",
-    # A `//` comment (including `///` and `//!`) that reads like an
-    # EXPECT-ERROR directive: the hyphen or underscore spelling, whatever
-    # follows it (a colon or not, any suffix: `_GCC`, `-CLNAG`, `S`), or the
-    # spaced spelling with a colon (so prose like "expected errors are listed
-    # below" is left alone).
-    near_miss=re.compile(
-        r"//[/!]*\s*expect(?:ed)?(?:[-_]error|\s+errors?\s*:)", re.IGNORECASE
-    ),
+    "EXPECT-ERROR", "text", near_miss=_near_miss("EXPECT(?:ED)?", "ERRORS?")
 )
 # `// TEST-FLAGS: <flags>`: extra flags to compile the test with (e.g. -O2
-# for a benchmark).
+# for a benchmark). A misspelt one is an error rather than flags silently
+# dropped.
 TEST_FLAGS = DirectiveFamily.with_compiler_variants(
-    "TEST-FLAGS",
-    "flags",
-    # Likewise for TEST-FLAGS, so a misspelt directive is an error rather
-    # than flags silently dropped.
-    near_miss=re.compile(r"//[/!]*\s*test(?:[-_]flag|\s+flags\s*:)", re.IGNORECASE),
+    "TEST-FLAGS", "flags", near_miss=_near_miss("TEST", "FLAGS?")
 )
 
 

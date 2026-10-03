@@ -3,14 +3,15 @@
 
 The build runs this for each test (test_flags in test_simple_cmake.cmake),
 before compiling it and again whenever the test changes, so that CTest builds
-a test with the same flags as run_tests.py, and rejects the same invalid
+a test with the same TEST-FLAGS as run_tests.py, and rejects the same invalid
 directives, from the same reader (source_directives.read_test_directives):
 
     test_directives_cmake.py --compiler <clang|gcc> --source <file.cpp>
         --output <file.rsp> [--must-fail]
 
 The response file, which the compiler reads as `@<file.rsp>` after
-CMAKE_CXX_FLAGS and the target's own options, holds
+CMAKE_CXX_FLAGS and the target's own options (when compiling the test, and
+when linking it if it is an executable), holds
 compile_fail_check.compile_flags: the test's TEST-FLAGS for the compiler,
 then, for a test that must fail to compile, the diagnostic flags. It is
 rewritten only when they change, so that a change to the test that leaves

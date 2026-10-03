@@ -4,3 +4,5 @@
 build/
 **/.DS_Store
 __pycache__/
+# Output of benchmarks run from the repository root (run_tests.py --run-executables)
+/*.csv

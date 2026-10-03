@@ -119,14 +119,16 @@ _CONTEXT_RE = re.compile(
 # any function or type on the way (`ad::inverse<double>`), so it is not
 # searched: clang's template instantiation and constexpr call stacks and
 # macro expansions, and gcc's `required from` / `In substitution of`
-# context, which its nested diagnostics print as bullets. Other notes (the
-# reason a constant expression or a constraint failed, a candidate) are.
+# context, which its nested diagnostics print as bullets, with or without a
+# `<file>:<line>[:<col>]:` location. Other notes (the reason a constant
+# expression or a constraint failed, a candidate) are.
 _BACKTRACE_NOTE_RE = re.compile(
-    r"^(?:in instantiation of |in call to |in evaluation of |in implicit "
+    r"^(?:\S.*?:\d+(?::\d+)?:\s+)?"
+    r"(?:in instantiation of |in call to |in evaluation of |in implicit "
     r"|in expansion of |in definition of |in 'constexpr' expansion of "
     r"|while |during |required (?:from|by|for) |expanded from |\(skipping "
-    r"|(?:\S.*?: )?In (?:instantiation|substitution) of )"
-    r"|(?:requested|required|needed) here$"
+    r"|(?:\S.*?: )?In (?:instantiation|substitution) of "
+    r"|.*(?:requested|required|needed) here$)"
 )
 # What a compiler prints when it crashes, which no test may pass by: an ICE
 # (gcc), the driver's report that cc1/cc1plus died, a crash in clang's
@@ -138,16 +140,23 @@ _CRASH_RE = re.compile(
 
 
 def compile_flags(
-    directives: source_directives.TestDirectives, must_fail: bool
+    directives: source_directives.TestDirectives,
+    must_fail: bool,
+    extra: Sequence[str] = (),
 ) -> tuple[str, ...]:
-    """The flags a test is compiled with, after the build's and the user's
-    own: its TEST-FLAGS, then, if it must fail to compile, DIAGNOSTIC_FLAGS,
-    last so that they win.
+    """The flags a test is compiled with, after the build's own: its
+    TEST-FLAGS, then `extra` (the user's), so that the user can override
+    them, then, if it must fail to compile, DIAGNOSTIC_FLAGS, last so that
+    they win.
 
     Both runners build a test with these: run_tests.py on its command line,
-    CTest through the response file test_directives_cmake.py writes.
+    with --extra-cxxflag as `extra`; CTest through the response file
+    test_directives_cmake.py writes, with no `extra` (CMake puts the user's
+    CMAKE_CXX_FLAGS first, so a test's flags win over them there).
     """
-    return directives.flags + (DIAGNOSTIC_FLAGS if must_fail else ())
+    return (
+        directives.flags + tuple(extra) + (DIAGNOSTIC_FLAGS if must_fail else ())
+    )
 
 
 def _crash(returncode: int, lines: list[str]) -> str | None:

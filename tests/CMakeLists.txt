@@ -1,34 +1,5 @@
-# _is_clang / _is_gcc and test_flags() come from the top-level CMakeLists.txt.
-
-# ---------------------------------------------------------------------------
-# Reflection compile flags
-# ---------------------------------------------------------------------------
-if(_is_clang)
-    # Derive the compiler root from the executable path (bin/../)
-    get_filename_component(_clang_bin "${CMAKE_CXX_COMPILER}" DIRECTORY)
-    get_filename_component(_clang_root "${_clang_bin}" DIRECTORY)
-
-    set(_reflect_flags
-        -freflection
-        -fparameter-reflection
-        -fexpansion-statements
-        -stdlib=libc++
-        -isystem "${_clang_root}/include/c++/v1"
-    )
-
-    if(APPLE)
-        execute_process(COMMAND xcrun --show-sdk-path
-            OUTPUT_VARIABLE _sdk OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
-        if(_sdk)
-            list(APPEND _reflect_flags -isysroot "${_sdk}")
-        endif()
-    endif()
-
-else() # GCC
-    set(_reflect_flags
-        -freflection
-    )
-endif()
+# _is_clang / _is_gcc, _reflect_flags and test_flags() come from the
+# top-level CMakeLists.txt.
 
 # ---------------------------------------------------------------------------
 # Helper: register one test executable
