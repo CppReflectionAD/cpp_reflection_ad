@@ -1,4 +1,3 @@
-// TEST-FLAGS: -O2
 // TEST-FLAGS-CLANG: -fconstexpr-steps=16000000
 // TEST-FLAGS-GCC: -fconstexpr-ops-limit=96000000
 

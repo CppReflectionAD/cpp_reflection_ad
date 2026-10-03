@@ -45,8 +45,9 @@
 // extension slots in as a richer element, not as a rewrite.
 //
 // Known holes:
-//   * sin/cos have no constexpr kernel (see cx_std), so a finite limit point
-//     is None rather than sin(a); at ±inf they are None for the right reason.
+//   * sin/cos whose value rounds to ±1 (within rounding of an extremum) have
+//     an Unknown side, so an op that needs it (log(1 - sin x) at π/2) is
+//     None. At ±inf they are None for the right reason.
 //   * Values are computed in double, so a finite limit is exact only to the
 //     rounding of the ops on the path.
 //   * Overflow (exp(1000)) reports PlusInf rather than a finite value double
@@ -57,6 +58,7 @@
 #include "../cx_std/cx_exp.hpp"
 #include "../cx_std/cx_log.hpp"
 #include "../cx_std/cx_sqrt.hpp"
+#include "../cx_std/cx_trig.hpp"
 
 #include <array>
 #include <cstddef>
@@ -379,6 +381,32 @@ constexpr Value erfc_of(const Value &u) {
   return finite(w, sign_neg(sign_of(u.side)));
 }
 
+// sin and cos are not monotone, so the side of a finite limit w is the
+// argument's times the sign of the derivative there -- except where w rounds
+// to ±1 or the derivative to 0: within rounding of an extremum, f - w need
+// not have the derivative's sign (log(1 - sin x) at x = π/2 rounded is
+// about -75, not -inf), so the side is Unknown. At ±inf they oscillate, and
+// have no limit.
+constexpr Value trig_at(const Value &u, double w, double slope) {
+  if (u.side == Side::Exactly)
+    return finite(w, Side::Exactly);
+  if (w == 1.0 || w == -1.0 || slope == 0.0)
+    return finite(w, Side::Unknown);
+  return finite(w, sign_mul(sign_num(slope), sign_of(u.side)));
+}
+
+constexpr Value sin_of(const Value &u) {
+  if (!u.finite())
+    return NaN();
+  return trig_at(u, cx::sin(u.value), cx::cos(u.value));
+}
+
+constexpr Value cos_of(const Value &u) {
+  if (!u.finite())
+    return NaN();
+  return trig_at(u, cx::cos(u.value), -cx::sin(u.value));
+}
+
 // --- the kinks -------------------------------------------------------------
 
 constexpr Value abs_of(const Value &u) {
@@ -610,10 +638,10 @@ consteval Walk walk(const std::array<Value, P> &inputs) {
     } else if constexpr (n.op == OpKind::Erfc) {
       vals[n.self] = erfc_of(vals[n.a]);
 
-    } else if constexpr (n.op == OpKind::Sin || n.op == OpKind::Cos) {
-      // No constexpr kernel, so a finite point cannot be evaluated; at ±inf
-      // there is genuinely no limit. Both come out None.
-      vals[n.self] = NaN();
+    } else if constexpr (n.op == OpKind::Sin) {
+      vals[n.self] = sin_of(vals[n.a]);
+    } else if constexpr (n.op == OpKind::Cos) {
+      vals[n.self] = cos_of(vals[n.a]);
 
     } else if constexpr (n.op == OpKind::Abs) {
       vals[n.self] = abs_of(vals[n.a]);

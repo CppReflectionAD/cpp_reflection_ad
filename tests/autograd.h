@@ -175,6 +175,113 @@ consteval bool op_is_boolean(OpKind op) {
          op == OpKind::And || op == OpKind::Or || op == OpKind::Not;
 }
 
+// The arithmetic and functions primal() evaluates with: the built-in operators
+// and <cmath>. A sweep with other needs (e.g. staying inside constant
+// evaluation) passes its own type with the same members.
+//
+// primal() and these members are always inlined, so even an unoptimized
+// build makes no call per node. (Unoptimized, the shared rules still cost
+// forward_derivative ~10% over hand-written per-sweep tables, from parameter
+// copies only optimization removes; at -O2 and up the cost is nil.)
+struct BuiltinMath {
+  template <typename T>
+  [[gnu::always_inline]] static constexpr T add(T a, T b) {
+    return a + b;
+  }
+  template <typename T>
+  [[gnu::always_inline]] static constexpr T sub(T a, T b) {
+    return a - b;
+  }
+  template <typename T>
+  [[gnu::always_inline]] static constexpr T mul(T a, T b) {
+    return a * b;
+  }
+  template <typename T>
+  [[gnu::always_inline]] static constexpr T div(T a, T b) {
+    return a / b;
+  }
+  template <typename T> [[gnu::always_inline]] static constexpr T neg(T a) {
+    return -a;
+  }
+  template <OpKind Op, typename T>
+  [[gnu::always_inline]] static constexpr T unary(T x) {
+    if constexpr (Op == OpKind::Sin)
+      return std::sin(x);
+    else if constexpr (Op == OpKind::Cos)
+      return std::cos(x);
+    else if constexpr (Op == OpKind::Exp)
+      return std::exp(x);
+    else if constexpr (Op == OpKind::Log)
+      return std::log(x);
+    else if constexpr (Op == OpKind::Sqrt)
+      return std::sqrt(x);
+    else
+      return std::erfc(x);
+  }
+};
+
+// The ops primal() evaluates: every scalar op but the leaves, which each sweep
+// reads from its own arguments (Input) or splices (Const).
+consteval bool op_has_primal(OpKind op) {
+  return op != OpKind::Input && op != OpKind::Const && op != OpKind::Matmul &&
+         op != OpKind::Transpose && op != OpKind::Sum && op != OpKind::Relu;
+}
+
+// A node's value from the values of its operands a, b and (Select only) its
+// condition c: the primal rule every sweep shares. The operands are passed by
+// value, so all three slots are read, including a Select's untaken branch and
+// an And / Or's b when a decides it, which may be behind a false guard and
+// never written: a sweep must initialise every slot (each zero-fills `val`).
+// Only the result ignores them -- Select's depends on the branch it takes, and
+// And / Or's on b only when a leaves them undecided.
+template <OpKind Op, typename Math = BuiltinMath, typename T>
+[[gnu::always_inline]] constexpr T primal(T a, T b, T c) {
+  if constexpr (Op == OpKind::Output)
+    return a;
+  else if constexpr (Op == OpKind::Add)
+    return Math::add(a, b);
+  else if constexpr (Op == OpKind::Sub)
+    return Math::sub(a, b);
+  else if constexpr (Op == OpKind::Mul)
+    return Math::mul(a, b);
+  else if constexpr (Op == OpKind::Div)
+    return Math::div(a, b);
+  else if constexpr (Op == OpKind::Neg)
+    return Math::neg(a);
+  else if constexpr (Op == OpKind::Sin || Op == OpKind::Cos ||
+                     Op == OpKind::Exp || Op == OpKind::Log ||
+                     Op == OpKind::Sqrt || Op == OpKind::Erfc)
+    return Math::template unary<Op>(a);
+  else if constexpr (Op == OpKind::Lt)
+    return (a < b) ? T{1} : T{0};
+  else if constexpr (Op == OpKind::Le)
+    return (a <= b) ? T{1} : T{0};
+  else if constexpr (Op == OpKind::Gt)
+    return (a > b) ? T{1} : T{0};
+  else if constexpr (Op == OpKind::Ge)
+    return (a >= b) ? T{1} : T{0};
+  else if constexpr (Op == OpKind::Eq)
+    return (a == b) ? T{1} : T{0};
+  else if constexpr (Op == OpKind::Ne)
+    return (a != b) ? T{1} : T{0};
+  else if constexpr (Op == OpKind::Not)
+    return (a != T{0}) ? T{0} : T{1};
+  else if constexpr (Op == OpKind::And)
+    return (a != T{0} && b != T{0}) ? T{1} : T{0};
+  else if constexpr (Op == OpKind::Or)
+    return (a != T{0} || b != T{0}) ? T{1} : T{0};
+  else if constexpr (Op == OpKind::Select)
+    return (c != T{0}) ? a : b;
+  else if constexpr (Op == OpKind::Abs)
+    return (a < T{0}) ? Math::neg(a) : a;
+  else if constexpr (Op == OpKind::Max)
+    return (a < b) ? b : a;
+  else if constexpr (Op == OpKind::Min)
+    return (b < a) ? b : a;
+  else
+    static_assert(false, "primal: not a scalar op (see op_has_primal)");
+}
+
 namespace detail {
 
 struct Ctx {
@@ -643,6 +750,78 @@ consteval std::vector<Node> build_marked_nodes_reversed() {
     rev.push_back(fwd[i]);
   return rev;
 }
+
+// ---------------------------------------------------------------------------
+// How each node depends on one input, the target: shared by the analyses that
+// solve for it (discontinuity_analysis, is_invertible).
+// ---------------------------------------------------------------------------
+
+// The reflected DAG of Fn, built once and shared by every analysis of Fn.
+template <info Fn>
+inline constexpr auto nodes_of = std::define_static_array(build_nodes<Fn>());
+
+// Fn's number of arguments.
+template <info Fn> consteval std::size_t input_count_of() {
+  std::size_t count = 0;
+  for (const Node &n : nodes_of<Fn>)
+    count += n.op == OpKind::Input;
+  return count;
+}
+
+struct Dependence {
+  bool varies = false;  // it changes with the target
+  bool affine = true;   // ... and only as c0 + c1 * target
+  bool stepwise = true; // ... and only in steps, where a comparison flips
+};
+
+// A value that changes with the target other than in steps.
+constexpr bool varies_continuously(Dependence d) {
+  return d.varies && !d.stepwise;
+}
+
+// Per node, built in one forward pass (operands precede their users). Affine
+// means built from the target with + -, unary - and * / by target-free
+// values, and `?:` on a target-free condition. Stepwise means piecewise
+// constant: every comparison or logical op is, and so is anything built only
+// from stepwise and target-free values.
+template <info Fn, std::size_t Target>
+consteval std::vector<Dependence> target_dependence() {
+  const auto nodes = nodes_of<Fn>;
+  std::vector<Dependence> dep(nodes.size());
+  for (const Node &n : nodes) {
+    Dependence &d = dep[n.self];
+    if (n.op == OpKind::Input) {
+      d.varies = n.self == Target;
+      d.stepwise = !d.varies;
+      continue;
+    }
+    const Dependence a = op_has_a(n.op) ? dep[n.a] : Dependence{};
+    const Dependence b = op_has_b(n.op) ? dep[n.b] : Dependence{};
+    d.varies =
+        a.varies || b.varies || (op_has_cond(n.op) && dep[n.cond].varies);
+    if (n.op == OpKind::Add || n.op == OpKind::Sub)
+      d.affine = a.affine && b.affine;
+    else if (n.op == OpKind::Neg || n.op == OpKind::Output)
+      d.affine = a.affine;
+    else if (n.op == OpKind::Mul)
+      d.affine = a.affine && b.affine && !(a.varies && b.varies);
+    else if (n.op == OpKind::Div)
+      d.affine = a.affine && !b.varies;
+    else if (n.op == OpKind::Select && !dep[n.cond].varies)
+      d.affine = a.affine && b.affine; // one branch, whatever the target
+    else
+      d.affine = !d.varies;
+    // A Select's condition only picks a branch: if both branches are
+    // stepwise, so is the Select.
+    d.stepwise = op_is_boolean(n.op) ||
+                 (!varies_continuously(a) && !varies_continuously(b));
+  }
+  return dep;
+}
+
+template <info Fn, std::size_t Target>
+inline constexpr auto target_dependence_of =
+    std::define_static_array(target_dependence<Fn, Target>());
 
 } // namespace ad
 

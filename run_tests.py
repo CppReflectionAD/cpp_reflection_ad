@@ -10,7 +10,7 @@ import shlex
 import shutil
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 
@@ -71,7 +71,7 @@ else:
     DEFAULT_GCC_SYNC_FROM = os.environ.get("REFLECT_GCC_SYNC_FROM", "")
 
 # Per-test compile flags are declared inline via a `// TEST-FLAGS: ...` comment
-# in the first few lines of a test (e.g. benchmarks that need -O2). Flags that
+# in the first few lines of a test (e.g. a raised constexpr limit). Flags that
 # only one compiler understands go in a `// TEST-FLAGS-<COMPILER>: ...` variant
 # (e.g. `// TEST-FLAGS-CLANG:`), which is appended after the shared flags when
 # building with that compiler and ignored by every other one.
@@ -273,6 +273,18 @@ def parse_args() -> argparse.Namespace:
         help="Path to an existing g++ executable to use instead of the default build output.",
     )
     parser.add_argument(
+        "--opt-level",
+        default="-O3",
+        type=lambda level: level if level.startswith("-") else f"-{level}",
+        help=(
+            "Optimization flag for every test and benchmark build, matching "
+            "CMake's Release build: O0, O2, Os, ... (or -O0 with '=', as in "
+            "--opt-level=-O0). A test's TEST-FLAGS and --extra-cxxflag come "
+            "later on the command line, so either can override it. "
+            "Default: -O3."
+        ),
+    )
+    parser.add_argument(
         "--extra-cxxflag",
         action="append",
         default=[],
@@ -419,12 +431,39 @@ def clang_cxxflags(
     return tuple(flags)
 
 
+def gcc_cxxflags() -> tuple[str, ...]:
+    return ("-std=c++26", "-freflection")
+
+
+def gcc_runtime_cxxflags(executable: Path) -> tuple[str, ...]:
+    # The fork's libstdc++ is newer than the system one, and optimized builds
+    # reference symbols only it exports (GLIBCXX_3.4.35), so the test binaries
+    # must load it rather than the system copy -- as clang_cxxflags does for
+    # libc++. The compiler says where its own copy is, which holds however it
+    # was invoked (a symlink, a ccache wrapper); this needs the compiler built.
+    result = subprocess.run(
+        [str(executable), "-print-file-name=libstdc++.so"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    library = Path(result.stdout.strip())
+    if result.returncode != 0 or not library.is_absolute():
+        return ()  # not found: the system's copy is all there is
+    return (f"-Wl,-rpath,{library.resolve().parent}",)
+
+
 def build_specs(args: argparse.Namespace) -> dict[str, CompilerSpec]:
     clang_root = Path(args.clang_root).resolve()
     clang_source_dir = Path(args.clang_source_dir).resolve()
     gcc_source_dir = Path(args.gcc_source_dir).resolve()
     gcc_build_dir = Path(args.gcc_build_dir).resolve()
     gcc_binary_dir = gcc_build_dir / "artifacts"
+    gcc_executable = (
+        Path(args.gcc_executable).absolute()
+        if args.gcc_executable
+        else gcc_binary_dir / "bin" / "g++"
+    )
     return {
         "clang": CompilerSpec(
             name="clang",
@@ -444,12 +483,8 @@ def build_specs(args: argparse.Namespace) -> dict[str, CompilerSpec]:
             source_dir=gcc_source_dir,
             build_dir=gcc_build_dir,
             binary_dir=gcc_binary_dir,
-            executable=(
-                Path(args.gcc_executable).resolve()
-                if args.gcc_executable
-                else gcc_binary_dir / "bin" / "g++"
-            ),
-            cxxflags=("-std=c++26", "-freflection"),
+            executable=gcc_executable,
+            cxxflags=gcc_cxxflags(),
         ),
     }
 
@@ -507,8 +542,8 @@ def discover_tests(
 def parse_test_flags(test_file: Path, compiler_name: str) -> list[str]:
     """Read the inline `// TEST-FLAGS: ...` directives from the top of a test.
 
-    Lets a single test declare extra compile flags (e.g. `-O2` for benchmarks)
-    without special-casing it in the harness. Flags from the shared directive
+    Lets a single test declare extra compile flags (e.g. `-O0` to override
+    --opt-level) without special-casing it in the harness. Flags from the shared directive
     come first, followed by those from the `// TEST-FLAGS-<COMPILER>:` variant
     for `compiler_name`, so a test can ask for something only one compiler
     spells (e.g. clang's `-fconstexpr-steps`) without breaking the others.
@@ -1021,6 +1056,7 @@ def compile_and_maybe_run(
     compile_command = [
         str(spec.executable),
         f"-std={args.std}",
+        args.opt_level,
         *spec.cxxflags,
         *include_flags,
         *parse_test_flags(test_file, spec.name),
@@ -1141,6 +1177,10 @@ def main() -> int:
     for compiler_name in selected_compilers(args):
         spec = specs[compiler_name]
         validate_compiler_executable(spec)
+        if compiler_name == "gcc":
+            spec = replace(
+                spec, cxxflags=spec.cxxflags + gcc_runtime_cxxflags(spec.executable)
+            )
         for base_dir, patterns in selected_sources(args):
             tests = discover_tests(patterns, base_dir, compiler_name)
             log(
