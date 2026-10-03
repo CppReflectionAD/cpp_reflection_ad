@@ -49,7 +49,9 @@
 // point -- a pole such as `s > 0 ? k / s : 0` is not a jump -- for a
 // crossing's slope in the target not to be finite at the fixed values (`s / k
 // > 1` at k = 0, which does jump at s = 0, but also `s * (k - k) > 0` at
-// k = inf, which never flips), or to have more points than MaxPoints.
+// k = inf, which never flips), for its sides to overflow with the target at
+// 0 (`(s - k) * 1e10 > 0` at k = 1e300), for a jump's rounding error not to
+// be bounded, or to have more points than MaxPoints.
 
 #include "../autograd.h"
 #include "../cx_std/cx_erfc.hpp"
@@ -734,6 +736,33 @@ consteval std::vector<std::size_t> gap_cone() {
 template <info Fn, std::size_t I>
 inline constexpr auto gap_cone_of = std::define_static_array(gap_cone<Fn, I>());
 
+// Whether crossing I's gap, in a sweep where it is not finite, is so because
+// arithmetic on the target overflowed there: a +, -, * or / that depends on
+// the target, or the comparison's own lhs - rhs, of finite values. Otherwise
+// a target-free value is not finite, and so is the gap for every target.
+template <info Fn, std::size_t Target, std::size_t I, std::size_t N>
+constexpr bool target_overflows(const Sweep<N> &s) {
+  static constexpr auto nodes = nodes_of<Fn>;
+  static constexpr auto dep = target_dependence_of<Fn, Target>;
+  constexpr OpKind crossing_op = nodes[I].op;
+  constexpr std::size_t lhs = nodes[I].a, rhs = nodes[I].b;
+  if constexpr (is_comparison(crossing_op)) {
+    if (is_finite(s.val[lhs]) && is_finite(s.val[rhs]))
+      return true;
+  }
+  bool overflowed = false;
+  template for (constexpr std::size_t j : gap_cone_of<Fn, I>) {
+    constexpr OpKind op = nodes[j].op;
+    constexpr std::size_t a = nodes[j].a, b = nodes[j].b;
+    if constexpr (dep[j].varies && (op == OpKind::Add || op == OpKind::Sub ||
+                                    op == OpKind::Mul || op == OpKind::Div)) {
+      if (!is_finite(s.val[j]) && is_finite(s.val[a]) && is_finite(s.val[b]))
+        overflowed = true;
+    }
+  }
+  return overflowed;
+}
+
 // Crossing I's gap (as gap() reads it from a sweep) with the target at x, a
 // double or a Ball, evaluating only the nodes it reads. A node is skipped, as
 // sweep() skips it, if its guard can never hold; `reach` is any sweep, since
@@ -914,10 +943,19 @@ analyze(const std::array<double, NumArgs> &in) {
         throw "discontinuity_analysis: a crossing's slope in the target is "
               "not finite (as for s / k > 1 at k = 0), so its point cannot "
               "be placed";
+      // A constant that is not finite because Fn's arithmetic on the target
+      // overflowed at 0 (`(s - k) * 1e10 > 0` at k = 1e300, which flips at
+      // s = k) is not the one that places the root, which then cannot be
+      // placed: an error, not a missed jump.
+      if (at_zero.reached(i) && !is_finite(g0) &&
+          target_overflows<Fn, Target, i>(at_zero))
+        throw "discontinuity_analysis: a crossing's sides overflow with the "
+              "target at 0 (as (s - k) * 1e10 > 0 does at k = 1e300), so its "
+              "point cannot be placed";
       // No root if Fn never reaches the crossing, if g is flat (`s * k > 1`
       // at k = 0) or, with every coefficient finite, its constant is not
-      // (`s > 1 / k` at k = 0: -inf for every target, never true), or if the
-      // root is beyond the doubles.
+      // because a target-free value is not (`s > 1 / k` at k = 0: -inf for
+      // every target, never true), or if the root is beyond the doubles.
       const double r =
           at_zero.reached(i) && slope != 0.0 && is_finite(g0)
               ? -(g0 / slope) + 0.0 // `+ 0.0` turns a -0 root into 0
