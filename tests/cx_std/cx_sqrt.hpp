@@ -23,6 +23,8 @@
 #ifndef CX_STD_CX_SQRT_HPP
 #define CX_STD_CX_SQRT_HPP
 
+#include "cx_exp.hpp"
+
 #include <limits>
 #include <type_traits>
 #include <utility>
@@ -61,25 +63,12 @@ template <typename T> constexpr bool exact_le(T m, T a, T b) {
 
 // Core: x is finite and positive.
 template <typename T> constexpr T sqrt_core(T x) {
-  constexpr T two_64 = T(18446744073709551616.0); // 2^64
-  T m = x;
-  T scale = T(1);
-  while (m >= two_64 * two_64) {
-    m /= two_64 * two_64;
-    scale *= two_64;
+  auto [m, e] = binary_exponent(x);
+  if (e % 2 != 0) {
+    m *= T(2);
+    --e;
   }
-  while (m < T(1) / (two_64 * two_64)) {
-    m *= two_64 * two_64;
-    scale /= two_64;
-  }
-  while (m >= T(4)) {
-    m /= T(4);
-    scale *= T(2);
-  }
-  while (m < T(1)) {
-    m *= T(4);
-    scale /= T(2);
-  }
+  const T scale = pow2<T>(e / 2);
   T y = T(0.5) * (m + T(1));
   for (;;) {
     const T next = T(0.5) * (y + m / y);

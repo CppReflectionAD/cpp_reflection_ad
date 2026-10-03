@@ -39,24 +39,10 @@ constexpr T log_horner(T v, std::size_t n, std::size_t N) {
 
 // Core: x is finite, positive and not 1.
 template <typename T> constexpr T log_core(T x) {
-  constexpr T two_64 = T(18446744073709551616.0); // 2^64
-  T m = x;
-  int e = 0;
-  while (m > two_64) {
-    m /= two_64;
-    e += 64;
-  }
-  while (m < T(1) / two_64) {
-    m *= two_64;
-    e -= 64;
-  }
-  while (m >= std::numbers::sqrt2_v<T>) {
+  auto [m, e] = binary_exponent(x);
+  if (m >= std::numbers::sqrt2_v<T>) {
     m /= T(2);
     ++e;
-  }
-  while (m < std::numbers::sqrt2_v<T> / T(2)) {
-    m *= T(2);
-    --e;
   }
   const T u = (m - T(1)) / (m + T(1));
   const T log_m = T(2) * u * log_horner(u * u, 0, kLogTerms);
