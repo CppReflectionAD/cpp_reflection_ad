@@ -31,6 +31,10 @@ inline double fn_step(double x) { return x < 1.0 ? 0.0 : 1.0; }
 inline double fn_cancel(double x) { return x - x; }
 inline double fn_removable(double x) { return x * x / x; }
 inline double fn_ratio(double x) { return x / x; }
+inline double fn_cos(double x) { return std::cos(x); }
+inline double fn_log_one_minus_sin(double x) {
+  return std::log(1.0 - std::sin(x));
+}
 
 consteval bool near(double a, double b, double tol) {
   const double d = a - b;
@@ -159,9 +163,24 @@ static_assert(!ad::limits::is_convergent_at<^^fn_cancel>(At::plus_infinity()));
 static_assert(!ad::limits::is_convergent_at<^^fn_removable>(At{0.0})); // is 0
 static_assert(!ad::limits::is_convergent_at<^^fn_ratio>(At::plus_infinity()));
 static_assert(!ad::limits::is_convergent_at<^^two_arg>(At::minus_infinity()));
-// sin/cos have no constexpr kernel, so a finite point is None -- the same hole
-// the interval engine has, for the same reason.
-static_assert(!ad::limits::is_convergent_at<^^trig>(At{2.0}));
+// sin/cos at a finite point: sin(x²) at 2 is sin(4), as cx_std computes it
+static_assert(ad::limits::limit_of<^^trig>(At{2.0}) == cx::sin(4.0));
+// ... approached from the side the derivative gives: sin(x²) rises through
+// x = 1, cos x falls
+static_assert(ad::limits::limit_result<^^trig>(At::from_right(1.0))
+                  .limit.side == ad::limits::Side::Above);
+static_assert(ad::limits::limit_result<^^fn_cos>(At::from_right(1.0))
+                  .limit.side == ad::limits::Side::Below);
+// ... except at an extremum, or within rounding of one, where the side is
+// Unknown: sin x at π/2 rounded is 1 to the last bit, but 1 - sin x is not 0
+// there, so its log is no limit, not -inf
+static_assert(ad::limits::limit_result<^^fn_cos>(At::from_right(0.0))
+                  .limit.side == ad::limits::Side::Unknown);
+static_assert(ad::limits::limit_result<^^fn_log_one_minus_sin>(
+                  At::from_left(3.141592653589793 / 2.0))
+                  .limit.kind == ad::limits::Value::Kind::None);
+// ... and at ±inf they oscillate
+static_assert(!ad::limits::is_convergent_at<^^fn_cos>(At::plus_infinity()));
 
 int main() {
   // A finite limit point reports no failing node and an exact value.
