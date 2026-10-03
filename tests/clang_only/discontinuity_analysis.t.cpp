@@ -161,8 +161,9 @@ double guarded_reciprocal_digital(double spot, double k) {
 double guarded_log_digital(double spot, double k) {
   return (k > 0.0) ? ((spot > std::log(k)) ? 1.0 : 0.0) : 0.0;
 }
-// A guard that varies with the target may hold somewhere, so its branch is
-// evaluated; 1 / k at k = 0 is inf there, as in Fn, and never crossed
+// A guard that varies with the target is evaluated where it can hold for some
+// target: at k = 0 `spot > 0.0 && k != 0.0` never does, so 1 / k is skipped,
+// while at k = 0.5 it holds above 0 and the inner digital is found
 double target_guarded_reciprocal_digital(double spot, double k) {
   return (spot > 0.0 && k != 0.0) ? ((spot > 1.0 / k) ? 1.0 : 0.0) : 0.0;
 }
@@ -220,6 +221,37 @@ double indicator_compared(double spot, double strike) {
 // A pole is not a jump
 double reciprocal_above_zero(double spot, double k) {
   return (spot > 0.0) ? k / spot : 0.0;
+}
+
+// A crossing behind a guard that cannot hold is never reached, nested or not:
+// at k <= 0 the inner `spot > k` is dead, so it is not rooted at k, where
+// the other branch's 1 / spot is a pole
+double dead_nested_crossing(double spot, double k) {
+  return (spot > 1.0) ? ((k > 0.0) ? ((spot > k) ? 1.0 : 0.0) : 0.0)
+                      : 1.0 / spot;
+}
+
+// A `?:` on a target-free condition (a call / put flag) is affine when its
+// branches are
+double flagged_digital(double spot, double strike, double is_call) {
+  return ((is_call > 0.0) ? spot - strike : strike - spot) > 0.0 ? 1.0 : 0.0;
+}
+
+// Kinks whose root is not a double: the jump measured at the rounded root is
+// rounding, not a discontinuity. In the second, the comparison's sides are
+// exactly equal at the snapped root but the branches still are not.
+double scaled_call(double spot, double strike) {
+  return (spot * 1.1 > strike) ? spot * 1.1 - strike : 0.0;
+}
+double rounded_strike_call(double spot, double strike) {
+  return (spot > strike / 1.1) ? 1.1 * spot - strike : 0.0;
+}
+// ... while a jump of any size is reported, even next to a steep slope
+double tiny_digital(double spot, double strike) {
+  return (spot > strike) ? 1e-12 : 0.0;
+}
+double steep_call_with_rebate(double spot, double strike) {
+  return (spot > strike) ? (spot - strike) * 1e6 + 1e-3 : 0.0;
 }
 
 // Functions go through cx_std in both entry points: sin/cos work at compile
@@ -619,6 +651,78 @@ int main() {
                     ^^target_guarded_reciprocal_digital, 0>(0.0)
                     .size()),
                0);
+  constexpr auto disc_tgrecip = ad::get_discontinuity_points_and_amplitudes<
+      ^^target_guarded_reciprocal_digital, 0>(0.5);
+  EXPECT_EQUAL(disc_tgrecip.size(), 1);
+  EXPECT_EQUAL(disc_tgrecip.point(0), 2.0);
+  EXPECT_EQUAL(disc_tgrecip.amplitude(0), 1.0);
+  // A dead nested crossing is not rooted (its root, 0, is a pole of the live
+  // branch); a live one is
+  constexpr auto disc_dead =
+      ad::get_discontinuity_points_and_amplitudes<^^dead_nested_crossing, 0>(
+          0.0);
+  EXPECT_EQUAL(disc_dead.size(), 1);
+  EXPECT_EQUAL(disc_dead.point(0), 1.0);
+  EXPECT_EQUAL(disc_dead.amplitude(0), -1.0);
+  constexpr auto disc_live =
+      ad::get_discontinuity_points_and_amplitudes<^^dead_nested_crossing, 0>(
+          2.0);
+  EXPECT_EQUAL(disc_live.size(), 2);
+  EXPECT_EQUAL(disc_live.point(0), 1.0);
+  EXPECT_EQUAL(disc_live.amplitude(0), -1.0);
+  EXPECT_EQUAL(disc_live.point(1), 2.0);
+  EXPECT_EQUAL(disc_live.amplitude(1), 1.0);
+  EXPECT_EQUAL(
+      (ad::get_discontinuity_points_and_amplitudes_rt<^^dead_nested_crossing,
+                                                      0>(0.0)
+           .size()),
+      1);
+
+  // A target-free flag picks the side: a digital call, or a digital put
+  constexpr auto disc_flag_call =
+      ad::get_discontinuity_points_and_amplitudes<^^flagged_digital, 0>(100.0,
+                                                                        1.0);
+  EXPECT_EQUAL(disc_flag_call.size(), 1);
+  EXPECT_EQUAL(disc_flag_call.point(0), 100.0);
+  EXPECT_EQUAL(disc_flag_call.amplitude(0), 1.0);
+  constexpr auto disc_flag_put =
+      ad::get_discontinuity_points_and_amplitudes<^^flagged_digital, 0>(100.0,
+                                                                        0.0);
+  EXPECT_EQUAL(disc_flag_put.size(), 1);
+  EXPECT_EQUAL(disc_flag_put.point(0), 100.0);
+  EXPECT_EQUAL(disc_flag_put.amplitude(0), -1.0);
+  EXPECT_EQUAL(
+      (ad::get_discontinuity_points_and_amplitudes_rt<^^flagged_digital, 0>(
+           100.0, 0.0)
+           .amplitude(0)),
+      -1.0);
+
+  // Kinks whose root is not a double are not discontinuities
+  EXPECT_EQUAL(
+      (ad::get_discontinuity_points_and_amplitudes<^^scaled_call, 0>(99.0)
+           .size()),
+      0);
+  EXPECT_EQUAL(
+      (ad::get_discontinuity_points_and_amplitudes<^^rounded_strike_call, 0>(
+           99.0)
+           .size()),
+      0);
+  EXPECT_EQUAL(
+      (ad::get_discontinuity_points_and_amplitudes_rt<^^scaled_call, 0>(99.0)
+           .size()),
+      0);
+  // ... but a jump is, however small
+  constexpr auto disc_tiny =
+      ad::get_discontinuity_points_and_amplitudes<^^tiny_digital, 0>(1e6);
+  EXPECT_EQUAL(disc_tiny.size(), 1);
+  EXPECT_EQUAL(disc_tiny.point(0), 1e6);
+  EXPECT_EQUAL(disc_tiny.amplitude(0), 1e-12);
+  constexpr auto disc_steep =
+      ad::get_discontinuity_points_and_amplitudes<^^steep_call_with_rebate, 0>(
+          100.0);
+  EXPECT_EQUAL(disc_steep.size(), 1);
+  EXPECT_EQUAL(disc_steep.point(0), 100.0);
+  EXPECT_EQUAL(disc_steep.amplitude(0), 1e-3);
   EXPECT_EQUAL(
       (ad::get_discontinuity_points_and_amplitudes<^^nan_strike_digital, 0>(
            -1.0)

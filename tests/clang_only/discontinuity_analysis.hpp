@@ -21,13 +21,16 @@
 //      with the target, or such a value used directly as a condition
 //      (`s ? a : b`, `!(s - k)`, which test v != 0). Solve lhs - rhs = 0 (or
 //      v = 0) for the target. Both sides must be affine in it (built with
-//      + -, unary - and * / by target-free values); anything else is a
-//      compile-time error rather than a guess. A comparison of values that
-//      change only in steps, e.g. `(s > k ? 1 : 0) > 0.5`, needs no root of
-//      its own: it flips only where a comparison inside it does.
+//      + -, unary - and * / by target-free values, and `?:` on target-free
+//      conditions); anything else is a compile-time error rather than a
+//      guess. A comparison of values that change only in steps, e.g.
+//      `(s > k ? 1 : 0) > 0.5`, needs no root of its own: it flips only where
+//      a comparison inside it does.
 //   3. At each root, evaluate the whole function with the crossings there
 //      forced to their outcome just above, and just below, the root. The
-//      difference is the jump; roots with no jump are dropped.
+//      difference is the jump. Roots with no jump are dropped, and so are
+//      those whose jump is only rounding: one that vanishes or changes sign
+//      a few ulps away, as at a kink whose root is not a double.
 //   4. Return as a static array (assuming finite discontinuities)
 //
 // Everything is evaluated as Fn evaluates it: branches it does not take are
@@ -219,7 +222,8 @@ constexpr bool varies_continuously(Dependence d) {
 
 // Per node, built in one forward pass (operands precede their users). Affine
 // means built from the target with + -, unary - and * / by target-free
-// values: what a crossing's sides must be for its point to be solved exactly.
+// values, and `?:` on a target-free condition: what a crossing's sides must be
+// for its point to be solved exactly.
 // Stepwise means piecewise constant: every comparison or logical op is, and
 // so is anything built only from stepwise and target-free values.
 template <info Fn, std::size_t Target>
@@ -245,6 +249,8 @@ consteval std::vector<Dependence> dependence() {
       d.affine = a.affine && b.affine && !(a.varies && b.varies);
     else if (n.op == OpKind::Div)
       d.affine = a.affine && !b.varies;
+    else if (n.op == OpKind::Select && !dep[n.cond].varies)
+      d.affine = a.affine && b.affine; // one branch, whatever the target
     else
       d.affine = !d.varies;
     // A Select's condition only picks a branch: if both branches are
@@ -304,12 +310,11 @@ inline constexpr auto crossings_of =
     std::define_static_array(crossings<Fn, Target>());
 
 // What has to be evaluated to place every crossing: the crossings, the nodes
-// they read, directly or not, and the target-free guards that say whether
-// those are reached at all.
+// they read, directly or not, and the guards that say whether those are
+// reached at all.
 template <info Fn, std::size_t Target>
 consteval std::vector<char> crossing_cone() {
   const auto nodes = nodes_of<Fn>;
-  const auto dep = dependence_of<Fn, Target>;
   const auto crossing = crossings_of<Fn, Target>;
   std::vector<char> cone(nodes.size(), 0);
   for (std::size_t i = nodes.size(); i-- > 0;) {
@@ -323,7 +328,7 @@ consteval std::vector<char> crossing_cone() {
       cone[n.b] = 1;
     if (op_has_cond(n.op))
       cone[n.cond] = 1;
-    if (n.guard != UNGUARDED && !dep[n.guard].varies)
+    if (n.guard != UNGUARDED)
       cone[n.guard] = 1;
   }
   return cone;
@@ -428,7 +433,7 @@ constexpr double node_tangent(const std::array<double, N> &val,
   using M = IeeeCxMath;
   constexpr Node n = nodes_of<Fn>[I];
   constexpr OpKind op = n.op;
-  constexpr std::size_t a = n.a, b = n.b;
+  constexpr std::size_t a = n.a, b = n.b, c = n.cond;
   constexpr auto dep = dependence_of<Fn, Target>;
   if constexpr (!dep[I].varies)
     return 0.0;
@@ -448,6 +453,8 @@ constexpr double node_tangent(const std::array<double, N> &val,
     return M::mul(val[a], tan[b]);
   else if constexpr (op == OpKind::Div)
     return M::div(tan[a], val[b]);
+  else if constexpr (op == OpKind::Select && !dep[c].varies)
+    return val[c] != 0.0 ? tan[a] : tan[b];
   else
     return 0.0; // not affine: analyze rejects any crossing that reads it
 }
@@ -455,13 +462,16 @@ constexpr double node_tangent(const std::array<double, N> &val,
 template <std::size_t N> struct Sweep {
   std::array<double, N> val = {};
   std::array<double, N> tan = {};   // derivative in the target
-  std::array<bool, N> reached = {}; // evaluated: not behind a false guard
+  std::array<bool, N> reached = {}; // evaluated: Fn reaches it for some target
+  // Reached, and true for some target when read as a condition.
+  std::array<bool, N> may_hold = {};
 };
 
 // Values and target derivatives of every node needed to place the crossings,
-// with the target input at x. A node behind a guard that is false whatever
-// the target is skipped, as Fn skips it; one behind a guard that varies is
-// evaluated, since Fn reaches it for some targets.
+// with the target input at x. A node is evaluated, as Fn evaluates it, only
+// if its guard can hold for some target: a target-free guard by its value,
+// `&&` / `||` by their operands' (so `s > 1 && k > 0` at k = 0 never holds),
+// anything else that varies as possibly true.
 template <info Fn, std::size_t Target, std::size_t NumArgs>
 constexpr auto sweep(const std::array<double, NumArgs> &in, double x) {
   static constexpr auto nodes = nodes_of<Fn>;
@@ -470,14 +480,23 @@ constexpr auto sweep(const std::array<double, NumArgs> &in, double x) {
   Sweep<nodes.size()> s;
   template for (constexpr Node n : nodes) {
     if constexpr (cone[n.self]) {
-      constexpr std::size_t i = n.self, guard = n.guard;
-      if constexpr (guard != UNGUARDED && !dep[guard].varies) {
-        if (!s.reached[guard] || s.val[guard] == 0.0)
+      constexpr std::size_t i = n.self, guard = n.guard, a = n.a, b = n.b;
+      constexpr OpKind op = n.op;
+      if constexpr (guard != UNGUARDED) {
+        if (!s.may_hold[guard])
           continue;
       }
       s.reached[i] = true;
       s.val[i] = node_value<Fn, i, Target>(s.val, in, x);
       s.tan[i] = node_tangent<Fn, i, Target>(s.val, s.tan);
+      if constexpr (!dep[i].varies)
+        s.may_hold[i] = s.val[i] != 0.0;
+      else if constexpr (op == OpKind::And)
+        s.may_hold[i] = s.may_hold[a] && s.may_hold[b];
+      else if constexpr (op == OpKind::Or)
+        s.may_hold[i] = s.may_hold[a] || s.may_hold[b];
+      else
+        s.may_hold[i] = true;
     }
   }
   return s;
@@ -511,7 +530,8 @@ constexpr double step_ulps(double x, int k) {
   return x;
 }
 
-// How far a root is moved to where crossing I's sides are equal.
+// How far a root is moved to where crossing I's sides are equal, and how far
+// either side of it a jump must keep its sign to be more than rounding.
 inline constexpr int kSnapUlps = 4;
 
 // Trailing zero bits in x's significand: more means a shorter number.
@@ -525,27 +545,32 @@ constexpr int roundness(double x) {
 // short run of doubles rather than one: `s / 3 > k / 3` at k = 100 solves to
 // 100.00000000000001, and s / 3 == k / 3 at both that and 100. Of the
 // doubles within kSnapUlps where g is exactly 0, take the shortest (the
-// nearest on a tie): that is the exact root when it is a double, and the
-// same choice for every crossing that has it, so crossings that coincide in
-// exact arithmetic coincide here too and are measured together. With no
-// such double, r stands.
+// nearest on a tie, then the one above): that is the exact root when it is a
+// double, and the same choice for every crossing that has it, so crossings
+// that coincide in exact arithmetic coincide here too and are measured
+// together. With no such double, r stands. The candidates are tried in that
+// order of preference, so the search stops at the first zero.
 template <info Fn, std::size_t Target, std::size_t I, std::size_t NumArgs>
 constexpr double snap(const std::array<double, NumArgs> &in, double r) {
-  double best = r;
-  int best_roundness = -1;
+  std::array<double, 2 * kSnapUlps + 1> candidates = {};
+  std::size_t count = 0;
   for (int k = 0; k <= kSnapUlps; ++k) {
     for (int dir = 1; dir >= -1; dir -= 2) {
       if (k == 0 && dir < 0)
         continue;
+      // Insert after every candidate at least as short: a stable sort,
+      // shortest first, keeping nearest-then-above among equals.
       const double x = step_ulps(r, dir * k);
-      if (is_finite(x) && roundness(x) > best_roundness &&
-          gap<Fn, I>(sweep<Fn, Target>(in, x)).first == 0.0) {
-        best = x;
-        best_roundness = roundness(x);
-      }
+      std::size_t at = count++;
+      for (; at > 0 && roundness(candidates[at - 1]) < roundness(x); --at)
+        candidates[at] = candidates[at - 1];
+      candidates[at] = x;
     }
   }
-  return best;
+  for (const double x : candidates)
+    if (is_finite(x) && gap<Fn, I>(sweep<Fn, Target>(in, x)).first == 0.0)
+      return x;
+  return r;
 }
 
 // Fn's value with the target input at x, taking branches as Fn does (a
@@ -597,7 +622,8 @@ constexpr double value_with(const std::array<double, NumArgs> &in, double x,
 // sits between the comparison and the output (`!`, `&&`, `||`, nested
 // selects, scaling, other jumps at the same point) is evaluated rather than
 // pattern-matched. `==` / `!=` and conditions rooted there take their outcome
-// off the point on both sides. Roots with no jump are not reported.
+// off the point on both sides. Roots with no jump, or with one that vanishes
+// or changes sign a few ulps away (rounding at a kink), are not reported.
 //
 // `in` holds the function's arguments; the target's slot is ignored.
 template <info Fn, std::size_t Target, std::size_t MaxPoints,
@@ -630,13 +656,15 @@ analyze(const std::array<double, NumArgs> &in) {
         static_assert(dep[n.a].affine && dep[n.b].affine,
                       "discontinuity_analysis: both sides of a comparison on "
                       "the target must be affine in it (built from it with + "
-                      "- and * / by values that do not depend on it)");
+                      "- and * / by values that do not depend on it, and ?: "
+                      "on conditions that do not)");
       else
         static_assert(dep[i].affine,
                       "discontinuity_analysis: a value used as a condition "
                       "that varies continuously with the target must be "
                       "affine in it (built from it with + - and * / by "
-                      "values that do not depend on it)");
+                      "values that do not depend on it, and ?: on conditions "
+                      "that do not)");
       const auto [g0, slope] = gap<Fn, i>(at_zero);
       // No root if Fn never reaches the crossing, if g is flat (`s * k > 1`
       // at k = 0) or not finite (`s > 1 / k` at k = 0: never true), or if
@@ -690,7 +718,22 @@ analyze(const std::array<double, NumArgs> &in) {
             "crossing point (a pole or an undefined branch there, not a "
             "jump)";
     const double jump = from_right - from_left;
-    if (jump != 0.0)
+    // A kink -- continuous where its branches meet -- has no jump at its
+    // exact root, but that need not be a double, nor the point (snap finds
+    // a double where the crossing's sides are equal, not the branches'), so
+    // rounding can leave a tiny one here. Measured a few ulps either side,
+    // with the same crossings forced, it then vanishes or changes sign; a
+    // jump keeps its sign. A side that is not finite says nothing.
+    const auto jump_at = [&](double x) {
+      return value_with<Fn, Target>(in, x, right) -
+             value_with<Fn, Target>(in, x, left);
+    };
+    const auto disagrees = [&](double other) {
+      return is_finite(other) &&
+             (other == 0.0 || (other > 0.0) != (jump > 0.0));
+    };
+    if (jump != 0.0 && !disagrees(jump_at(step_ulps(point, -kSnapUlps))) &&
+        !disagrees(jump_at(step_ulps(point, kSnapUlps))))
       collector.add_point_with_amplitude(point, jump);
   }
 
