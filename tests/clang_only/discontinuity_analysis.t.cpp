@@ -1,6 +1,8 @@
 #include "discontinuity_analysis.hpp"
 #include <test_simple_include.hpp>
 
+#include <cmath>
+
 // Test functions with different numbers of discontinuities
 
 // 0 discontinuities: continuous function
@@ -148,6 +150,85 @@ double nested_digital(double spot, double strike) {
 }
 double unreachable_inner_digital(double spot, double strike) {
   return (spot > strike) ? ((spot < strike - 10.0) ? 3.0 : 1.0) : 0.0;
+}
+
+// A comparison in a branch Fn does not take at these arguments is not
+// evaluated, so its target-free side cannot fail the build: 1 / k at k = 0
+// and log(k) at k < 0 are never computed by Fn
+double guarded_reciprocal_digital(double spot, double k) {
+  return (k != 0.0) ? ((spot > 1.0 / k) ? 1.0 : 0.0) : 0.0;
+}
+double guarded_log_digital(double spot, double k) {
+  return (k > 0.0) ? ((spot > std::log(k)) ? 1.0 : 0.0) : 0.0;
+}
+// A guard that varies with the target may hold somewhere, so its branch is
+// evaluated; 1 / k at k = 0 is inf there, as in Fn, and never crossed
+double target_guarded_reciprocal_digital(double spot, double k) {
+  return (spot > 0.0 && k != 0.0) ? ((spot > 1.0 / k) ? 1.0 : 0.0) : 0.0;
+}
+// Unguarded, log(k) at k < 0 is NaN: Fn's comparison is never true
+double nan_strike_digital(double spot, double k) {
+  return (spot > std::log(k)) ? 1.0 : 0.0;
+}
+
+// Roots computed as -g(0)/g' can land an ulp off; each is moved to where Fn's
+// own sides are equal, so roots that coincide exactly coincide here too
+double third_digital(double spot, double strike) {
+  return (spot / 3.0 > strike / 3.0) ? 1.0 : 0.0;
+}
+double step_plus_seventh_step(double spot, double strike) {
+  return ((spot > strike) ? 1.0 : 0.0) +
+         ((spot / 7.0 > strike / 7.0) ? 1.0 : 0.0);
+}
+double step_times_third_eq(double spot, double strike) {
+  return ((spot >= strike) ? 1.0 : 0.0) *
+         ((spot / 3.0 == strike / 3.0) ? 5.0 : 1.0);
+}
+
+// The target need not be the first argument; the other arguments are passed
+// in order
+double strike_first_digital(double strike, double spot) {
+  return (spot > strike) ? 1.0 : 0.0;
+}
+double three_arg_digital(double lo, double spot, double hi) {
+  return (spot > lo && spot < hi) ? 1.0 : 0.0;
+}
+
+// A value used directly as a condition tests v != 0: like `!=`, a single
+// point, not a jump
+double spot_as_condition(double spot) { return spot ? 1.0 : 0.0; }
+double not_spot_minus_strike(double spot, double strike) {
+  return !(spot - strike) ? 1.0 : 0.0;
+}
+double spot_minus_strike_and_strike(double spot, double strike) {
+  return ((spot - strike) && strike) ? 1.0 : 0.0;
+}
+// ... but at a shared point it is held at its off-point truth
+double step_times_truthy_gap(double spot, double strike) {
+  return ((spot >= strike) ? 1.0 : 0.0) * ((spot - strike) ? 1.0 : 5.0);
+}
+// A condition or comparison of a value that changes only in steps flips
+// where the comparison inside it does
+double indicator_as_condition(double spot, double strike) {
+  const double ind = (spot > strike) ? 1.0 : 0.0;
+  return ind ? 3.0 : 1.0;
+}
+double indicator_compared(double spot, double strike) {
+  return (((spot > strike) ? 1.0 : 0.0) > 0.5) ? 2.0 : 0.0;
+}
+
+// A pole is not a jump
+double reciprocal_above_zero(double spot, double k) {
+  return (spot > 0.0) ? k / spot : 0.0;
+}
+
+// Functions go through cx_std in both entry points: sin/cos work at compile
+// time, and both entry points agree to the bit
+double digital_sin_rebate(double spot, double strike) {
+  return (spot > strike) ? std::sin(strike) + 1.0 : 0.0;
+}
+double digital_exp_payoff(double spot, double strike) {
+  return (spot > strike) ? std::exp(spot / 10.0) : 0.0;
 }
 
 // Jump of payoff(spot, strike) as spot crosses `point` upward.
@@ -510,6 +591,175 @@ int main() {
   EXPECT_EQUAL(disc_unreach.size(), 1);
   EXPECT_EQUAL(disc_unreach.point(0), 100.0);
   EXPECT_EQUAL(disc_unreach.amplitude(0), 1.0);
+
+  // Guarded target-free operands are not evaluated where Fn skips them
+  EXPECT_EQUAL(
+      (ad::get_discontinuity_points_and_amplitudes<^^guarded_reciprocal_digital,
+                                                   0>(0.0)
+           .size()),
+      0);
+  constexpr auto disc_recip =
+      ad::get_discontinuity_points_and_amplitudes<^^guarded_reciprocal_digital,
+                                                  0>(0.5);
+  EXPECT_EQUAL(disc_recip.size(), 1);
+  EXPECT_EQUAL(disc_recip.point(0), 2.0);
+  EXPECT_EQUAL(disc_recip.amplitude(0), 1.0);
+  EXPECT_EQUAL(
+      (ad::get_discontinuity_points_and_amplitudes<^^guarded_log_digital, 0>(
+           -1.0)
+           .size()),
+      0);
+  constexpr auto disc_glog =
+      ad::get_discontinuity_points_and_amplitudes<^^guarded_log_digital, 0>(
+          1.0);
+  EXPECT_EQUAL(disc_glog.size(), 1);
+  EXPECT_EQUAL(disc_glog.point(0), 0.0);
+  EXPECT_EQUAL(disc_glog.amplitude(0), 1.0);
+  EXPECT_EQUAL((ad::get_discontinuity_points_and_amplitudes<
+                    ^^target_guarded_reciprocal_digital, 0>(0.0)
+                    .size()),
+               0);
+  EXPECT_EQUAL(
+      (ad::get_discontinuity_points_and_amplitudes<^^nan_strike_digital, 0>(
+           -1.0)
+           .size()),
+      0);
+  EXPECT_EQUAL((ad::get_discontinuity_points_and_amplitudes_rt<
+                    ^^guarded_reciprocal_digital, 0>(0.0)
+                    .size()),
+               0);
+
+  // Coincident roots are measured together
+  constexpr auto disc_third =
+      ad::get_discontinuity_points_and_amplitudes<^^third_digital, 0>(100.0);
+  EXPECT_EQUAL(disc_third.size(), 1);
+  EXPECT_EQUAL(disc_third.point(0), 100.0);
+  EXPECT_EQUAL(disc_third.amplitude(0), 1.0);
+  constexpr auto disc_seventh =
+      ad::get_discontinuity_points_and_amplitudes<^^step_plus_seventh_step, 0>(
+          100.0);
+  EXPECT_EQUAL(disc_seventh.size(), 1);
+  EXPECT_EQUAL(disc_seventh.point(0), 100.0);
+  EXPECT_EQUAL(disc_seventh.amplitude(0), 2.0);
+  EXPECT_EQUAL(measure_jump_on_function(step_plus_seventh_step, 100.0, 100.0),
+               disc_seventh.amplitude(0));
+  constexpr auto disc_third_eq =
+      ad::get_discontinuity_points_and_amplitudes<^^step_times_third_eq, 0>(
+          100.0);
+  EXPECT_EQUAL(disc_third_eq.size(), 1);
+  EXPECT_EQUAL(disc_third_eq.amplitude(0), 1.0);
+  EXPECT_EQUAL(measure_jump_on_function(step_times_third_eq, 100.0, 100.0),
+               disc_third_eq.amplitude(0));
+
+  // Every argument but the target, in order
+  constexpr auto disc_kfirst =
+      ad::get_discontinuity_points_and_amplitudes<^^strike_first_digital, 1>(
+          100.0);
+  EXPECT_EQUAL(disc_kfirst.size(), 1);
+  EXPECT_EQUAL(disc_kfirst.point(0), 100.0);
+  EXPECT_EQUAL(disc_kfirst.amplitude(0), 1.0);
+  EXPECT_EQUAL(
+      (ad::get_discontinuity_points<^^strike_first_digital, 1>(100.0)[0]),
+      100.0);
+  const auto disc_three_rt =
+      ad::get_discontinuity_points_and_amplitudes_rt<^^three_arg_digital, 1>(
+          90.0, 110.0);
+  EXPECT_EQUAL(disc_three_rt.size(), 2);
+  EXPECT_EQUAL(disc_three_rt.point(0), 90.0);
+  EXPECT_EQUAL(disc_three_rt.amplitude(0), 1.0);
+  EXPECT_EQUAL(disc_three_rt.point(1), 110.0);
+  EXPECT_EQUAL(disc_three_rt.amplitude(1), -1.0);
+
+  // A value used as a condition is a point, not a jump...
+  EXPECT_EQUAL(
+      (ad::get_discontinuity_points_and_amplitudes<^^spot_as_condition, 0>()
+           .size()),
+      0);
+  EXPECT_EQUAL(spot_as_condition(1e-8) - spot_as_condition(-1e-8), 0.0);
+  EXPECT_EQUAL(
+      (ad::get_discontinuity_points_and_amplitudes<^^not_spot_minus_strike, 0>(
+           100.0)
+           .size()),
+      0);
+  EXPECT_EQUAL(measure_jump_on_function(not_spot_minus_strike, 100.0, 100.0),
+               0.0);
+  EXPECT_EQUAL((ad::get_discontinuity_points_and_amplitudes<
+                    ^^spot_minus_strike_and_strike, 0>(100.0)
+                    .size()),
+               0);
+  EXPECT_EQUAL(
+      measure_jump_on_function(spot_minus_strike_and_strike, 100.0, 100.0),
+      0.0);
+  // ... held at its off-point truth where it shares a point: 0 -> 1, not 5
+  constexpr auto disc_truthy =
+      ad::get_discontinuity_points_and_amplitudes<^^step_times_truthy_gap, 0>(
+          100.0);
+  EXPECT_EQUAL(disc_truthy.size(), 1);
+  EXPECT_EQUAL(disc_truthy.amplitude(0), 1.0);
+  EXPECT_EQUAL(measure_jump_on_function(step_times_truthy_gap, 100.0, 100.0),
+               disc_truthy.amplitude(0));
+  // Stepwise conditions and comparisons follow the comparison inside them
+  constexpr auto disc_ind =
+      ad::get_discontinuity_points_and_amplitudes<^^indicator_as_condition, 0>(
+          100.0);
+  EXPECT_EQUAL(disc_ind.size(), 1);
+  EXPECT_EQUAL(disc_ind.point(0), 100.0);
+  EXPECT_EQUAL(disc_ind.amplitude(0), 2.0);
+  EXPECT_EQUAL(measure_jump_on_function(indicator_as_condition, 100.0, 100.0),
+               disc_ind.amplitude(0));
+  constexpr auto disc_indcmp =
+      ad::get_discontinuity_points_and_amplitudes<^^indicator_compared, 0>(
+          100.0);
+  EXPECT_EQUAL(disc_indcmp.size(), 1);
+  EXPECT_EQUAL(disc_indcmp.amplitude(0), 2.0);
+
+  // A pole is an error, not an amplitude (a compile error from the consteval
+  // entry points)
+  bool pole_rejected = false;
+  try {
+    (void)ad::get_discontinuity_points_and_amplitudes_rt<
+        ^^reciprocal_above_zero, 0>(1.0);
+  } catch (const char *) {
+    pole_rejected = true;
+  }
+  EXPECT_TRUE(pole_rejected);
+
+  // More points than MaxPoints is an error, not a silent omission
+  bool overflow_rejected = false;
+  try {
+    (void)ad::get_discontinuity_points_and_amplitudes_rt<
+        ^^three_discontinuities, 0, 2>();
+  } catch (const char *) {
+    overflow_rejected = true;
+  }
+  EXPECT_TRUE(overflow_rejected);
+  EXPECT_EQUAL(
+      (ad::get_discontinuity_points_and_amplitudes<^^three_discontinuities, 0,
+                                                   3>()
+           .size()),
+      3);
+
+  // sin at compile time, and both entry points agree to the bit
+  constexpr auto disc_sin =
+      ad::get_discontinuity_points_and_amplitudes<^^digital_sin_rebate, 0>(
+          100.0);
+  EXPECT_EQUAL(disc_sin.size(), 1);
+  EXPECT_NEAR_REL(disc_sin.amplitude(0), std::sin(100.0) + 1.0, 1e-15);
+  EXPECT_EQUAL(
+      (ad::get_discontinuity_points_and_amplitudes_rt<^^digital_sin_rebate, 0>(
+           100.0)
+           .amplitude(0)),
+      disc_sin.amplitude(0));
+  constexpr auto disc_exp =
+      ad::get_discontinuity_points_and_amplitudes<^^digital_exp_payoff, 0>(
+          500.0);
+  EXPECT_EQUAL(disc_exp.size(), 1);
+  EXPECT_NEAR_REL(disc_exp.amplitude(0), std::exp(50.0), 1e-15);
+  EXPECT_EQUAL(
+      (ad::get_discontinuity_points_and_amplitudes_rt<^^digital_exp_payoff, 0>(
+           500.0)
+           .amplitude(0)),
+      disc_exp.amplitude(0));
 
   TEST_END;
 }
