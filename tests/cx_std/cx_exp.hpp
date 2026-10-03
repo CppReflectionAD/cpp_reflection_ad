@@ -70,17 +70,30 @@ template <typename T> constexpr int round_to_int(T x) {
 
 // Core: x is finite and non-zero.
 template <typename T> constexpr T exp_core(T x) {
+  using limits = std::numeric_limits<T>;
+  // ln2_hi has more bits than float's significand, so k·ln2_hi is not exact
+  // in float. Work in double and round once. Converting a double past T's
+  // rounding threshold to T is undefined, so that is +∞ here.
+  if constexpr (limits::digits < std::numeric_limits<double>::digits) {
+    const double y = exp_core(static_cast<double>(x));
+    if (y >= pow2<double>(limits::max_exponent) -
+                 pow2<double>(limits::max_exponent - limits::digits - 1))
+      return limits::infinity();
+    return static_cast<T>(y);
+  }
   // Past the type's range the result is +∞ or 0. Return those directly:
   // computing them by overflow is not a constant expression for GCC.
-  using limits = std::numeric_limits<T>;
-  // Above max_exponent·ln2 (the full ln2: ln2_hi alone is 2e-7 short of it
-  // at double) e^x is past the largest finite value.
+  // Above max_exponent·ln2 e^x is past the largest finite value; below
+  // (min_exponent - digits - 1)·ln2 it is under half the smallest subnormal.
+  // Both use the full ln2: ln2_hi alone is 2e-7 short of it at double.
   const T max_exponent = static_cast<T>(limits::max_exponent);
+  const T min_exponent =
+      static_cast<T>(limits::min_exponent - limits::digits - 1);
   if (x > max_exponent * static_cast<T>(ln2_hi) +
               max_exponent * static_cast<T>(ln2_lo))
     return limits::infinity();
-  if (x < static_cast<T>(limits::min_exponent - limits::digits - 1) *
-              static_cast<T>(ln2_hi))
+  if (x < min_exponent * static_cast<T>(ln2_hi) +
+              min_exponent * static_cast<T>(ln2_lo))
     return T(0);
   const int k = round_to_int(x * static_cast<T>(inv_ln2));
   const T r = (x - static_cast<T>(k) * static_cast<T>(ln2_hi)) -
