@@ -1,10 +1,13 @@
 # ---------------------------------------------------------------------------
 # Detect compiler family from the kit-selected CMAKE_CXX_COMPILER
 # ---------------------------------------------------------------------------
+# _compiler is the name test directives use for it (`// TEST-FLAGS-CLANG:`).
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    set(_compiler clang)
     set(_is_clang TRUE)
     set(_is_gcc   FALSE)
 elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    set(_compiler gcc)
     set(_is_clang FALSE)
     set(_is_gcc   TRUE)
 else()
@@ -48,6 +51,10 @@ endif()
 # Helper: register one test executable
 # ---------------------------------------------------------------------------
 function(add_reflect_test name source)
+    directive_error_test(${name} "${source}" FALSE _invalid)
+    if(_invalid)
+        return()
+    endif()
     add_executable(${name} ${source})
     target_compile_options(${name} PRIVATE
         -std=c++2c
@@ -73,26 +80,24 @@ file(GLOB _clang_only_static_fail CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SO
 file(GLOB _gcc_only_static_fail CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/gcc_only/static_fail/*.cpp")
 
-foreach(_src IN LISTS _common)
+set(_must_compile ${_common})
+if(_is_clang)
+    list(APPEND _must_compile ${_clang_only})
+    list(APPEND _static_fail ${_clang_only_static_fail})
+endif()
+if(_is_gcc)
+    list(APPEND _must_compile ${_gcc_only})
+    list(APPEND _static_fail ${_gcc_only_static_fail})
+endif()
+
+# Their `// TEST-FLAGS:` and `// EXPECT-ERROR:` directives, read as
+# run_tests.py reads them.
+read_test_directives(${_compiler} MUST_COMPILE ${_must_compile} MUST_FAIL ${_static_fail})
+
+foreach(_src IN LISTS _must_compile)
     get_filename_component(_name "${_src}" NAME_WE)
     add_reflect_test(${_name} "${_src}")
 endforeach()
-
-if(_is_clang)
-    foreach(_src IN LISTS _clang_only)
-        get_filename_component(_name "${_src}" NAME_WE)
-        add_reflect_test(${_name} "${_src}")
-    endforeach()
-    list(APPEND _static_fail ${_clang_only_static_fail})
-endif()
-
-if(_is_gcc)
-    foreach(_src IN LISTS _gcc_only)
-        get_filename_component(_name "${_src}" NAME_WE)
-        add_reflect_test(${_name} "${_src}")
-    endforeach()
-    list(APPEND _static_fail ${_gcc_only_static_fail})
-endif()
 
 compile_check(reflection_ad "${_static_fail}" TRUE)
 

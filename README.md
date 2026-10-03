@@ -31,14 +31,23 @@ Tests under `tests/static_fail/` (or `clang_only/static_fail/`,
 `static_assert`). Each must name the error it expects in a
 `// EXPECT-ERROR: <text>` comment at the top of the file, before any code,
 where `<text>` is part of the compiler's error message or of a note attached to
-that error. Use one comment per expected error; each must match a different
-error. Text that only one compiler prints goes in a `// EXPECT-ERROR-CLANG:` or
-`// EXPECT-ERROR-GCC:` comment (`TEST-FLAGS` has the same variants):
+that error (not of a note that only says where the error was reached from, such
+as `in instantiation of ... requested here`). Use one comment per expected
+error; each must match a different error. Text that only one compiler prints
+goes in a `// EXPECT-ERROR-CLANG:` or `// EXPECT-ERROR-GCC:` comment
+(`TEST-FLAGS` has the same variants):
 
 ```cpp
 // EXPECT-ERROR: ad::inverse requires an explicit inverse plan
 // EXPECT-ERROR-CLANG: subexpression not valid in a constant expression
 ```
+
+A misspelt or misplaced directive fails the test instead of being ignored.
+CTest reads the directives with the same code as `run_tests.py`
+(`test_simple/source_directives.py`), so it builds each test with its
+`TEST-FLAGS` and rejects the same mistakes. That code runs when CMake
+configures `tests/`, which therefore needs Python 3.7 or newer; configure with
+`-DBUILD_TESTING=OFF` to build without the tests.
 
 The repo is **self-contained**: `--build-compilers` builds clang from its own
 `clang-p2996` submodule into `build/` — no externally pre-built compiler needed.

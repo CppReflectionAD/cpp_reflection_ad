@@ -13,14 +13,17 @@ passes only if compilation fails without the compiler crashing, and each
 <text> that applies to the compiler appears literally (not as a regex) in an
 error diagnostic of its own: the error's message or the message of one of the
 notes the compiler attaches to it (`note:` lines, or the indented `•` lines
-of gcc's nested diagnostics). At least one directive must apply to each
+of gcc's nested diagnostics), other than the notes that only say where the
+error was reached from (`in instantiation of ... requested here`, `in call
+to ...`, `required from here`). At least one directive must apply to each
 compiler, so a test that fails for an unrelated reason (a broken include, a
 typo) does not pass by accident. Anything that reads like a misspelt
 directive (`//EXPECT-ERROR:`, `// expected-error:`, `// EXPECT-ERROR <text>`,
 `// EXPECT-ERROR-CLNAG:`) or like a directive after code
 (`foo(); // EXPECT-ERROR: <text>`) is rejected rather than silently ignored.
-The directives are read before anything is compiled, so a test without a
-valid one fails at once.
+The directives (TEST-FLAGS included) are read with
+source_directives.read_test_directives before anything is compiled, so a test
+without a valid one fails at once.
 
 The compiler must run with COMPILE_ENV and DIAGNOSTIC_FLAGS, so that its
 output is in the form parsed here.
@@ -50,18 +53,6 @@ else:  # run as a script; its directory isn't on sys.path under `python3 -P`
 
 DirectiveError = source_directives.DirectiveError
 
-EXPECT_ERROR_DIRECTIVE = "// EXPECT-ERROR:"
-EXPECT_ERROR = source_directives.DirectiveFamily.with_compiler_variants(
-    "EXPECT-ERROR",
-    "text",
-    # A `//` comment (including `///` and `//!`) that reads like an
-    # EXPECT-ERROR directive: the hyphen or underscore spelling with or
-    # without a colon (and with any suffix), or the spaced spelling with one
-    # (so prose like "expected errors are listed below" is left alone).
-    near_miss=re.compile(
-        r"//[/!]*\s*expect(?:ed)?(?:[-_]errors?\b|\s+errors?\s*:)", re.IGNORECASE
-    ),
-)
 # The environment and flags the compiler must run with. In the C locale the
 # compilers write English and ASCII quotes (an NLS-enabled gcc otherwise
 # translates `error:` and quotes with ‘’ in a UTF-8 locale). The forced
@@ -80,14 +71,15 @@ _QUOTES = str.maketrans({"\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": 
 #   <file>:<line>[:<col>]: <kind>: <message>
 #   <pseudo-file>: <kind>: <message>   (`<command-line>`, `<built-in>`)
 #   <file-or-tool>: <kind>: <message>  (gcc's file-level diagnostics, and
-#                                       `clang++`, `cc1plus`; see below)
+#                                       `clang++`, `cc1plus`; see below; a
+#                                       file's path may contain spaces)
 #   <kind>: <message>
 # Only <message> is searched. Matching the whole line would let text that
 # happens to occur in the file path match any error at all, and the
 # compilers echo source lines (which may contain `error:` inside a string
 # literal) indented under the header, so those never match.
 _DIAGNOSTIC_HEADER_RE = re.compile(
-    r"^(?:(?:\S.*?:\d+(?::\d+)?|<[^>]+>|(?P<prefix>[\w./+-]+)): )?"
+    r"^(?:(?:\S.*?:\d+(?::\d+)?|<[^>]+>|(?P<prefix>[^\s:](?:[^:]*[^\s:])?)): )?"
     r"(?P<kind>(?:fatal )?error|sorry, unimplemented|internal compiler error"
     r"|warning|note|remark): (?P<message>.*)$"
 )
@@ -115,6 +107,19 @@ _CONTEXT_RE = re.compile(
     r"^(?:In file included from |In module imported at "
     r"|\S.*?: (?:In |At global scope:)|\S.*?:\d+(?::\d+)?:   )"
 )
+# A note that only says where the error was reached from, which may name
+# any function or type on the way (`ad::inverse<double>`), so it is not
+# searched: clang's template instantiation and constexpr call stacks and
+# macro expansions, and gcc's `required from` / `In substitution of`
+# context, which its nested diagnostics print as bullets. Other notes (the
+# reason a constant expression or a constraint failed, a candidate) are.
+_BACKTRACE_NOTE_RE = re.compile(
+    r"^(?:in instantiation of |in call to |in evaluation of |in implicit "
+    r"|in expansion of |in definition of |in 'constexpr' expansion of "
+    r"|while |during |required (?:from|by|for) |expanded from |\(skipping "
+    r"|(?:\S.*?: )?In (?:instantiation|substitution) of )"
+    r"|(?:requested|required|needed) here$"
+)
 # What a compiler prints when it crashes, which no test may pass by: an ICE
 # (gcc), the driver's report that cc1/cc1plus died, a crash in clang's
 # frontend.
@@ -122,38 +127,6 @@ _CRASH_RE = re.compile(
     r"internal compiler error|signal terminated program"
     r"|frontend command failed|PLEASE submit a bug report"
 )
-
-
-def parse_expected_errors(
-    comments: Sequence[source_directives.Comment], compiler: str
-) -> tuple[str, ...]:
-    """The <text> of every EXPECT-ERROR directive that applies to `compiler`.
-
-    `comments` are the test's, from source_directives.read_comments. Raises
-    DirectiveError if any directive is malformed, misplaced or empty, or
-    none applies to `compiler`.
-    """
-    directives = source_directives.read_directives(comments, EXPECT_ERROR)
-    for directive in directives:
-        if not directive.text:
-            raise DirectiveError(
-                f"line {directive.line}: empty `// {directive.name}:` directive"
-            )
-    expected = source_directives.for_compiler(directives, "EXPECT-ERROR", compiler)
-    if not expected:
-        raise DirectiveError(
-            f"no `{EXPECT_ERROR_DIRECTIVE} <text>` directive for {compiler}; a "
-            "compile-fail test must say which error it expects"
-        )
-    return tuple(directive.text for directive in expected)
-
-
-def load_expected_errors(path: Path, compiler: str) -> tuple[str, ...]:
-    """parse_expected_errors for the test at `path`.
-
-    Raises DirectiveError if it can't be read, too.
-    """
-    return parse_expected_errors(source_directives.read_comments(path), compiler)
 
 
 def _crash(returncode: int, lines: list[str]) -> str | None:
@@ -177,7 +150,7 @@ def error_diagnostics(output: str) -> list[tuple[str, ...]]:
     Each is the error's message followed by the messages of the notes that
     follow it (clang, for one, gives the reason a constant expression failed
     only in a note), whether as `note:` lines or as gcc's nested bullet
-    lines. Notes belong to the diagnostic just before them, so those after a
+    lines, except backtrace notes (see _BACKTRACE_NOTE_RE). Notes belong to the diagnostic just before them, so those after a
     warning, or after any other line that isn't indented (a diagnostic of
     another kind, build-tool output) other than gcc's context lines, belong
     to no error. gcc's `sorry, unimplemented:` counts as an error.
@@ -189,7 +162,9 @@ def error_diagnostics(output: str) -> list[tuple[str, ...]]:
         if not match:
             nested = _NESTED_NOTE_RE.match(line)
             if nested:
-                if current is not None:
+                if current is not None and not _BACKTRACE_NOTE_RE.match(
+                    nested.group("message")
+                ):
                     current.append(nested.group("message"))
             elif line[:1] not in ("", " ") and not _CONTEXT_RE.match(line):
                 current = None
@@ -200,7 +175,7 @@ def error_diagnostics(output: str) -> list[tuple[str, ...]]:
         ):
             current = None
         elif kind == "note":
-            if current is not None:
+            if current is not None and not _BACKTRACE_NOTE_RE.match(message):
                 current.append(message)
         elif kind in _ERROR_KINDS:
             current = [message]
@@ -241,7 +216,8 @@ def _unmatched(
 def check(expected: tuple[str, ...], returncode: int, output: str) -> str | None:
     """Return why a compile-fail test failed, or None if it passed.
 
-    `expected` is what parse_expected_errors returned, before compiling.
+    `expected` is the test's expected_errors from
+    source_directives.read_test_directives, read before compiling.
     """
     if returncode == 0:
         return "expected a compile error, but it compiled"
@@ -288,14 +264,16 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        expected = load_expected_errors(args.source, args.compiler)
+        expected = source_directives.load_test_directives(
+            args.source, args.compiler, must_fail=True
+        ).expected_errors
     except DirectiveError as error:
         print(f"{args.source}: {error}")
         return 1
 
     # One stream, so stdout and stderr lines stay whole and in order. The
     # environment reaches the compiler through the build tool; the build
-    # adds DIAGNOSTIC_FLAGS (see test_simple_cmake.cmake).
+    # adds the test's flags and DIAGNOSTIC_FLAGS (see test_directives_cmake).
     build = subprocess.run(
         args.command,
         stdout=subprocess.PIPE,

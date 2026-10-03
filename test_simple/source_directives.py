@@ -11,21 +11,24 @@ compile flags) in `//` comments that come before its first line of code:
 A directive may have a `-<COMPILER>` variant for each of COMPILERS, which
 applies only when building with that compiler.
 
-This is the single implementation of that placement rule, shared by
-run_tests.py (`// TEST-FLAGS:`) and compile_fail_check.py (`// EXPECT-ERROR:`).
-A `//` comment anywhere in the file that reads like a directive of a family
-but is misspelt (including a variant for a compiler not in COMPILERS), or
-that comes after the first code, is rejected rather than silently ignored.
-Comments are found with a small C++ lexer (see lex_comments), so text inside
-string literals, raw strings and `/* */` comments is never mistaken for a
-directive. A file is lexed once (read_comments), and each family's
-directives are read from the result (read_directives).
+This is the single implementation of what a test declares, shared by both
+test runners: run_tests.py and CTest (through compile_fail_check.py and
+test_directives_cmake.py) read every test with read_test_directives. A
+`//` comment at the top of the file that reads like a directive but is
+misspelt (including a variant for a compiler not in COMPILERS), a directive
+name in a `/* */` comment, a directive after the first code, and an
+EXPECT-ERROR in a test that must compile are all rejected rather than
+silently ignored. Comments are found with a small C++ lexer (see
+lex_comments), so text inside string literals and raw strings is never
+mistaken for a directive. A file is lexed once (read_comments), and each
+family's directives are read from the result (read_directives).
 """
 
 from __future__ import annotations
 
 import bisect
 import re
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 from typing import NamedTuple, Sequence
@@ -52,12 +55,17 @@ class DirectiveFamily:
 
     `pattern` matches the `// NAME:` start of a well-formed directive, with
     the name in group "name"; `near_miss` matches the start of a `//` comment
-    that reads like one (it should also match every well-formed one). `usage`
-    is how a well-formed directive is written, for error messages.
+    at the top of the file that reads like one (it should also match every
+    well-formed one). `misplaced` matches the directive's own name, in upper
+    case and with `-` or `_`: a `//` comment after code, or a line of a
+    `/* */` comment, that starts with it is a directive in the wrong place.
+    (Prose such as `// expected error: none` after code is left alone.)
+    `usage` is how a well-formed directive is written, for error messages.
     """
 
     pattern: re.Pattern[str]
     near_miss: re.Pattern[str]
+    misplaced: re.Pattern[str]
     usage: str
 
     @classmethod
@@ -68,9 +76,11 @@ class DirectiveFamily:
         COMPILERS. A suffix naming any other compiler is not well formed, so
         it is reported if `near_miss` matches it."""
         variants = "|".join(compiler.upper() for compiler in COMPILERS)
+        spelled = "[-_]".join(re.escape(word) for word in name.split("-"))
         return cls(
             pattern=re.compile(rf"// (?P<name>{re.escape(name)}(?:-(?:{variants}))?):"),
             near_miss=near_miss,
+            misplaced=re.compile(rf"{spelled}\b"),
             usage=f"`// {name}: <{argument}>`, or `// {name}-<{variants}>: "
             f"<{argument}>` for one compiler",
         )
@@ -89,13 +99,18 @@ def for_compiler(
 
 class Comment(NamedTuple):
     line: int  # where it starts
-    text: str  # from `//` to the end of the line, line splices removed
+    # From `//` to the end of the line, or from `/*` to `*/`; line splices
+    # removed.
+    text: str
     before_code: bool  # whether it comes before the first token of code
+    block: bool = False  # a `/* */` comment
 
 
 # A backslash-newline, which joins two lines before comments and literals are
 # recognized (compilers allow whitespace between the two).
 _SPLICE_RE = re.compile(r"\\[ \t]*\r?\n")
+# The `//` of a comment, with any `///` / `//!` extra and the space after it.
+_COMMENT_START_RE = re.compile(r"//[/!]*\s*")
 _RAW_STRING_PREFIXES = frozenset({"R", "LR", "uR", "UR", "u8R"})
 _RAW_DELIMITER_RE = re.compile(r'[^\s()\\"]{0,16}\(')
 
@@ -109,7 +124,7 @@ def read_source(path: Path) -> str:
 
 
 def read_comments(path: Path) -> tuple[Comment, ...]:
-    """The `//` comments of the test at `path` (see lex_comments).
+    """The comments of the test at `path` (see lex_comments).
 
     Raises DirectiveError if the file can't be read.
     """
@@ -121,16 +136,17 @@ def read_comments(path: Path) -> tuple[Comment, ...]:
 
 
 def lex_comments(source: str) -> tuple[Comment, ...]:
-    """The `//` comments in C++ `source`, in order.
+    """The `//` and `/* */` comments in C++ `source`, in order.
 
     A state machine over the characters of the file: code, `//` comment,
     `/* */` comment, string or character literal, raw string. It applies
     line splices (backslash-newline) everywhere except inside raw strings,
-    reads `'` inside a number (`1'000`, `0x1'FF`) as a digit separator, ends
-    an unterminated string or character literal at the end of its line (as
-    in `#error don't` or prose inside `#if 0`), and needs the exact
-    R/LR/uR/UR/u8R prefix for a raw string. It does not otherwise tokenize
-    or preprocess: a `//` inside `#include <...>` would read as a comment.
+    reads `'` inside a number (`1'000`, `0x1'FF`) as a digit separator, and
+    needs the exact R/LR/uR/UR/u8R prefix for a raw string. A quote whose
+    literal isn't closed on its line (as in `#error don't` or prose inside
+    `#if 0`) is a stray character, so a `//` comment after it is still
+    found. It does not otherwise tokenize or preprocess: a `//` inside
+    `#include <...>` would read as a comment.
     """
     if source.startswith("\ufeff"):
         source = source[1:]
@@ -150,13 +166,13 @@ def lex_comments(source: str) -> tuple[Comment, ...]:
     def char_at(i: int) -> str:
         return source[i] if i < n else ""
 
-    def literal_end(i: int, quote: str) -> int:
-        # i is just past the opening quote.
+    def literal_end(i: int, quote: str) -> int | None:
+        # i is just past the opening quote; None if the line ends first.
         while True:
             i = skip_splices(i)
             ch = char_at(i)
             if ch in ("", "\n"):
-                return i
+                return None
             if ch == quote:
                 return i + 1
             i = skip_splices(i + 1) + 1 if ch == "\\" else i + 1
@@ -192,6 +208,8 @@ def lex_comments(source: str) -> tuple[Comment, ...]:
                         end = close + 1
                         break
                 end += 1
+            text = _SPLICE_RE.sub("", source[i:end])
+            comments.append(Comment(line_of(i), text, not seen_code, block=True))
             i = end
         elif ch.isspace():
             i += 1
@@ -212,7 +230,8 @@ def lex_comments(source: str) -> tuple[Comment, ...]:
                     # No splices in a raw string: `)delim"` must be literal.
                     opening = _RAW_DELIMITER_RE.match(source, end + 1)
                     if opening is None:  # malformed; lex it as a plain string
-                        i = literal_end(end + 1, '"')
+                        closed = literal_end(end + 1, '"')
+                        i = end + 1 if closed is None else closed
                     else:
                         delimiter = opening.group()[:-1]
                         close = source.find(f'){delimiter}"', opening.end())
@@ -241,10 +260,17 @@ def lex_comments(source: str) -> tuple[Comment, ...]:
                     end += 1
                 i = end
             elif ch in ('"', "'"):
-                i = literal_end(i + 1, ch)
+                closed = literal_end(i + 1, ch)
+                i = i + 1 if closed is None else closed
             else:
                 i += 1
     return tuple(comments)
+
+
+# The `/*` and `*` decoration a line of a `/* */` comment may start with, and
+# the `*/` and white space it may end with.
+_BLOCK_LINE_START_RE = re.compile(r"[ \t]*(?:/\*+)?[ \t*]*")
+_BLOCK_LINE_END_RE = re.compile(r"\s*(?:\*+/)?\s*$")
 
 
 def read_directives(
@@ -255,26 +281,44 @@ def read_directives(
     A directive is a `//` comment that comes before the first token of code
     (after blank lines and other comments, `/* */` ones included) and starts
     with `family.pattern`; its text is the rest of the comment, stripped.
-    Raises DirectiveError for a `//` comment that matches `family.near_miss`
-    but is not such a directive: a misspelling, or a directive after code.
+    Raises DirectiveError for a comment that reads like a directive but is
+    not one: a `//` comment at the top of the file that matches
+    `family.near_miss` (a misspelling), a `//` comment after code that
+    starts with `family.misplaced`, or a line of a `/* */` comment that does
+    (after the `/*` and any `*` decoration; so `/* // EXPECT-ERROR: x */`,
+    a commented-out directive, is left alone).
     """
     directives = []
     for comment in comments:
+        if comment.block:
+            for offset, line in enumerate(comment.text.split("\n")):
+                start = _BLOCK_LINE_START_RE.match(line).end()
+                if family.misplaced.match(line, start):
+                    directive = _BLOCK_LINE_END_RE.sub("", line[start:])
+                    raise DirectiveError(
+                        f"line {comment.line + offset}: directive "
+                        f"{directive!r} in a `/* */` comment; "
+                        f"directives are `//` comments: write {family.usage}"
+                    )
+            continue
         match = family.pattern.match(comment.text)
-        if comment.before_code and match:
-            directives.append(
-                Directive(
-                    comment.line,
-                    match.group("name"),
-                    comment.text[match.end() :].strip(),
+        if comment.before_code:
+            if match:
+                directives.append(
+                    Directive(
+                        comment.line,
+                        match.group("name"),
+                        comment.text[match.end() :].strip(),
+                    )
                 )
-            )
-        elif family.near_miss.match(comment.text):
-            if comment.before_code:
+            elif family.near_miss.match(comment.text):
                 raise DirectiveError(
                     f"line {comment.line}: malformed directive "
                     f"{comment.text!r}; write {family.usage}"
                 )
+        elif family.misplaced.match(
+            comment.text, _COMMENT_START_RE.match(comment.text).end()
+        ):
             raise DirectiveError(
                 f"line {comment.line}: directive {comment.text!r} comes after "
                 "code; directives go in the comments at the top of the file, "
@@ -282,3 +326,94 @@ def read_directives(
             )
     return directives
 
+
+# `// EXPECT-ERROR: <text>`: an error a compile-fail test must fail with
+# (see compile_fail_check).
+EXPECT_ERROR = DirectiveFamily.with_compiler_variants(
+    "EXPECT-ERROR",
+    "text",
+    # A `//` comment (including `///` and `//!`) that reads like an
+    # EXPECT-ERROR directive: the hyphen or underscore spelling with or
+    # without a colon (and with any suffix), or the spaced spelling with one
+    # (so prose like "expected errors are listed below" is left alone).
+    near_miss=re.compile(
+        r"//[/!]*\s*expect(?:ed)?(?:[-_]errors?\b|\s+errors?\s*:)", re.IGNORECASE
+    ),
+)
+# `// TEST-FLAGS: <flags>`: extra flags to compile the test with (e.g. -O2
+# for a benchmark).
+TEST_FLAGS = DirectiveFamily.with_compiler_variants(
+    "TEST-FLAGS",
+    "flags",
+    # Likewise for TEST-FLAGS, so a misspelt directive is an error rather
+    # than flags silently dropped.
+    near_miss=re.compile(r"//[/!]*\s*test(?:[-_]flags\b|\s+flags\s*:)", re.IGNORECASE),
+)
+
+
+class TestDirectives(NamedTuple):
+    """What a test declares for one compiler."""
+
+    # Its `// TEST-FLAGS:` flags, then its `// TEST-FLAGS-<COMPILER>:` ones.
+    flags: tuple[str, ...]
+    # The <text> of each `// EXPECT-ERROR:` / `-<COMPILER>:` directive; ()
+    # for a test that must compile.
+    expected_errors: tuple[str, ...]
+
+
+def read_test_directives(
+    comments: Sequence[Comment], compiler: str, must_fail: bool
+) -> TestDirectives:
+    """The directives of a test (`comments` from read_comments) that apply
+    to `compiler`.
+
+    A test that must fail to compile (`must_fail`, a static_fail/ test) must
+    have at least one non-empty EXPECT-ERROR directive for `compiler`; any
+    other test must have none. If a TEST-FLAGS directive appears more than
+    once, the last wins. Raises DirectiveError if a directive is malformed,
+    misplaced or empty, its flags don't parse, or the rules above are broken.
+    """
+    if compiler not in COMPILERS:
+        raise ValueError(f"unknown compiler {compiler!r}; expected one of {COMPILERS}")
+    flag_directives = read_directives(comments, TEST_FLAGS)
+
+    def last_flags(name: str) -> list[str]:
+        matching = [d for d in flag_directives if d.name == name]
+        if not matching:
+            return []
+        try:
+            return shlex.split(matching[-1].text)
+        except ValueError as error:
+            raise DirectiveError(f"line {matching[-1].line}: {error}") from None
+
+    flags = last_flags("TEST-FLAGS") + last_flags(f"TEST-FLAGS-{compiler.upper()}")
+
+    error_directives = read_directives(comments, EXPECT_ERROR)
+    if not must_fail:
+        if error_directives:
+            stray = error_directives[0]
+            raise DirectiveError(
+                f"line {stray.line}: `// {stray.name}:` in a test that must "
+                "compile; compile-fail tests go in a static_fail/ directory"
+            )
+        return TestDirectives(tuple(flags), ())
+    for directive in error_directives:
+        if not directive.text:
+            raise DirectiveError(
+                f"line {directive.line}: empty `// {directive.name}:` directive"
+            )
+    expected = for_compiler(error_directives, "EXPECT-ERROR", compiler)
+    if not expected:
+        raise DirectiveError(
+            f"no `// EXPECT-ERROR: <text>` directive for {compiler}; a "
+            "compile-fail test must say which error it expects"
+        )
+    return TestDirectives(tuple(flags), tuple(d.text for d in expected))
+
+
+def load_test_directives(path: Path, compiler: str, must_fail: bool) -> TestDirectives:
+    """read_test_directives for the test at `path`.
+
+    Raises DirectiveError if it can't be read, too.
+    """
+    return read_test_directives(read_comments(path), compiler, must_fail)
