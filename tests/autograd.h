@@ -228,9 +228,12 @@ consteval bool op_has_primal(OpKind op) {
 }
 
 // A node's value from the values of its operands a, b and (Select only) its
-// condition c: the primal rule every sweep shares. Select uses only the branch
-// it takes, and And / Or use b only when a leaves them undecided -- exactly
-// when b's branch was reached, so its slot was written.
+// condition c: the primal rule every sweep shares. The operands are passed by
+// value, so all three slots are read, including a Select's untaken branch and
+// an And / Or's b when a decides it, which may be behind a false guard and
+// never written: a sweep must initialise every slot (each zero-fills `val`).
+// Only the result ignores them -- Select's depends on the branch it takes, and
+// And / Or's on b only when a leaves them undecided.
 template <OpKind Op, typename Math = BuiltinMath, typename T>
 [[gnu::always_inline]] constexpr T primal(T a, T b, T c) {
   if constexpr (Op == OpKind::Output)
