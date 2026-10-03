@@ -1,6 +1,13 @@
 # compile_check(... TRUE) tests are checked by compile_fail_check.py, the same
 # checker run_tests.py uses.
 find_package(Python3 3.7 REQUIRED COMPONENTS Interpreter)
+# The compiler, as compile_fail_check.py --compiler names it; its
+# `// EXPECT-ERROR-<COMPILER>:` directives apply to this build.
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    set(_compile_fail_compiler clang)
+elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    set(_compile_fail_compiler gcc)
+endif()
 
 function(compile_check group filelist fail)
     foreach(testfile IN LISTS filelist)
@@ -26,10 +33,17 @@ function(compile_check group filelist fail)
             "${CMAKE_SOURCE_DIR}/test_simple"
         )
         if (fail)
+            if(NOT _compile_fail_compiler)
+                message(FATAL_ERROR "compile_check(... TRUE) needs clang or gcc, "
+                                    "not ${CMAKE_CXX_COMPILER_ID}")
+            endif()
+            # The diagnostic format compile_fail_check.py parses (its
+            # DIAGNOSTIC_FLAGS); target options come after CMAKE_CXX_FLAGS.
+            target_compile_options(${target_name} PRIVATE -fdiagnostics-show-line-numbers)
             # Must fail with the error(s) its `// EXPECT-ERROR:` comments name.
             add_test(NAME ${test_name} COMMAND "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/compile_fail_check.py"
-                --source "${_source}"
+                --source "${_source}" --compiler ${_compile_fail_compiler}
                 -- ${CMAKE_COMMAND} --build "${CMAKE_BINARY_DIR}" --target ${target_name})
         else()
             add_test(NAME ${test_name} COMMAND ${CMAKE_COMMAND} --build "${CMAKE_BINARY_DIR}" --target ${target_name})

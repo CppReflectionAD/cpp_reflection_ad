@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import os
 import platform
@@ -13,6 +14,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Sequence
 
 
 ROOT = Path(__file__).resolve().parent
@@ -28,10 +30,12 @@ BUILD_ROOT = ROOT / "build"
 ARTIFACTS_DIR = BUILD_ROOT / "artifacts"
 CLANG_ONLY_DIR = "clang_only"
 GCC_ONLY_DIR = "gcc_only"
-# Tests under tests/static_fail/ must be rejected by the compiler (e.g. by a
+# Tests under tests/static_fail/ (or clang_only/static_fail/,
+# gcc_only/static_fail/) must be rejected by the compiler (e.g. by a
 # static_assert) with the error(s) their `// EXPECT-ERROR: <text>` comments
 # name; see test_simple/compile_fail_check.py, which CTest also uses for the
-# compile_check(... TRUE) registration in tests/CMakeLists.txt.
+# compile_check(... TRUE) registrations in tests/CMakeLists.txt. Any other
+# test with an EXPECT-ERROR directive fails.
 STATIC_FAIL_DIR = "static_fail"
 
 # The clang reflection fork is built from the clang-p2996 submodule (override
@@ -84,12 +88,13 @@ else:
 # Flags that only one compiler understands go in a `// TEST-FLAGS-<COMPILER>:`
 # variant (e.g. `// TEST-FLAGS-CLANG:`), which is appended after the shared
 # flags when building with that compiler and ignored by every other one.
-TEST_FLAGS = source_directives.DirectiveFamily(
-    pattern=re.compile(r"// (?P<name>TEST-FLAGS(?:-[A-Z0-9_]+)?):"),
-    # A `//` comment that reads like a TEST-FLAGS directive, so a misspelt
-    # or misplaced one is an error rather than flags silently dropped.
+TEST_FLAGS = source_directives.DirectiveFamily.with_compiler_variants(
+    "TEST-FLAGS",
+    "flags",
+    # A `//` comment that reads like a TEST-FLAGS directive (a variant for an
+    # unknown compiler included), so a misspelt or misplaced one is an error
+    # rather than flags silently dropped.
     near_miss=re.compile(r"//[/!]*\s*test(?:[-_]flags\b|\s+flags\s*:)", re.IGNORECASE),
-    usage="// TEST-FLAGS: <flags>",
 )
 
 
@@ -151,7 +156,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--compiler",
-        choices=("clang", "gcc", "both"),
+        choices=(*source_directives.COMPILERS, "both"),
         default="both",
         help="Compiler to use for the test run.",
     )
@@ -331,7 +336,14 @@ def log(message: str) -> None:
     print(f"==> {message}", flush=True)
 
 
-def run_command(command: list[str], cwd: Path | None, verbose: bool) -> CommandResult:
+def run_command(
+    command: list[str],
+    cwd: Path | None,
+    verbose: bool,
+    env: dict[str, str] | None = None,
+) -> CommandResult:
+    """Run a command, capturing its output; `env` is added to the
+    environment."""
     if verbose:
         location = str(cwd) if cwd is not None else str(ROOT)
         print(f"[{location}] $ {shlex.join(command)}")
@@ -340,6 +352,7 @@ def run_command(command: list[str], cwd: Path | None, verbose: bool) -> CommandR
         cwd=cwd,
         capture_output=True,
         text=True,
+        env={**os.environ, **env} if env else None,
     )
     return CommandResult(
         command=command,
@@ -378,7 +391,7 @@ def ensure_directory(path: Path) -> None:
 
 def selected_compilers(args: argparse.Namespace) -> list[str]:
     if args.compiler == "both":
-        return ["clang", "gcc"]
+        return list(source_directives.COMPILERS)
     return [args.compiler]
 
 
@@ -448,7 +461,7 @@ def build_specs(args: argparse.Namespace) -> dict[str, CompilerSpec]:
     gcc_source_dir = Path(args.gcc_source_dir).resolve()
     gcc_build_dir = Path(args.gcc_build_dir).resolve()
     gcc_binary_dir = gcc_build_dir / "artifacts"
-    return {
+    specs = {
         "clang": CompilerSpec(
             name="clang",
             source_dir=clang_source_dir,
@@ -475,6 +488,9 @@ def build_specs(args: argparse.Namespace) -> dict[str, CompilerSpec]:
             cxxflags=("-std=c++26", "-freflection"),
         ),
     }
+    # The test directives' `-<COMPILER>` variants are named after the specs.
+    assert tuple(specs) == source_directives.COMPILERS, tuple(specs)
+    return specs
 
 
 def is_test_applicable(test_file: Path, base_dir: Path, compiler_name: str) -> bool:
@@ -527,7 +543,25 @@ def discover_tests(
     return tests
 
 
-def parse_test_flags(source: str, compiler_name: str) -> list[str]:
+def is_static_fail(test_file: Path, base_dir: Path) -> bool:
+    """Whether `test_file` must fail to compile: it is in a static_fail/
+    directory at the top of `base_dir` or of its clang_only/ or gcc_only/."""
+    parts = test_file.relative_to(base_dir).parts[:-1]
+    if parts[:1] in ((CLANG_ONLY_DIR,), (GCC_ONLY_DIR,)):
+        parts = parts[1:]
+    return parts[:1] == (STATIC_FAIL_DIR,)
+
+
+@functools.lru_cache(maxsize=None)
+def read_test_comments(test_file: Path) -> tuple[source_directives.Comment, ...]:
+    """The comments of a test, read and lexed once for every compiler and
+    every directive family. Raises DirectiveError if it can't be read."""
+    return source_directives.read_comments(test_file)
+
+
+def parse_test_flags(
+    comments: Sequence[source_directives.Comment], compiler_name: str
+) -> list[str]:
     """Read the inline `// TEST-FLAGS: ...` directives of a test.
 
     Lets a single test declare extra compile flags (e.g. `-O2` for benchmarks)
@@ -535,12 +569,13 @@ def parse_test_flags(source: str, compiler_name: str) -> list[str]:
     come first, followed by those from the `// TEST-FLAGS-<COMPILER>:` variant
     for `compiler_name`, so a test can ask for something only one compiler
     spells (e.g. clang's `-fconstexpr-steps`) without breaking the others.
-    Only the comments at the top of `source` (the test's text), before any
-    code, are read. Returns [] if neither directive is present; if one
-    appears more than once, the last wins. Raises DirectiveError if a
-    directive is malformed or misplaced, or its flags don't parse.
+    Only the test's comments at the top of the file, before any code, are
+    read (`comments` is from read_test_comments). Returns [] if neither
+    directive is present; if one appears more than once, the last wins.
+    Raises DirectiveError if a directive is malformed or misplaced, or its
+    flags don't parse.
     """
-    directives = source_directives.read_directives(source, TEST_FLAGS)
+    directives = source_directives.read_directives(comments, TEST_FLAGS)
 
     def last_flags(name: str) -> list[str]:
         matching = [d for d in directives if d.name == name]
@@ -1042,27 +1077,35 @@ def compile_and_maybe_run(
         include_flags.extend(["-I", str(ROOT / "test_simple")])
 
     relative_path = test_file.relative_to(ROOT)
-    expect_compile_failure = test_file.relative_to(base_dir).parts[0] == STATIC_FAIL_DIR
+    expect_compile_failure = is_static_fail(test_file, base_dir)
     expected_errors: tuple[str, ...] = ()
-    # Read once for both TEST-FLAGS and EXPECT-ERROR, before compiling, so a
-    # test that can't pass doesn't cost a build.
+    # Directives are read before compiling, so a test that can't pass
+    # doesn't cost a build.
     try:
-        source = source_directives.read_source(test_file)
-        test_flags = parse_test_flags(source, spec.name)
+        comments = read_test_comments(test_file)
+        test_flags = parse_test_flags(comments, spec.name)
         if expect_compile_failure:
-            expected_errors = compile_fail_check.parse_expected_errors(source)
-    except (OSError, source_directives.DirectiveError) as error:
+            expected_errors = compile_fail_check.parse_expected_errors(
+                comments, spec.name
+            )
+        else:
+            stray = source_directives.read_directives(
+                comments, compile_fail_check.EXPECT_ERROR
+            )
+            if stray:
+                raise source_directives.DirectiveError(
+                    f"line {stray[0].line}: `// {stray[0].name}:` in a test that "
+                    f"must compile; compile-fail tests go in a {STATIC_FAIL_DIR}/ "
+                    "directory"
+                )
+    except source_directives.DirectiveError as error:
         return TestResult(
             compiler=spec.name,
             test_file=test_file,
             compile_result=None,
             run_result=None,
             expect_compile_failure=expect_compile_failure,
-            compile_fail_reason=(
-                str(error)
-                if isinstance(error, source_directives.DirectiveError)
-                else f"cannot read the test: {error}"
-            ),
+            compile_fail_reason=str(error),
         )
 
     compile_command = [
@@ -1072,12 +1115,19 @@ def compile_and_maybe_run(
         *include_flags,
         *test_flags,
         *args.extra_cxxflag,
+        # Last, so they win; the checker parses the output they produce.
+        *(compile_fail_check.DIAGNOSTIC_FLAGS if expect_compile_failure else ()),
         str(test_file),
         "-o",
         str(output_path),
     ]
     log(f"[{spec.name}] compiling {relative_path} ...")
-    compile_result = run_command(compile_command, cwd=ROOT, verbose=args.verbose)
+    compile_result = run_command(
+        compile_command,
+        cwd=ROOT,
+        verbose=args.verbose,
+        env=compile_fail_check.COMPILE_ENV if expect_compile_failure else None,
+    )
 
     run_result: CommandResult | None = None
     if (

@@ -68,6 +68,10 @@ file(GLOB _clang_only CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/clang_only/
 file(GLOB _gcc_only   CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/gcc_only/*.cpp")
 file(GLOB _static_fail CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/static_fail/*.cpp")
+file(GLOB _clang_only_static_fail CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/clang_only/static_fail/*.cpp")
+file(GLOB _gcc_only_static_fail CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/gcc_only/static_fail/*.cpp")
 
 foreach(_src IN LISTS _common)
     get_filename_component(_name "${_src}" NAME_WE)
@@ -79,6 +83,7 @@ if(_is_clang)
         get_filename_component(_name "${_src}" NAME_WE)
         add_reflect_test(${_name} "${_src}")
     endforeach()
+    list(APPEND _static_fail ${_clang_only_static_fail})
 endif()
 
 if(_is_gcc)
@@ -86,6 +91,7 @@ if(_is_gcc)
         get_filename_component(_name "${_src}" NAME_WE)
         add_reflect_test(${_name} "${_src}")
     endforeach()
+    list(APPEND _static_fail ${_gcc_only_static_fail})
 endif()
 
 compile_check(reflection_ad "${_static_fail}" TRUE)

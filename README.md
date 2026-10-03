@@ -26,15 +26,18 @@ once a gcc engine exposes the same `ad::` interface its drivers can move up to
 binaries, and reports compile vs runtime failures. A test may add flags via a
 `// TEST-FLAGS: ...` comment at the top of the file, before any code
 (benchmarks use it for `-O2`).
-Tests under `tests/static_fail/` are expected **not** to compile (e.g. they
-trip a `static_assert`). Each must name the error it expects in a
+Tests under `tests/static_fail/` (or `clang_only/static_fail/`,
+`gcc_only/static_fail/`) are expected **not** to compile (e.g. they trip a
+`static_assert`). Each must name the error it expects in a
 `// EXPECT-ERROR: <text>` comment at the top of the file, before any code,
 where `<text>` is part of the compiler's error message or of a note attached to
 that error. Use one comment per expected error; each must match a different
-error:
+error. Text that only one compiler prints goes in a `// EXPECT-ERROR-CLANG:` or
+`// EXPECT-ERROR-GCC:` comment (`TEST-FLAGS` has the same variants):
 
 ```cpp
 // EXPECT-ERROR: ad::inverse requires an explicit inverse plan
+// EXPECT-ERROR-CLANG: subexpression not valid in a constant expression
 ```
 
 The repo is **self-contained**: `--build-compilers` builds clang from its own

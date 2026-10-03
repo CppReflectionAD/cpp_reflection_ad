@@ -5,15 +5,21 @@ compile flags) in `//` comments that come before its first line of code:
 
     // EXPECT-ERROR: ad::inverse requires an explicit inverse plan
     // TEST-FLAGS: -O2
+    // TEST-FLAGS-CLANG: -fconstexpr-steps=16000000
     #include "..."
+
+A directive may have a `-<COMPILER>` variant for each of COMPILERS, which
+applies only when building with that compiler.
 
 This is the single implementation of that placement rule, shared by
 run_tests.py (`// TEST-FLAGS:`) and compile_fail_check.py (`// EXPECT-ERROR:`).
 A `//` comment anywhere in the file that reads like a directive of a family
-but is misspelt, or that comes after the first code, is rejected rather than
-silently ignored. Comments are found with a small C++ lexer (see
-_lex_comments), so text inside string literals, raw strings and `/* */`
-comments is never mistaken for a directive.
+but is misspelt (including a variant for a compiler not in COMPILERS), or
+that comes after the first code, is rejected rather than silently ignored.
+Comments are found with a small C++ lexer (see lex_comments), so text inside
+string literals, raw strings and `/* */` comments is never mistaken for a
+directive. A file is lexed once (read_comments), and each family's
+directives are read from the result (read_directives).
 """
 
 from __future__ import annotations
@@ -22,11 +28,16 @@ import bisect
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import NamedTuple
+from typing import NamedTuple, Sequence
+
+# The compilers a directive can have a `-<COMPILER>` variant for; also the
+# compilers run_tests.py builds with.
+COMPILERS = ("clang", "gcc")
 
 
 class DirectiveError(ValueError):
-    """A test's directives are missing or malformed."""
+    """A test's directives can't be read: the file is unreadable, or its
+    directives are missing or malformed."""
 
 
 class Directive(NamedTuple):
@@ -49,8 +60,34 @@ class DirectiveFamily:
     near_miss: re.Pattern[str]
     usage: str
 
+    @classmethod
+    def with_compiler_variants(
+        cls, name: str, argument: str, near_miss: re.Pattern[str]
+    ) -> DirectiveFamily:
+        """`// NAME: <argument>`, plus `// NAME-<COMPILER>:` for each of
+        COMPILERS. A suffix naming any other compiler is not well formed, so
+        it is reported if `near_miss` matches it."""
+        variants = "|".join(compiler.upper() for compiler in COMPILERS)
+        return cls(
+            pattern=re.compile(rf"// (?P<name>{re.escape(name)}(?:-(?:{variants}))?):"),
+            near_miss=near_miss,
+            usage=f"`// {name}: <{argument}>`, or `// {name}-<{variants}>: "
+            f"<{argument}>` for one compiler",
+        )
 
-class _Comment(NamedTuple):
+
+def for_compiler(
+    directives: Sequence[Directive], name: str, compiler: str
+) -> list[Directive]:
+    """The directives in `directives` that apply to `compiler`: those named
+    `name` and those named `name-<COMPILER>`, in order."""
+    if compiler not in COMPILERS:
+        raise ValueError(f"unknown compiler {compiler!r}; expected one of {COMPILERS}")
+    names = (name, f"{name}-{compiler.upper()}")
+    return [directive for directive in directives if directive.name in names]
+
+
+class Comment(NamedTuple):
     line: int  # where it starts
     text: str  # from `//` to the end of the line, line splices removed
     before_code: bool  # whether it comes before the first token of code
@@ -71,7 +108,19 @@ def read_source(path: Path) -> str:
     return path.read_text(encoding="utf-8-sig", errors="replace")
 
 
-def _lex_comments(source: str) -> list[_Comment]:
+def read_comments(path: Path) -> tuple[Comment, ...]:
+    """The `//` comments of the test at `path` (see lex_comments).
+
+    Raises DirectiveError if the file can't be read.
+    """
+    try:
+        source = read_source(path)
+    except OSError as error:
+        raise DirectiveError(f"cannot read the test: {error}") from None
+    return lex_comments(source)
+
+
+def lex_comments(source: str) -> tuple[Comment, ...]:
     """The `//` comments in C++ `source`, in order.
 
     A state machine over the characters of the file: code, `//` comment,
@@ -112,7 +161,7 @@ def _lex_comments(source: str) -> list[_Comment]:
                 return i + 1
             i = skip_splices(i + 1) + 1 if ch == "\\" else i + 1
 
-    comments: list[_Comment] = []
+    comments: list[Comment] = []
     seen_code = False
     i = 0
     while True:
@@ -129,7 +178,7 @@ def _lex_comments(source: str) -> list[_Comment]:
                     break
                 end += 1
             text = _SPLICE_RE.sub("", source[i:end]).rstrip("\r")
-            comments.append(_Comment(line_of(i), text, not seen_code))
+            comments.append(Comment(line_of(i), text, not seen_code))
             i = end
         elif ch == "/" and char_at(after) == "*":
             end = after + 1
@@ -195,11 +244,13 @@ def _lex_comments(source: str) -> list[_Comment]:
                 i = literal_end(i + 1, ch)
             else:
                 i += 1
-    return comments
+    return tuple(comments)
 
 
-def read_directives(source: str, family: DirectiveFamily) -> list[Directive]:
-    """Every directive of `family` in C++ `source`, in order.
+def read_directives(
+    comments: Sequence[Comment], family: DirectiveFamily
+) -> list[Directive]:
+    """Every directive of `family` among a file's `comments`, in order.
 
     A directive is a `//` comment that comes before the first token of code
     (after blank lines and other comments, `/* */` ones included) and starts
@@ -208,7 +259,7 @@ def read_directives(source: str, family: DirectiveFamily) -> list[Directive]:
     but is not such a directive: a misspelling, or a directive after code.
     """
     directives = []
-    for comment in _lex_comments(source):
+    for comment in comments:
         match = family.pattern.match(comment.text)
         if comment.before_code and match:
             directives.append(
@@ -222,12 +273,12 @@ def read_directives(source: str, family: DirectiveFamily) -> list[Directive]:
             if comment.before_code:
                 raise DirectiveError(
                     f"line {comment.line}: malformed directive "
-                    f"{comment.text!r}; write `{family.usage}`"
+                    f"{comment.text!r}; write {family.usage}"
                 )
             raise DirectiveError(
                 f"line {comment.line}: directive {comment.text!r} comes after "
-                f"code; put `{family.usage}` in the comments at the top of the "
-                "file, before any code"
+                "code; directives go in the comments at the top of the file, "
+                "before any code"
             )
     return directives
 
