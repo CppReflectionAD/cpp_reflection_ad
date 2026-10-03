@@ -125,16 +125,9 @@ template <std::size_t MaxPoints = 16> struct DiscontinuityPointsWithAmplitudes {
 
   // Access as flat array [point0, amp0, point1, amp1, ...]
   constexpr double operator[](std::size_t i) const { return data[i]; }
-};
 
-// Collects (point, amplitude) pairs during the analysis. constexpr (not
-// consteval) so the runtime entry point can use it too.
-template <std::size_t MaxPoints = 16>
-struct DiscontinuityCollectorWithAmplitudes {
-  std::array<double, MaxPoints * 2> data = {}; // pairs of (point, amplitude)
-  std::size_t count = 0;
-
-  // A point that does not fit is an error, not a silent omission.
+  // Appends a pair; the analysis adds them in order of their points. A point
+  // that does not fit is an error, not a silent omission.
   constexpr void add_point_with_amplitude(double point, double amplitude) {
     if (count == MaxPoints)
       throw "discontinuity_analysis: Fn has more discontinuities than "
@@ -142,29 +135,6 @@ struct DiscontinuityCollectorWithAmplitudes {
     data[count * 2] = point;
     data[count * 2 + 1] = amplitude;
     count++;
-  }
-
-  constexpr void sort_by_points() {
-    // Bubble sort by points (consteval-friendly)
-    for (std::size_t i = 0; i < count; ++i) {
-      for (std::size_t j = i + 1; j < count; ++j) {
-        if (data[j * 2] < data[i * 2]) {
-          // Swap points
-          double tmp_p = data[i * 2];
-          data[i * 2] = data[j * 2];
-          data[j * 2] = tmp_p;
-          // Swap amplitudes
-          double tmp_a = data[i * 2 + 1];
-          data[i * 2 + 1] = data[j * 2 + 1];
-          data[j * 2 + 1] = tmp_a;
-        }
-      }
-    }
-  }
-
-  // Return result with count information
-  constexpr DiscontinuityPointsWithAmplitudes<MaxPoints> get_result() const {
-    return {data, count};
   }
 };
 
@@ -807,7 +777,7 @@ analyze(const std::array<double, NumArgs> &in) {
     order[at] = c;
   }
 
-  DiscontinuityCollectorWithAmplitudes<MaxPoints> collector;
+  DiscontinuityPointsWithAmplitudes<MaxPoints> result;
   // Roots each within kClusterUlps of the one before are one point, measured
   // once: they are often one crossing in exact arithmetic (`s * 1.1 > k`
   // and `s / 0.9 > k / 0.99`), and Fn's own arithmetic can make a
@@ -865,10 +835,10 @@ analyze(const std::array<double, NumArgs> &in) {
     };
     if (jump != 0.0 && !disagrees(jump_at(step_ulps(lowest, -kKinkUlps))) &&
         !disagrees(jump_at(step_ulps(highest, kKinkUlps))))
-      collector.add_point_with_amplitude(point, jump);
+      result.add_point_with_amplitude(point, jump);
   }
 
-  return collector.get_result();
+  return result;
 }
 
 } // namespace detail_disc
