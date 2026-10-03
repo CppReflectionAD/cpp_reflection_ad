@@ -352,23 +352,23 @@ struct IeeeCxMath {
     return (std::bit_cast<std::uint64_t>(x) >> 63) != 0;
   }
 
-  static constexpr double add(double a, double b) {
+  [[gnu::always_inline]] static constexpr double add(double a, double b) {
     if (is_nan(a) || is_nan(b) || (is_inf(a) && is_inf(b) && a != b))
       return kNaN;
     return a + b;
   }
-  static constexpr double sub(double a, double b) {
+  [[gnu::always_inline]] static constexpr double sub(double a, double b) {
     if (is_nan(a) || is_nan(b) || (is_inf(a) && is_inf(b) && a == b))
       return kNaN;
     return a - b;
   }
-  static constexpr double mul(double a, double b) {
+  [[gnu::always_inline]] static constexpr double mul(double a, double b) {
     if (is_nan(a) || is_nan(b) || (is_inf(a) && b == 0.0) ||
         (a == 0.0 && is_inf(b)))
       return kNaN;
     return a * b;
   }
-  static constexpr double div(double a, double b) {
+  [[gnu::always_inline]] static constexpr double div(double a, double b) {
     if (is_nan(a) || is_nan(b) || (a == 0.0 && b == 0.0) ||
         (is_inf(a) && is_inf(b)))
       return kNaN;
@@ -376,9 +376,10 @@ struct IeeeCxMath {
       return sign_bit(a) != sign_bit(b) ? -kInf : kInf;
     return a / b;
   }
-  static constexpr double neg(double a) { return -a; }
+  [[gnu::always_inline]] static constexpr double neg(double a) { return -a; }
 
-  template <OpKind Op> static constexpr double unary(double x) {
+  template <OpKind Op>
+  [[gnu::always_inline]] static constexpr double unary(double x) {
     if constexpr (Op == OpKind::Exp)
       return cx::exp(x);
     else if constexpr (Op == OpKind::Log)

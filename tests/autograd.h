@@ -178,13 +178,33 @@ consteval bool op_is_boolean(OpKind op) {
 // The arithmetic and functions primal() evaluates with: the built-in operators
 // and <cmath>. A sweep with other needs (e.g. staying inside constant
 // evaluation) passes its own type with the same members.
+//
+// primal() and these members are always inlined, so even an unoptimized
+// build makes no call per node. (Unoptimized, the shared rules still cost
+// forward_derivative ~10% over hand-written per-sweep tables, from parameter
+// copies only optimization removes; at -O2 and up the cost is nil.)
 struct BuiltinMath {
-  template <typename T> static constexpr T add(T a, T b) { return a + b; }
-  template <typename T> static constexpr T sub(T a, T b) { return a - b; }
-  template <typename T> static constexpr T mul(T a, T b) { return a * b; }
-  template <typename T> static constexpr T div(T a, T b) { return a / b; }
-  template <typename T> static constexpr T neg(T a) { return -a; }
-  template <OpKind Op, typename T> static constexpr T unary(T x) {
+  template <typename T>
+  [[gnu::always_inline]] static constexpr T add(T a, T b) {
+    return a + b;
+  }
+  template <typename T>
+  [[gnu::always_inline]] static constexpr T sub(T a, T b) {
+    return a - b;
+  }
+  template <typename T>
+  [[gnu::always_inline]] static constexpr T mul(T a, T b) {
+    return a * b;
+  }
+  template <typename T>
+  [[gnu::always_inline]] static constexpr T div(T a, T b) {
+    return a / b;
+  }
+  template <typename T> [[gnu::always_inline]] static constexpr T neg(T a) {
+    return -a;
+  }
+  template <OpKind Op, typename T>
+  [[gnu::always_inline]] static constexpr T unary(T x) {
     if constexpr (Op == OpKind::Sin)
       return std::sin(x);
     else if constexpr (Op == OpKind::Cos)
@@ -212,7 +232,7 @@ consteval bool op_has_primal(OpKind op) {
 // it takes, and And / Or use b only when a leaves them undecided -- exactly
 // when b's branch was reached, so its slot was written.
 template <OpKind Op, typename Math = BuiltinMath, typename T>
-constexpr T primal(T a, T b, T c) {
+[[gnu::always_inline]] constexpr T primal(T a, T b, T c) {
   if constexpr (Op == OpKind::Output)
     return a;
   else if constexpr (Op == OpKind::Add)
