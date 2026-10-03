@@ -16,7 +16,7 @@ test runners: run_tests.py and CTest (through compile_fail_check.py and
 test_directives_cmake.py) read every test with read_test_directives. A
 `//` comment at the top of the file that reads like a directive but is
 misspelt (including a variant for a compiler not in COMPILERS), a directive
-name in a `/* */` comment, a directive after the first code, and an
+(its name and a colon) in a `/* */` comment or after the first code, and an
 EXPECT-ERROR in a test that must compile are all rejected rather than
 silently ignored. Comments are found with a small C++ lexer (see
 lex_comments), so text inside string literals and raw strings is never
@@ -57,9 +57,10 @@ class DirectiveFamily:
     the name in group "name"; `near_miss` matches the start of a `//` comment
     at the top of the file that reads like one (it should also match every
     well-formed one). `misplaced` matches the directive's own name, in upper
-    case and with `-` or `_`: a `//` comment after code, or a line of a
-    `/* */` comment, that starts with it is a directive in the wrong place.
-    (Prose such as `// expected error: none` after code is left alone.)
+    case and with `-` or `_`, then any `-<SUFFIX>` and a colon: a `//`
+    comment after code, or a line of a `/* */` comment, that starts with it
+    is a directive in the wrong place. (Prose such as `// expected error:
+    none` or `// EXPECT-ERROR handling below` after code is left alone.)
     `usage` is how a well-formed directive is written, for error messages.
     """
 
@@ -80,7 +81,7 @@ class DirectiveFamily:
         return cls(
             pattern=re.compile(rf"// (?P<name>{re.escape(name)}(?:-(?:{variants}))?):"),
             near_miss=near_miss,
-            misplaced=re.compile(rf"{spelled}\b"),
+            misplaced=re.compile(rf"{spelled}(?:[-_]\w+)?\s*:"),
             usage=f"`// {name}: <{argument}>`, or `// {name}-<{variants}>: "
             f"<{argument}>` for one compiler",
         )
@@ -148,8 +149,6 @@ def lex_comments(source: str) -> tuple[Comment, ...]:
     found. It does not otherwise tokenize or preprocess: a `//` inside
     `#include <...>` would read as a comment.
     """
-    if source.startswith("\ufeff"):
-        source = source[1:]
     newlines = [m.start() for m in re.finditer("\n", source)]
     n = len(source)
 
@@ -373,9 +372,9 @@ def read_test_directives(
     once, the last wins. Raises DirectiveError if a directive is malformed,
     misplaced or empty, its flags don't parse, or the rules above are broken.
     """
-    if compiler not in COMPILERS:
-        raise ValueError(f"unknown compiler {compiler!r}; expected one of {COMPILERS}")
-    flag_directives = read_directives(comments, TEST_FLAGS)
+    flag_directives = for_compiler(
+        read_directives(comments, TEST_FLAGS), "TEST-FLAGS", compiler
+    )
 
     def last_flags(name: str) -> list[str]:
         matching = [d for d in flag_directives if d.name == name]

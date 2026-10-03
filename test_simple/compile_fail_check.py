@@ -86,13 +86,19 @@ _DIAGNOSTIC_HEADER_RE = re.compile(
 _ERROR_KINDS = frozenset({"error", "fatal error", "sorry, unimplemented"})
 # A <file-or-tool> prefix with a C or C++ source or header extension is a
 # file (gcc prints a diagnostic without a line that way); otherwise it is a
-# tool, which counts only if it is the compiler (driver or cc1), not the
-# linker (`collect2`, `ld.lld`) or the build tool (`ninja`, `make`); nor
-# does the driver's report that the linker failed.
+# tool, which counts only if it is the compiler: its whole name is a driver
+# or cc1 name, with any target prefix and version suffix (`clang++`,
+# `x86_64-linux-gnu-g++-14`, `cc1plus`), not another tool that merely
+# contains one (`clang-linker-wrapper`, `gcc-ar`), the linker (`collect2`,
+# `ld.lld`) or the build tool (`ninja`, `make`); nor does the driver's
+# report that the linker failed.
 _SOURCE_FILE_RE = re.compile(
     r"\.(?:c|cc|cp|cpp|cxx|c\+\+|cppm|ixx|ii|h|hh|hpp|hxx|h\+\+|ipp|tpp|tcc|inc|C|H)$"
 )
-_COMPILER_TOOL_RE = re.compile(r"clang|gcc|g\+\+|c\+\+|cc1")
+_COMPILER_TOOL_RE = re.compile(
+    r"(?:[\w.]+-)*(?:clang(?:\+\+)?|gcc|g\+\+|c\+\+|cc|cc1(?:plus)?)"
+    r"(?:-\d+(?:\.\d+)*)?(?:\.exe)?"
+)
 _LINKER_FAILED = "linker command failed"
 # A note in gcc's nested diagnostics (how the gcc trunk this repo builds
 # prints them by default): an indented bullet line under the error, `•` or
@@ -141,7 +147,7 @@ def _crash(returncode: int, lines: list[str]) -> str | None:
 
 def _is_compiler(prefix: str) -> bool:
     name = PurePath(prefix).name
-    return bool(_SOURCE_FILE_RE.search(name) or _COMPILER_TOOL_RE.search(name))
+    return bool(_SOURCE_FILE_RE.search(name) or _COMPILER_TOOL_RE.fullmatch(name))
 
 
 def error_diagnostics(output: str) -> list[tuple[str, ...]]:

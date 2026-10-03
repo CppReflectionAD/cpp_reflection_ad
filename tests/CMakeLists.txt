@@ -51,11 +51,8 @@ endif()
 # Helper: register one test executable
 # ---------------------------------------------------------------------------
 function(add_reflect_test name source)
-    directive_error_test(${name} "${source}" FALSE _invalid)
-    if(_invalid)
-        return()
-    endif()
     add_executable(${name} ${source})
+    test_flags(${name} "${source}" FALSE)
     target_compile_options(${name} PRIVATE
         -std=c++2c
         ${_reflect_flags}
@@ -73,11 +70,11 @@ endfunction()
 file(GLOB _common   CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
 file(GLOB _clang_only CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/clang_only/*.cpp")
 file(GLOB _gcc_only   CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/gcc_only/*.cpp")
-file(GLOB _static_fail CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
+file(GLOB_RECURSE _static_fail CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/static_fail/*.cpp")
-file(GLOB _clang_only_static_fail CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
+file(GLOB_RECURSE _clang_only_static_fail CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/clang_only/static_fail/*.cpp")
-file(GLOB _gcc_only_static_fail CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
+file(GLOB_RECURSE _gcc_only_static_fail CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/gcc_only/static_fail/*.cpp")
 
 set(_must_compile ${_common})
@@ -89,10 +86,6 @@ if(_is_gcc)
     list(APPEND _must_compile ${_gcc_only})
     list(APPEND _static_fail ${_gcc_only_static_fail})
 endif()
-
-# Their `// TEST-FLAGS:` and `// EXPECT-ERROR:` directives, read as
-# run_tests.py reads them.
-read_test_directives(${_compiler} MUST_COMPILE ${_must_compile} MUST_FAIL ${_static_fail})
 
 foreach(_src IN LISTS _must_compile)
     get_filename_component(_name "${_src}" NAME_WE)

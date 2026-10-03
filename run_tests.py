@@ -344,6 +344,8 @@ def run_command(
         cwd=cwd,
         capture_output=True,
         text=True,
+        # A diagnostic may echo a source line that isn't UTF-8.
+        errors="replace",
         env={**os.environ, **env} if env else None,
     )
     return CommandResult(

@@ -45,9 +45,11 @@ goes in a `// EXPECT-ERROR-CLANG:` or `// EXPECT-ERROR-GCC:` comment
 A misspelt or misplaced directive fails the test instead of being ignored.
 CTest reads the directives with the same code as `run_tests.py`
 (`test_simple/source_directives.py`), so it builds each test with its
-`TEST-FLAGS` and rejects the same mistakes. That code runs when CMake
-configures `tests/`, which therefore needs Python 3.7 or newer; configure with
-`-DBUILD_TESTING=OFF` to build without the tests.
+`TEST-FLAGS` and rejects the same mistakes. That code runs when a test is
+built (and again whenever it changes, without re-running CMake), so building
+the tests needs Python 3.7 or newer; configure with `-DBUILD_TESTING=OFF` to
+build without them. A test whose directives are invalid fails to build, as it
+would with a compile error.
 
 The repo is **self-contained**: `--build-compilers` builds clang from its own
 `clang-p2996` submodule into `build/` — no externally pre-built compiler needed.
