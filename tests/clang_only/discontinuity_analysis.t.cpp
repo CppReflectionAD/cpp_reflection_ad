@@ -72,12 +72,42 @@ double ne_payoff(double spot, double strike) {
   return (spot != strike) ? 1.0 : 0.0;
 }
 
-// Test function that measures the actual jump on the function itself
-double measure_jump_on_function(double (*payoff)(double, double), double strike,
-                                double epsilon = 1e-8) {
-  double before = payoff(strike - epsilon, strike);
-  double after = payoff(strike + epsilon, strike);
-  return after - before; // This is the actual jump in the function value
+// Target on the right-hand side of the comparison, one per operand kind
+double const_gt_spot(double spot) { return (100.0 > spot) ? 1.0 : 0.0; }
+double strike_lt_spot(double spot, double strike) {
+  return (strike < spot) ? 1.0 : 0.0;
+}
+double strike_plus_one_gt_spot(double spot, double strike) {
+  return (strike + 1 > spot) ? 1.0 : 0.0;
+}
+
+// Le/Ge
+double digital_put_le(double spot, double strike) {
+  return (spot <= strike) ? 1.0 : 0.0;
+}
+double digital_call_ge(double spot, double strike) {
+  return (spot >= strike) ? 1.0 : 0.0;
+}
+
+// #68: the target inside the other operand, under a coefficient, or compared
+// against an expression more than one level deep.
+double spot_gt_spot_times_k(double spot, double k) {
+  return (spot > spot * k) ? 1.0 : 0.0;
+}
+double spot_gt_strike_minus_spot(double spot, double strike) {
+  return (spot > strike - spot) ? 1.0 : 0.0;
+}
+double spot_gt_two_strike_minus_one(double spot, double strike) {
+  return (spot > 2.0 * strike - 1.0) ? 1.0 : 0.0;
+}
+double two_spot_gt_strike(double spot, double strike) {
+  return (2.0 * spot > strike) ? 1.0 : 0.0;
+}
+
+// Jump of payoff(spot, strike) as spot crosses `point` upward.
+double measure_jump_on_function(double (*payoff)(double, double), double point,
+                                double strike, double epsilon = 1e-8) {
+  return payoff(point + epsilon, strike) - payoff(point - epsilon, strike);
 }
 
 int main() {
@@ -257,6 +287,94 @@ int main() {
       (ad::get_discontinuity_points_and_amplitudes_rt<^^eq_payoff, 0>(100.0)
            .size()),
       0);
+
+  // Constant on the left, target on the right
+  constexpr auto disc_c2 =
+      ad::get_discontinuity_points_and_amplitudes<^^const_gt_spot, 0>();
+  EXPECT_EQUAL(disc_c2.size(), 1);
+  EXPECT_EQUAL(disc_c2.point(0), 100.0);
+  EXPECT_EQUAL(disc_c2.amplitude(0), -1.0);
+  EXPECT_EQUAL(const_gt_spot(100.0 + 1e-8) - const_gt_spot(100.0 - 1e-8),
+               disc_c2.amplitude(0));
+
+  // Other input on the left, target on the right
+  constexpr auto disc_c4 =
+      ad::get_discontinuity_points_and_amplitudes<^^strike_lt_spot, 0>(100.0);
+  EXPECT_EQUAL(disc_c4.size(), 1);
+  EXPECT_EQUAL(disc_c4.point(0), 100.0);
+  EXPECT_EQUAL(disc_c4.amplitude(0), 1.0);
+  EXPECT_EQUAL(measure_jump_on_function(strike_lt_spot, 100.0, 100.0),
+               disc_c4.amplitude(0));
+
+  // Binary op on the left, target on the right
+  constexpr auto disc_c6 =
+      ad::get_discontinuity_points_and_amplitudes<^^strike_plus_one_gt_spot, 0>(
+          100.0);
+  EXPECT_EQUAL(disc_c6.size(), 1);
+  EXPECT_EQUAL(disc_c6.point(0), 101.0);
+  EXPECT_EQUAL(disc_c6.amplitude(0), -1.0);
+  EXPECT_EQUAL(measure_jump_on_function(strike_plus_one_gt_spot, 101.0, 100.0),
+               disc_c6.amplitude(0));
+
+  // Le / Ge
+  constexpr auto disc_le =
+      ad::get_discontinuity_points_and_amplitudes<^^digital_put_le, 0>(100.0);
+  EXPECT_EQUAL(disc_le.amplitude(0), -1.0);
+  EXPECT_EQUAL(measure_jump_on_function(digital_put_le, 100.0, 100.0),
+               disc_le.amplitude(0));
+  constexpr auto disc_ge =
+      ad::get_discontinuity_points_and_amplitudes<^^digital_call_ge, 0>(100.0);
+  EXPECT_EQUAL(disc_ge.amplitude(0), 1.0);
+  EXPECT_EQUAL(measure_jump_on_function(digital_call_ge, 100.0, 100.0),
+               disc_ge.amplitude(0));
+
+  // The runtime entry point shares the analysis
+  const auto disc_put_rt =
+      ad::get_discontinuity_points_and_amplitudes_rt<^^digital_put_payoff, 0>(
+          100.0);
+  EXPECT_EQUAL(disc_put_rt.size(), 1);
+  EXPECT_EQUAL(disc_put_rt.point(0), 100.0);
+  EXPECT_EQUAL(disc_put_rt.amplitude(0), -1.0);
+
+  // #68: the crossing is the root of lhs - rhs, whatever the shape.
+  // s > s * k with k = 2: true for s < 0, so the jump at 0 is -1.
+  constexpr auto disc_sk =
+      ad::get_discontinuity_points_and_amplitudes<^^spot_gt_spot_times_k, 0>(
+          2.0);
+  EXPECT_EQUAL(disc_sk.size(), 1);
+  EXPECT_EQUAL(disc_sk.point(0), 0.0);
+  EXPECT_EQUAL(disc_sk.amplitude(0), -1.0);
+  EXPECT_EQUAL(measure_jump_on_function(spot_gt_spot_times_k, 0.0, 2.0),
+               disc_sk.amplitude(0));
+  // s > k - s: crosses at k / 2
+  constexpr auto disc_kms =
+      ad::get_discontinuity_points_and_amplitudes<^^spot_gt_strike_minus_spot,
+                                                  0>(100.0);
+  EXPECT_EQUAL(disc_kms.size(), 1);
+  EXPECT_EQUAL(disc_kms.point(0), 50.0);
+  EXPECT_EQUAL(disc_kms.amplitude(0), 1.0);
+  EXPECT_EQUAL(measure_jump_on_function(spot_gt_strike_minus_spot, 50.0, 100.0),
+               disc_kms.amplitude(0));
+  // s > 2k - 1: a two-level operand, crosses at 199
+  constexpr auto disc_2k = ad::get_discontinuity_points_and_amplitudes<
+      ^^spot_gt_two_strike_minus_one, 0>(100.0);
+  EXPECT_EQUAL(disc_2k.size(), 1);
+  EXPECT_EQUAL(disc_2k.point(0), 199.0);
+  EXPECT_EQUAL(disc_2k.amplitude(0), 1.0);
+  EXPECT_EQUAL(
+      measure_jump_on_function(spot_gt_two_strike_minus_one, 199.0, 100.0),
+      disc_2k.amplitude(0));
+  // 2s > k: the target under a coefficient, crosses at 50
+  constexpr auto disc_2s =
+      ad::get_discontinuity_points_and_amplitudes<^^two_spot_gt_strike, 0>(
+          100.0);
+  EXPECT_EQUAL(disc_2s.size(), 1);
+  EXPECT_EQUAL(disc_2s.point(0), 50.0);
+  EXPECT_EQUAL(disc_2s.amplitude(0), 1.0);
+  EXPECT_EQUAL(measure_jump_on_function(two_spot_gt_strike, 50.0, 100.0),
+               disc_2s.amplitude(0));
+  EXPECT_EQUAL(
+      (ad::get_discontinuity_points<^^two_spot_gt_strike, 0>(100.0)[0]), 50.0);
 
   TEST_END;
 }

@@ -20,6 +20,10 @@
 //   4. Return as a static array (assuming finite discontinuities)
 
 #include "../autograd.h"
+#include "../cx_std/cx_erfc.hpp"
+#include "../cx_std/cx_exp.hpp"
+#include "../cx_std/cx_log.hpp"
+#include "../cx_std/cx_sqrt.hpp"
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -240,48 +244,232 @@ constexpr double shallow_value(const std::array<double, NumArgs> &in,
   }
 }
 
-template <info Fn, std::size_t I, std::size_t Target>
-consteval bool is_target_input() {
-  constexpr Node n = nodes_of<Fn>[I];
-  return n.op == OpKind::Input && n.self == Target;
+template <info Fn> consteval std::size_t input_count() {
+  std::size_t count = 0;
+  for (const Node &n : nodes_of<Fn>)
+    count += n.op == OpKind::Input;
+  return count;
 }
 
-// An operand the boundary can be read from: a literal, another input, or one
-// + - * / node.
-template <info Fn, std::size_t I, std::size_t Target, std::size_t NumArgs>
-consteval bool is_boundary_operand() {
-  constexpr Node n = nodes_of<Fn>[I];
-  return n.op == OpKind::Const ||
-         (n.op == OpKind::Input && n.self != Target && n.self < NumArgs) ||
-         is_arithmetic(n.op);
+// How a node's value depends on the target input.
+struct Dependence {
+  bool varies = false; // it changes with the target
+  bool affine = true;  // ... and only as c0 + c1 * target
+};
+
+// Per node, built in one forward pass (operands precede their users). Affine
+// means built from the target with + -, unary - and * / by target-free
+// values: what a comparison's operands must be for its crossing point to be
+// solved exactly.
+template <info Fn, std::size_t Target>
+consteval std::vector<Dependence> dependence() {
+  const auto nodes = nodes_of<Fn>;
+  std::vector<Dependence> dep(nodes.size());
+  for (const Node &n : nodes) {
+    Dependence &d = dep[n.self];
+    if (n.op == OpKind::Input) {
+      d.varies = n.self == Target;
+      continue;
+    }
+    const Dependence a = op_has_a(n.op) ? dep[n.a] : Dependence{};
+    const Dependence b = op_has_b(n.op) ? dep[n.b] : Dependence{};
+    d.varies =
+        a.varies || b.varies || (op_has_cond(n.op) && dep[n.cond].varies);
+    if (n.op == OpKind::Add || n.op == OpKind::Sub)
+      d.affine = a.affine && b.affine;
+    else if (n.op == OpKind::Neg || n.op == OpKind::Output)
+      d.affine = a.affine;
+    else if (n.op == OpKind::Mul)
+      d.affine = a.affine && b.affine && !(a.varies && b.varies);
+    else if (n.op == OpKind::Div)
+      d.affine = a.affine && !b.varies;
+    else
+      d.affine = !d.varies;
+  }
+  return dep;
 }
 
-// Slope of (lhs - rhs) in the target for comparison C, or 0 when C does not
-// have one of the six recognised shapes:
-//   Case 1/2: the target against a constant (target on the left/right);
-//   Case 3/4: the target against another input;
-//   Case 5/6: the target against a + - * / node, e.g. `strike - 1`.
-template <info Fn, std::size_t C, std::size_t Target, std::size_t NumArgs>
-consteval double boundary_slope() {
-  constexpr Node n = nodes_of<Fn>[C];
-  if constexpr (is_target_input<Fn, n.a, Target>() &&
-                is_boundary_operand<Fn, n.b, Target, NumArgs>())
-    return 1.0;
-  else if constexpr (is_target_input<Fn, n.b, Target>() &&
-                     is_boundary_operand<Fn, n.a, Target, NumArgs>())
-    return -1.0;
-  else
+template <info Fn, std::size_t Target>
+inline constexpr auto dependence_of =
+    std::define_static_array(dependence<Fn, Target>());
+
+// A comparison whose outcome changes as the target moves.
+template <info Fn, std::size_t Target>
+consteval bool is_crossing(const Node &n) {
+  const auto dep = dependence_of<Fn, Target>;
+  return is_ordering(n.op) && (dep[n.a].varies || dep[n.b].varies);
+}
+
+// The nodes a crossing comparison reads, directly or not: what has to be
+// evaluated to place it.
+template <info Fn, std::size_t Target>
+consteval std::vector<char> crossing_operands() {
+  const auto nodes = nodes_of<Fn>;
+  std::vector<char> needed(nodes.size(), 0);
+  for (std::size_t i = nodes.size(); i-- > 0;) {
+    const Node &n = nodes[i];
+    if (!needed[i] && !is_crossing<Fn, Target>(n))
+      continue;
+    if (op_has_a(n.op))
+      needed[n.a] = 1;
+    if (op_has_b(n.op))
+      needed[n.b] = 1;
+    if (op_has_cond(n.op))
+      needed[n.cond] = 1;
+  }
+  return needed;
+}
+
+template <info Fn, std::size_t Target>
+inline constexpr auto crossing_operands_of =
+    std::define_static_array(crossing_operands<Fn, Target>());
+
+// <cmath> is not constexpr in this toolchain, so during constant evaluation
+// the cx_std versions stand in. There is no cx_std sin/cos: a sin or cos on
+// an evaluated path only works through the runtime entry point.
+template <OpKind Op> constexpr double unary_math(double x) {
+  if consteval {
+    if constexpr (Op == OpKind::Exp)
+      return cx::exp(x);
+    else if constexpr (Op == OpKind::Log)
+      return cx::log(x);
+    else if constexpr (Op == OpKind::Sqrt)
+      return cx::sqrt(x);
+    else if constexpr (Op == OpKind::Erfc)
+      return cx::erfc(x);
+    else if constexpr (Op == OpKind::Sin)
+      return std::sin(x);
+    else
+      return std::cos(x);
+  } else {
+    if constexpr (Op == OpKind::Exp)
+      return std::exp(x);
+    else if constexpr (Op == OpKind::Log)
+      return std::log(x);
+    else if constexpr (Op == OpKind::Sqrt)
+      return std::sqrt(x);
+    else if constexpr (Op == OpKind::Erfc)
+      return std::erfc(x);
+    else if constexpr (Op == OpKind::Sin)
+      return std::sin(x);
+    else
+      return std::cos(x);
+  }
+}
+
+// Value of node I from the values of the nodes before it, with the target
+// input at x. Only plain copies of `n`'s fields appear in runtime code: naming
+// the (consteval-only) Node there would make this function immediate.
+template <info Fn, std::size_t I, std::size_t Target, std::size_t N,
+          std::size_t NumArgs>
+constexpr double node_value(const std::array<double, N> &val,
+                            const std::array<double, NumArgs> &in, double x) {
+  constexpr Node n = nodes_of<Fn>[I];
+  constexpr OpKind op = n.op;
+  constexpr std::size_t a = n.a, b = n.b, c = n.cond;
+  if constexpr (op == OpKind::Input) {
+    if constexpr (I == Target)
+      return x;
+    else
+      return in[I];
+  } else if constexpr (op == OpKind::Const) {
+    return static_cast<double>([:n.leaf:]);
+  } else if constexpr (op == OpKind::Output) {
+    return val[a];
+  } else if constexpr (op == OpKind::Add) {
+    return val[a] + val[b];
+  } else if constexpr (op == OpKind::Sub) {
+    return val[a] - val[b];
+  } else if constexpr (op == OpKind::Mul) {
+    return val[a] * val[b];
+  } else if constexpr (op == OpKind::Div) {
+    return val[a] / val[b];
+  } else if constexpr (op == OpKind::Neg) {
+    return -val[a];
+  } else if constexpr (op == OpKind::Sin || op == OpKind::Cos ||
+                       op == OpKind::Exp || op == OpKind::Log ||
+                       op == OpKind::Sqrt || op == OpKind::Erfc) {
+    return unary_math<op>(val[a]);
+  } else if constexpr (op == OpKind::Lt) {
+    return val[a] < val[b] ? 1.0 : 0.0;
+  } else if constexpr (op == OpKind::Le) {
+    return val[a] <= val[b] ? 1.0 : 0.0;
+  } else if constexpr (op == OpKind::Gt) {
+    return val[a] > val[b] ? 1.0 : 0.0;
+  } else if constexpr (op == OpKind::Ge) {
+    return val[a] >= val[b] ? 1.0 : 0.0;
+  } else if constexpr (op == OpKind::Eq) {
+    return val[a] == val[b] ? 1.0 : 0.0;
+  } else if constexpr (op == OpKind::Ne) {
+    return val[a] != val[b] ? 1.0 : 0.0;
+  } else if constexpr (op == OpKind::Not) {
+    return val[a] != 0.0 ? 0.0 : 1.0;
+  } else if constexpr (op == OpKind::And) {
+    return (val[a] != 0.0 && val[b] != 0.0) ? 1.0 : 0.0;
+  } else if constexpr (op == OpKind::Or) {
+    return (val[a] != 0.0 || val[b] != 0.0) ? 1.0 : 0.0;
+  } else if constexpr (op == OpKind::Select) {
+    return val[c] != 0.0 ? val[a] : val[b];
+  } else if constexpr (op == OpKind::Abs) {
+    return val[a] < 0.0 ? -val[a] : val[a];
+  } else if constexpr (op == OpKind::Max) {
+    return val[a] < val[b] ? val[b] : val[a];
+  } else if constexpr (op == OpKind::Min) {
+    return val[b] < val[a] ? val[b] : val[a];
+  } else {
+    static_assert(false, "discontinuity_analysis: unsupported operation");
+  }
+}
+
+// d(node I)/d(target). Every target-dependent node a crossing reads is affine
+// (see Dependence), so only those ops need a rule.
+template <info Fn, std::size_t I, std::size_t Target, std::size_t N>
+constexpr double node_tangent(const std::array<double, N> &val,
+                              const std::array<double, N> &tan) {
+  constexpr Node n = nodes_of<Fn>[I];
+  constexpr OpKind op = n.op;
+  constexpr std::size_t a = n.a, b = n.b;
+  if constexpr (!dependence_of<Fn, Target>[I].varies)
     return 0.0;
+  else if constexpr (op == OpKind::Input)
+    return 1.0;
+  else if constexpr (op == OpKind::Add)
+    return tan[a] + tan[b];
+  else if constexpr (op == OpKind::Sub)
+    return tan[a] - tan[b];
+  else if constexpr (op == OpKind::Neg)
+    return -tan[a];
+  else if constexpr (op == OpKind::Output)
+    return tan[a];
+  else if constexpr (op == OpKind::Mul)
+    return tan[a] * val[b] + val[a] * tan[b];
+  else if constexpr (op == OpKind::Div)
+    return tan[a] / val[b];
+  else
+    return 0.0; // not affine: analyze rejects any crossing that reads it
 }
 
-// The value the target is compared against in comparison C: its other
-// operand, read with the target slot at 0.
-template <info Fn, std::size_t C, std::size_t Target, std::size_t NumArgs>
-constexpr double boundary_point(const std::array<double, NumArgs> &in) {
-  constexpr Node n = nodes_of<Fn>[C];
-  constexpr std::size_t other =
-      boundary_slope<Fn, C, Target, NumArgs>() > 0.0 ? n.b : n.a;
-  return shallow_value<Fn, other, Target, 1, false>(in, 0.0);
+template <std::size_t N> struct Sweep {
+  std::array<double, N> val = {};
+  std::array<double, N> tan = {}; // derivative in the target
+};
+
+// Values and target derivatives of every node a crossing comparison reads,
+// with the target input at x. Guards are not consulted: a comparison's
+// operands are evaluated even where its branch is not taken.
+template <info Fn, std::size_t Target, std::size_t NumArgs>
+constexpr auto operand_sweep(const std::array<double, NumArgs> &in, double x) {
+  static constexpr auto nodes = nodes_of<Fn>;
+  static constexpr auto needed = crossing_operands_of<Fn, Target>;
+  Sweep<nodes.size()> s;
+  template for (constexpr Node n : nodes) {
+    if constexpr (needed[n.self]) {
+      constexpr std::size_t i = n.self;
+      s.val[i] = node_value<Fn, i, Target>(s.val, in, x);
+      s.tan[i] = node_tangent<Fn, i, Target>(s.val, s.tan);
+    }
+  }
+  return s;
 }
 
 // Sign the output picks up from Select S's direct parents: -1 if S is negated
@@ -294,33 +482,50 @@ template <info Fn, std::size_t S> consteval double parent_scale() {
   return 1.0;
 }
 
-// The analysis behind every entry point. For each comparison involving the
-// target, find its boundary; for each Select it drives, the jump there.
-// PointsOnly records every boundary, with amplitude 0, whether or not a Select
-// uses it. `in` holds the function's arguments; the target's slot is ignored.
+// The analysis behind every entry point. For each comparison whose outcome
+// changes with the target, find the point where it flips; for each Select it
+// drives, the jump there. PointsOnly records every such point, with amplitude
+// 0, whether or not a Select uses it. `in` holds the function's arguments; the
+// target's slot is ignored.
 template <info Fn, std::size_t Target, std::size_t MaxPoints, bool PointsOnly,
           std::size_t NumArgs>
 constexpr DiscontinuityPointsWithAmplitudes<MaxPoints>
 analyze(const std::array<double, NumArgs> &in) {
   static constexpr auto nodes = nodes_of<Fn>;
+  static constexpr auto dep = dependence_of<Fn, Target>;
+  static_assert(input_count<Fn>() == NumArgs,
+                "discontinuity_analysis: pass one fixed value for each "
+                "argument after the target");
   DiscontinuityCollectorWithAmplitudes<MaxPoints> collector;
 
+  // Each crossing compares g = lhs - rhs with 0, and g is affine in the
+  // target, so its value and slope at 0 place the root exactly.
+  const auto at_zero = operand_sweep<Fn, Target>(in, 0.0);
+
   template for (constexpr Node n : nodes) {
-    if constexpr (is_ordering(n.op)) {
-      constexpr double slope = boundary_slope<Fn, n.self, Target, NumArgs>();
-      if constexpr (slope != 0.0) {
-        const double point = boundary_point<Fn, n.self, Target>(in);
+    if constexpr (is_crossing<Fn, Target>(n)) {
+      static_assert(dep[n.a].affine && dep[n.b].affine,
+                    "discontinuity_analysis: both sides of a comparison on "
+                    "the target must be affine in it (built from it with + - "
+                    "and * / by values that do not depend on it)");
+      constexpr std::size_t a = n.a, b = n.b;
+      constexpr OpKind op = n.op;
+      const double slope = at_zero.tan[a] - at_zero.tan[b];
+      // A flat g never flips, e.g. `s * k > 1` at k = 0.
+      if (slope != 0.0) {
+        // `+ 0.0` turns a -0 root into 0.
+        const double point = -(at_zero.val[a] - at_zero.val[b]) / slope + 0.0;
         if constexpr (PointsOnly) {
           collector.add_point_with_amplitude(point, 0.0);
         } else {
           template for (constexpr Node s : nodes) {
             if constexpr (s.op == OpKind::Select && s.cond == n.self) {
-              constexpr double sign = comparison_jump_sign(n.op, slope) *
-                                      parent_scale<Fn, s.self>();
+              constexpr double scale = parent_scale<Fn, s.self>();
               const double jump =
                   shallow_value<Fn, s.a, Target, 2, true>(in, point) -
                   shallow_value<Fn, s.b, Target, 2, true>(in, point);
-              collector.add_point_with_amplitude(point, jump * sign);
+              collector.add_point_with_amplitude(
+                  point, jump * comparison_jump_sign(op, slope) * scale);
             }
           }
         }
