@@ -26,7 +26,11 @@ once a gcc engine exposes the same `ad::` interface its drivers can move up to
 binaries, and reports compile vs runtime failures. A test may add flags via a
 `// TEST-FLAGS: ...` comment near its top (benchmarks use it for `-O2`).
 Tests under `tests/static_fail/` are expected **not** to compile (e.g. they
-trip a `static_assert`); they pass only when compilation fails.
+trip a `static_assert`). Each must name the error it expects with one or more
+`// EXPECT-ERROR: <text>` comments; it passes only when compilation fails and
+every `<text>` appears (literally) on an `error:` line of the compiler output,
+so a test broken for an unrelated reason (e.g. a bad include) still fails. Both
+`run_tests.py` and CTest (`test_simple/compile_fail_check.cmake`) enforce this.
 
 The repo is **self-contained**: `--build-compilers` builds clang from its own
 `clang-p2996` submodule into `build/` — no externally pre-built compiler needed.

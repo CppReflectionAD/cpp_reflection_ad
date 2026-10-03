@@ -21,9 +21,15 @@ function(compile_check group filelist fail)
             "${CMAKE_CURRENT_SOURCE_DIR}"
             "${CMAKE_SOURCE_DIR}/test_simple"
         )
-        add_test(NAME ${test_name} COMMAND ${CMAKE_COMMAND} --build "${CMAKE_BINARY_DIR}" --target ${target_name})
         if (fail)
-            set_tests_properties(${test_name} PROPERTIES WILL_FAIL true)
+            # Must fail with the error(s) its `// EXPECT-ERROR:` comments name.
+            add_test(NAME ${test_name} COMMAND ${CMAKE_COMMAND}
+                "-DBUILD_DIR=${CMAKE_BINARY_DIR}"
+                "-DTARGET=${target_name}"
+                "-DSOURCE=${_source}"
+                -P "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/compile_fail_check.cmake")
+        else()
+            add_test(NAME ${test_name} COMMAND ${CMAKE_COMMAND} --build "${CMAKE_BINARY_DIR}" --target ${target_name})
         endif()
     endforeach()
 endfunction()

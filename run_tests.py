@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import platform
+import re
 import shlex
 import shutil
 import subprocess
@@ -78,6 +79,13 @@ else:
 TEST_FLAGS_DIRECTIVE = "// TEST-FLAGS:"
 TEST_FLAGS_SCAN_LINES = 10
 
+# A static_fail test names the error(s) it must fail with via one or more
+# `// EXPECT-ERROR: <text>` comments anywhere in the file. Each <text> is
+# matched literally against the compiler's `error:` lines; at least one is
+# required. Mirrors test_simple/compile_fail_check.cmake.
+EXPECT_ERROR_DIRECTIVE = "// EXPECT-ERROR:"
+ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
 
 @dataclass(frozen=True)
 class CommandResult:
@@ -94,11 +102,27 @@ class TestResult:
     compile_result: CommandResult
     run_result: CommandResult | None
     expect_compile_failure: bool = False
+    expected_errors: tuple[str, ...] = ()
+
+    @property
+    def missing_errors(self) -> list[str]:
+        """Expected errors that no `error:` line of the compiler output has."""
+        output = ANSI_ESCAPE_RE.sub(
+            "", self.compile_result.stdout + self.compile_result.stderr
+        )
+        error_lines = [line for line in output.splitlines() if "error:" in line]
+        return [
+            text
+            for text in self.expected_errors
+            if not any(text in line for line in error_lines)
+        ]
 
     @property
     def compile_ok(self) -> bool:
         compiled = self.compile_result.returncode == 0
-        return compiled != self.expect_compile_failure
+        if not self.expect_compile_failure:
+            return compiled
+        return not compiled and bool(self.expected_errors) and not self.missing_errors
 
     @property
     def run_ok(self) -> bool:
@@ -531,6 +555,18 @@ def parse_test_flags(test_file: Path, compiler_name: str) -> list[str]:
     except OSError:
         pass
     return shared + specific
+
+
+def parse_expected_errors(test_file: Path) -> tuple[str, ...]:
+    """Read the `// EXPECT-ERROR: <text>` directives from a static_fail test."""
+    expected = []
+    for line in test_file.read_text(encoding="utf-8", errors="replace").splitlines():
+        stripped = line.strip()
+        if stripped.startswith(EXPECT_ERROR_DIRECTIVE):
+            text = stripped[len(EXPECT_ERROR_DIRECTIVE) :].strip()
+            if text:
+                expected.append(text)
+    return tuple(expected)
 
 
 def ensure_submodule(source_dir: Path, args: argparse.Namespace) -> None:
@@ -1049,6 +1085,9 @@ def compile_and_maybe_run(
         compile_result=compile_result,
         run_result=run_result,
         expect_compile_failure=expect_compile_failure,
+        expected_errors=(
+            parse_expected_errors(test_file) if expect_compile_failure else ()
+        ),
     )
 
 
@@ -1070,10 +1109,26 @@ def print_test_result(result: TestResult) -> None:
     relative_path = result.test_file.relative_to(ROOT)
     if not result.compile_ok:
         if result.expect_compile_failure:
-            print(
-                f"[FAIL][{result.compiler}][compile] {relative_path} "
-                "(expected a compile error, but it compiled)"
-            )
+            if not result.expected_errors:
+                print(
+                    f"[FAIL][{result.compiler}][compile] {relative_path} "
+                    f"(no `{EXPECT_ERROR_DIRECTIVE} <text>` directive)"
+                )
+            elif result.compile_result.returncode == 0:
+                print(
+                    f"[FAIL][{result.compiler}][compile] {relative_path} "
+                    "(expected a compile error, but it compiled)"
+                )
+                return
+            else:
+                print(
+                    f"[FAIL][{result.compiler}][compile] {relative_path} "
+                    "(failed, but not with the expected error(s))"
+                )
+                print(indent_block("missing:"))
+                for text in result.missing_errors:
+                    print(indent_block(f"  {text}"))
+            print(indent_block(render_command_failure(result.compile_result)))
             return
         print(f"[FAIL][{result.compiler}][compile] {relative_path}")
         print(indent_block(render_command_failure(result.compile_result)))
