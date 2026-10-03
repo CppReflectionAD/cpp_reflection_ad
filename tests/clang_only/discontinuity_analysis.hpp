@@ -818,10 +818,12 @@ analyze(const std::array<double, NumArgs> &in) {
     // a double where the crossing's sides are equal, not the branches'), so
     // rounding can leave a tiny one here. Measured kKinkUlps either side,
     // with the same crossings forced, it then vanishes or changes sign; a
-    // jump keeps its sign. A side that is not finite says nothing.
+    // jump keeps its sign. A side that is not finite says nothing (`s > k ?
+    // sqrt(s - k) + 1 : 0` is NaN just below k with the right side forced),
+    // so the difference must not stop constant evaluation either.
     const auto jump_at = [&](double x) {
-      return value_with<Fn, Target>(in, x, right) -
-             value_with<Fn, Target>(in, x, left);
+      return IeeeCxMath::sub(value_with<Fn, Target>(in, x, right),
+                             value_with<Fn, Target>(in, x, left));
     };
     const auto disagrees = [&](double other) {
       return is_finite(other) &&

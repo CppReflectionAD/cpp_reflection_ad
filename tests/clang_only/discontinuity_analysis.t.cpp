@@ -260,6 +260,11 @@ double tiny_digital(double spot, double strike) {
 double steep_call_with_rebate(double spot, double strike) {
   return (spot > strike) ? (spot - strike) * 1e6 + 1e-3 : 0.0;
 }
+// ... or next to a branch that is NaN on the far side of the point, where the
+// kink check reads nothing
+double sqrt_rebate(double spot, double strike) {
+  return (spot > strike) ? std::sqrt(spot - strike) + 1.0 : 0.0;
+}
 
 // The same crossing written two ways. They meet at strike / 1.1 in exact
 // arithmetic but are rooted a few ulps apart, and Fn's own sides can be
@@ -759,6 +764,18 @@ int main() {
   EXPECT_EQUAL(disc_steep.size(), 1);
   EXPECT_EQUAL(disc_steep.point(0), 100.0);
   EXPECT_EQUAL(disc_steep.amplitude(0), 1e-3);
+  constexpr auto disc_sqrt =
+      ad::get_discontinuity_points_and_amplitudes<^^sqrt_rebate, 0>(100.0);
+  EXPECT_EQUAL(disc_sqrt.size(), 1);
+  EXPECT_EQUAL(disc_sqrt.point(0), 100.0);
+  EXPECT_EQUAL(disc_sqrt.amplitude(0), 1.0);
+  {
+    const auto disc_sqrt_rt =
+        ad::get_discontinuity_points_and_amplitudes_rt<^^sqrt_rebate, 0>(100.0);
+    EXPECT_EQUAL(disc_sqrt_rt.size(), 1);
+    EXPECT_EQUAL(disc_sqrt_rt.point(0), 100.0);
+    EXPECT_EQUAL(disc_sqrt_rt.amplitude(0), 1.0);
+  }
   EXPECT_EQUAL(
       (ad::get_discontinuity_points_and_amplitudes<^^nan_strike_digital, 0>(
            -1.0)
