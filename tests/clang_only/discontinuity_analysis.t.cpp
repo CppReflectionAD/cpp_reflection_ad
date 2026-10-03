@@ -269,10 +269,31 @@ double tiny_digital(double spot, double strike) {
 double steep_call_with_rebate(double spot, double strike) {
   return (spot > strike) ? (spot - strike) * 1e6 + 1e-3 : 0.0;
 }
-// ... or next to a branch that is NaN on the far side of the point, where the
-// kink check reads nothing
+// ... however steep, where the root and branches are computed exactly: a
+// probe 4 ulps away (8 at 1e16) once read these as rounding at a kink
+double steeper_call_with_rebate(double spot, double strike) {
+  return (spot > strike) ? (spot - strike) * 1e9 + 1e-5 : 0.0;
+}
+double call_with_rebate(double spot, double strike) {
+  return (spot > strike) ? spot - strike + 1.0 : 0.0;
+}
+// ... or next to a branch that is NaN on the far side of the point
 double sqrt_rebate(double spot, double strike) {
   return (spot > strike) ? std::sqrt(spot - strike) + 1.0 : 0.0;
+}
+// Kinks whose root is not a double leave rounding at the point, which is not
+// reported whatever its order: the branch difference changes sign there (odd
+// order) or keeps it (even order, a C^1 join, which a probe 4 ulps away once
+// reported as a jump of ~1e-30).
+double inexact_kink(double spot, double strike) {
+  return (spot > strike / 3.0) ? 3.0 * spot - strike : 0.0;
+}
+double inexact_scaled_kink(double spot, double strike) {
+  return (spot * 1.1 > strike) ? spot - strike / 1.1 : 0.0;
+}
+double inexact_tangential_kink(double spot, double strike) {
+  return (spot > strike / 3.0) ? (3.0 * spot - strike) * (3.0 * spot - strike)
+                               : 0.0;
 }
 
 // The same crossing written two ways. They meet at strike / 1.1 in exact
@@ -778,6 +799,43 @@ int main() {
   EXPECT_EQUAL(disc_steep.size(), 1);
   EXPECT_EQUAL(disc_steep.point(0), 100.0);
   EXPECT_EQUAL(disc_steep.amplitude(0), 1e-3);
+  constexpr auto disc_steeper =
+      ad::get_discontinuity_points_and_amplitudes<^^steeper_call_with_rebate,
+                                                  0>(100.0);
+  EXPECT_EQUAL(disc_steeper.size(), 1);
+  EXPECT_EQUAL(disc_steeper.point(0), 100.0);
+  EXPECT_EQUAL(disc_steeper.amplitude(0), 1e-5);
+  constexpr auto disc_far_rebate =
+      ad::get_discontinuity_points_and_amplitudes<^^call_with_rebate, 0>(1e16);
+  EXPECT_EQUAL(disc_far_rebate.size(), 1);
+  EXPECT_EQUAL(disc_far_rebate.point(0), 1e16);
+  EXPECT_EQUAL(disc_far_rebate.amplitude(0), 1.0);
+  {
+    // Kinks with inexact roots, odd or even order, report nothing anywhere.
+    int odd_points = 0, scaled_points = 0, tangential_points = 0;
+    for (int i = 1; i <= 400; ++i) {
+      const double strike = 0.37 * i;
+      odd_points +=
+          ad::get_discontinuity_points_and_amplitudes_rt<^^inexact_kink, 0>(
+              strike)
+              .size();
+      scaled_points +=
+          ad::get_discontinuity_points_and_amplitudes_rt<^^inexact_scaled_kink,
+                                                         0>(strike)
+              .size();
+      tangential_points += ad::get_discontinuity_points_and_amplitudes_rt<
+                               ^^inexact_tangential_kink, 0>(strike)
+                               .size();
+    }
+    EXPECT_EQUAL(odd_points, 0);
+    EXPECT_EQUAL(scaled_points, 0);
+    EXPECT_EQUAL(tangential_points, 0);
+    // ... at compile time too: 7.03 / 3 is not a double
+    EXPECT_TRUE(
+        (ad::get_discontinuity_points_and_amplitudes<^^inexact_tangential_kink,
+                                                     0>(7.03)
+             .empty()));
+  }
   constexpr auto disc_sqrt =
       ad::get_discontinuity_points_and_amplitudes<^^sqrt_rebate, 0>(100.0);
   EXPECT_EQUAL(disc_sqrt.size(), 1);

@@ -32,8 +32,9 @@
 //      whole function with the crossings rooted there forced to their outcome
 //      just above, and just below, it. The difference is the jump. Points
 //      with no jump are dropped, and so are those whose jump is only
-//      rounding: one that vanishes or changes sign a few ulps away, as at a
-//      kink whose root is not a double.
+//      rounding, as at a kink whose root is not a double: the function is
+//      also evaluated with error bounds (midpoint-radius), over every target
+//      the exact roots could be at, and the jump must exceed them.
 //   4. Return as a static array (assuming finite discontinuities)
 //
 // Everything is evaluated as Fn evaluates it: branches it does not take are
@@ -215,6 +216,22 @@ template <info Fn, std::size_t Target>
 inline constexpr auto crossings_of =
     std::define_static_array(crossings<Fn, Target>());
 
+// The crossings that can make a point: the ordering comparisons, in order.
+template <info Fn, std::size_t Target>
+consteval std::vector<std::size_t> ordering_crossings() {
+  const auto nodes = nodes_of<Fn>;
+  const auto crossing = crossings_of<Fn, Target>;
+  std::vector<std::size_t> found;
+  for (const Node &n : nodes)
+    if (crossing[n.self] && is_ordering(n.op))
+      found.push_back(n.self);
+  return found;
+}
+
+template <info Fn, std::size_t Target>
+inline constexpr auto ordering_crossings_of =
+    std::define_static_array(ordering_crossings<Fn, Target>());
+
 // What has to be evaluated to place every crossing: the crossings, the nodes
 // they read, directly or not, and the guards that say whether those are
 // reached at all.
@@ -351,13 +368,125 @@ struct IeeeCxMath {
   }
 };
 
+// A value with a bound on its error, for telling a jump from rounding (see
+// analyze). `mid` is the value exactly as IeeeCxMath computes it; the value
+// in exact arithmetic -- the arguments as given, the target anywhere within
+// its own rad of its mid -- is within `rad` of `mid`. An infinite rad (as
+// for any value that is not finite) bounds nothing. Comparisons read `mid`,
+// as Fn's do its value.
+struct Ball {
+  double mid = 0.0;
+  double rad = 0.0;
+
+  friend constexpr bool operator<(Ball a, Ball b) { return a.mid < b.mid; }
+  friend constexpr bool operator<=(Ball a, Ball b) { return a.mid <= b.mid; }
+  friend constexpr bool operator>(Ball a, Ball b) { return a.mid > b.mid; }
+  friend constexpr bool operator>=(Ball a, Ball b) { return a.mid >= b.mid; }
+  friend constexpr bool operator==(Ball a, Ball b) { return a.mid == b.mid; }
+  friend constexpr bool operator!=(Ball a, Ball b) { return a.mid != b.mid; }
+};
+
+constexpr double mid_of(double x) { return x; }
+constexpr double mid_of(Ball x) { return x.mid; }
+
+// primal()'s arithmetic on Balls: the mids as IeeeCxMath computes them, the
+// radii by the usual first-principles bounds (midpoint-radius interval
+// arithmetic). The radii are computed only from finite values, so they can
+// overflow to inf but never become NaN, which would stop the build.
+struct BallCxMath {
+  using M = IeeeCxMath;
+  // One rounding: at most half an ulp, |r|·2^-53, plus the smallest
+  // subnormal where a product or quotient underflows.
+  static constexpr double kHalfUlp = 0x1p-53;
+  static constexpr double kTiny = std::numeric_limits<double>::denorm_min();
+  // cx_std's error, in the same units: 8 ulps, against a measured worst of 5
+  // (erfc).
+  static constexpr double kCxError = 16.0;
+
+  static constexpr double abs(double x) { return x < 0.0 ? -x : x; }
+  static constexpr double max(double a, double b) { return a < b ? b : a; }
+  // No bound: a value that is not finite, or an operand with none.
+  static constexpr bool unbounded(double mid, Ball a, Ball b = {}) {
+    return !is_finite(mid) || a.rad == kInf || b.rad == kInf;
+  }
+  // cx_std's error at a result r.
+  static constexpr double cx_error(double r) {
+    return kCxError * abs(r) * kHalfUlp + kTiny;
+  }
+
+  [[gnu::always_inline]] static constexpr Ball add(Ball a, Ball b) {
+    const double mid = M::add(a.mid, b.mid);
+    if (unbounded(mid, a, b))
+      return {mid, kInf};
+    // A sum that rounds to 0, or to a subnormal, is exact.
+    return {mid, a.rad + b.rad + abs(mid) * kHalfUlp};
+  }
+  [[gnu::always_inline]] static constexpr Ball sub(Ball a, Ball b) {
+    return add(a, neg(b));
+  }
+  [[gnu::always_inline]] static constexpr Ball mul(Ball a, Ball b) {
+    const double mid = M::mul(a.mid, b.mid);
+    if (unbounded(mid, a, b))
+      return {mid, kInf};
+    const bool exact = a.mid == 0.0 || b.mid == 0.0;
+    return {mid, abs(a.mid) * b.rad + abs(b.mid) * a.rad + a.rad * b.rad +
+                     (exact ? 0.0 : abs(mid) * kHalfUlp + kTiny)};
+  }
+  [[gnu::always_inline]] static constexpr Ball div(Ball a, Ball b) {
+    const double mid = M::div(a.mid, b.mid);
+    if (unbounded(mid, a, b) || b.rad >= abs(b.mid))
+      return {mid, kInf};
+    return {mid, (a.rad + abs(mid) * b.rad) / (abs(b.mid) - b.rad) +
+                     abs(mid) * kHalfUlp + kTiny};
+  }
+  [[gnu::always_inline]] static constexpr Ball neg(Ball a) {
+    return {-a.mid, a.rad};
+  }
+
+  template <OpKind Op>
+  [[gnu::always_inline]] static constexpr Ball unary(Ball a) {
+    const double mid = M::template unary<Op>(a.mid);
+    if (unbounded(mid, a))
+      return {mid, kInf};
+    if constexpr (Op == OpKind::Sin || Op == OpKind::Cos) {
+      // |sin'| and |cos'| are at most 1
+      return {mid, (a.rad < 2.0 ? a.rad : 2.0) + cx_error(mid)};
+    } else {
+      // exp, log, sqrt and erfc are monotone: the exact values over a's
+      // range lie between those at its ends.
+      if (a.rad == 0.0)
+        return {mid, cx_error(mid)};
+      double lo = a.mid - a.rad;
+      const double hi = a.mid + a.rad;
+      if constexpr (Op == OpKind::Log) {
+        if (!(lo > 0.0))
+          return {mid, kInf};
+      } else if constexpr (Op == OpKind::Sqrt) {
+        lo = max(lo, 0.0);
+      }
+      const double f_lo = M::template unary<Op>(lo);
+      const double f_hi = M::template unary<Op>(hi);
+      if (!is_finite(f_lo) || !is_finite(f_hi))
+        return {mid, kInf};
+      return {mid, max(abs(f_hi - mid) + cx_error(f_hi),
+                       abs(mid - f_lo) + cx_error(f_lo)) +
+                       cx_error(mid)};
+    }
+  }
+};
+
+template <typename T>
+using MathFor =
+    std::conditional_t<std::is_same_v<T, Ball>, BallCxMath, IeeeCxMath>;
+
 // Value of node I from the values of the nodes before it, with the target
-// input at x. Only plain copies of `n`'s fields appear in runtime code: naming
-// the (consteval-only) Node there would make this function immediate.
-template <info Fn, std::size_t I, std::size_t Target, std::size_t N,
+// input at x: a double, or a Ball. Only plain copies of `n`'s fields appear
+// in runtime code: naming the (consteval-only) Node there would make this
+// function immediate.
+template <info Fn, std::size_t I, std::size_t Target, typename T, std::size_t N,
           std::size_t NumArgs>
-constexpr double node_value(const std::array<double, N> &val,
-                            const std::array<double, NumArgs> &in, double x) {
+constexpr T node_value(const std::array<T, N> &val,
+                       const std::array<double, NumArgs> &in, T x) {
   constexpr Node n = nodes_of<Fn>[I];
   constexpr OpKind op = n.op;
   constexpr std::size_t a = n.a, b = n.b, c = n.cond;
@@ -365,11 +494,16 @@ constexpr double node_value(const std::array<double, N> &val,
     if constexpr (I == Target)
       return x;
     else
-      return in[I];
+      return T{in[I]};
   } else if constexpr (op == OpKind::Const) {
-    return static_cast<double>([:n.leaf:]);
+    return T{static_cast<double>([:n.leaf:])};
+  } else if constexpr (std::is_same_v<T, Ball> &&
+                       (op == OpKind::Max || op == OpKind::Min)) {
+    // primal() returns one operand, but the other's error bounds it too.
+    return {primal<op, BallCxMath>(val[a], val[b], val[c]).mid,
+            BallCxMath::max(val[a].rad, val[b].rad)};
   } else if constexpr (op_has_primal(op)) {
-    return primal<op, IeeeCxMath>(val[a], val[b], val[c]);
+    return primal<op, MathFor<T>>(val[a], val[b], val[c]);
   } else {
     static_assert(false, "discontinuity_analysis: unsupported operation");
   }
@@ -496,16 +630,16 @@ consteval std::vector<std::size_t> gap_cone() {
 template <info Fn, std::size_t I>
 inline constexpr auto gap_cone_of = std::define_static_array(gap_cone<Fn, I>());
 
-// Crossing I's gap (as gap() reads it from a sweep) with the target at x,
-// evaluating only the nodes it reads. A node is skipped, as sweep() skips it,
-// if its guard can never hold; `reach` is any sweep, since that does not
-// depend on x.
-template <info Fn, std::size_t Target, std::size_t I, std::size_t N,
+// Crossing I's gap (as gap() reads it from a sweep) with the target at x, a
+// double or a Ball, evaluating only the nodes it reads. A node is skipped, as
+// sweep() skips it, if its guard can never hold; `reach` is any sweep, since
+// that does not depend on x.
+template <info Fn, std::size_t Target, std::size_t I, typename T, std::size_t N,
           std::size_t NumArgs>
-constexpr double gap_at(const std::array<double, NumArgs> &in, double x,
-                        const Sweep<N> &reach) {
+constexpr T gap_at(const std::array<double, NumArgs> &in, T x,
+                   const Sweep<N> &reach) {
   static constexpr auto nodes = nodes_of<Fn>;
-  std::array<double, N> val = {};
+  std::array<T, N> val = {};
   template for (constexpr std::size_t j : gap_cone_of<Fn, I>) {
     constexpr std::size_t guard = nodes[j].guard;
     if constexpr (guard != UNGUARDED) {
@@ -516,7 +650,7 @@ constexpr double gap_at(const std::array<double, NumArgs> &in, double x,
   }
   constexpr std::size_t a = nodes[I].a, b = nodes[I].b;
   if constexpr (is_comparison(nodes[I].op))
-    return IeeeCxMath::sub(val[a], val[b]);
+    return MathFor<T>::sub(val[a], val[b]);
   else
     return val[I];
 }
@@ -540,16 +674,6 @@ constexpr double step_ulps(double x, int k) {
 inline constexpr int kSnapUlps = 4;
 // How near the next root must be to be part of the same point (see analyze).
 inline constexpr int kClusterUlps = 4;
-// How far either side of a point a jump must keep its sign to be more than
-// rounding (see analyze).
-inline constexpr int kKinkUlps = 4;
-// The kink check probes beyond a point's group. A crossing rooted between the
-// group and a probe must be in the group, and forced, or its flip there would
-// read as the jump vanishing (`s > k && s < k + 6 ulps` probed 8 ulps above
-// k).
-static_assert(kKinkUlps <= kClusterUlps,
-              "discontinuity_analysis: the kink check must not probe past "
-              "the crossings grouped into a point");
 
 // Trailing zero bits in x's significand: more means a shorter number.
 constexpr int roundness(double x) {
@@ -597,34 +721,36 @@ constexpr double snap(const std::array<double, NumArgs> &in, double r,
 // guarded node is skipped when its guard is false), except where forced[i]
 // is 0 or 1: comparison i takes that outcome, and a condition i reads as
 // that truth wherever it is used as one.
-template <info Fn, std::size_t Target, std::size_t N, std::size_t NumArgs>
-constexpr double value_with(const std::array<double, NumArgs> &in, double x,
-                            const std::array<signed char, N> &forced) {
+template <info Fn, std::size_t Target, typename T, std::size_t N,
+          std::size_t NumArgs>
+constexpr T value_with(const std::array<double, NumArgs> &in, T x,
+                       const std::array<signed char, N> &forced) {
+  using Math = MathFor<T>;
   static constexpr auto nodes = nodes_of<Fn>;
-  std::array<double, N> val = {};
+  std::array<T, N> val = {};
   // Node j read as a condition: its forced truth, else its value (nonzero is
   // true).
   const auto cond = [&](std::size_t j) {
-    return forced[j] >= 0 ? static_cast<double>(forced[j]) : val[j];
+    return forced[j] >= 0 ? T{static_cast<double>(forced[j])} : val[j];
   };
   template for (constexpr Node n : nodes) {
     constexpr std::size_t i = n.self, guard = n.guard, a = n.a, b = n.b,
                           c = n.cond;
     constexpr OpKind op = n.op;
     if constexpr (guard != UNGUARDED) {
-      if (cond(guard) == 0.0)
+      if (mid_of(cond(guard)) == 0.0)
         continue;
     }
     if constexpr (is_comparison(op)) {
       if (forced[i] >= 0) {
-        val[i] = forced[i];
+        val[i] = T{static_cast<double>(forced[i])};
         continue;
       }
     }
     if constexpr (op == OpKind::Not || op == OpKind::And || op == OpKind::Or)
-      val[i] = primal<op, IeeeCxMath>(cond(a), cond(b), 0.0);
+      val[i] = primal<op, Math>(cond(a), cond(b), T{});
     else if constexpr (op == OpKind::Select)
-      val[i] = primal<op, IeeeCxMath>(val[a], val[b], cond(c));
+      val[i] = primal<op, Math>(val[a], val[b], cond(c));
     else
       val[i] = node_value<Fn, i, Target>(val, in, x);
   }
@@ -643,8 +769,10 @@ constexpr double value_with(const std::array<double, NumArgs> &in, double x,
 // and the output (`!`, `&&`, `||`, nested selects, scaling, other jumps at
 // the same point) is evaluated rather than pattern-matched. `==` / `!=` and
 // conditions rooted there take their outcome off the point on both sides.
-// Points with no jump, or with one that vanishes or changes sign a few ulps
-// away (rounding at a kink), are not reported.
+// Points with no jump are not reported, and nor are those whose jump is
+// within the rounding error of evaluating Fn there (as at a kink whose root is
+// not a double): Fn is evaluated in Balls, over every target its crossings'
+// exact roots could be at, and the jump must exceed its error bound.
 //
 // `in` holds the function's arguments; the target's slot is ignored.
 template <info Fn, std::size_t Target, std::size_t MaxPoints,
@@ -665,7 +793,7 @@ analyze(const std::array<double, NumArgs> &in) {
   // Per crossing slot: whether it flips at all, where, its outcome just
   // below and just above that point, and whether it can make a jump there.
   std::array<bool, N> rooted = {}, makes_point = {};
-  std::array<double, N> root = {};
+  std::array<double, N> root = {}, slope_of = {};
   std::array<signed char, N> below = {}, above = {};
 
   const auto at_zero = sweep<Fn, Target>(in, 0.0);
@@ -709,6 +837,7 @@ analyze(const std::array<double, NumArgs> &in) {
         rooted[i] = true;
         makes_point[i] = is_ordering(op);
         root[i] = snap<Fn, Target, i>(in, r, at_zero);
+        slope_of[i] = slope;
         // Just above the root, g has the sign of its slope.
         const bool g_positive = slope > 0.0;
         if constexpr (op == OpKind::Gt || op == OpKind::Ge) {
@@ -769,32 +898,44 @@ analyze(const std::array<double, NumArgs> &in) {
       right[j] = above[j];
       left[j] = below[j];
     }
-    const double from_right = value_with<Fn, Target>(in, point, right);
-    const double from_left = value_with<Fn, Target>(in, point, left);
-    if (!is_finite(from_right) || !is_finite(from_left))
+    // How far from `point` the group's exact roots can be: each one's gap is
+    // affine, so its root is its gap at the point, give or take the gap's
+    // rounding error, over its slope (0 where that gap is computed exactly).
+    double roots_within = 0.0;
+    template for (constexpr std::size_t i : ordering_crossings_of<Fn, Target>) {
+      if (rooted[i] && from <= root[i] && root[i] <= to) {
+        const Ball g = gap_at<Fn, Target, i>(in, Ball{point, 0.0}, at_zero);
+        const double d = IeeeCxMath::add(BallCxMath::abs(g.mid), g.rad);
+        const double within =
+            BallCxMath::abs(slope_of[i]) > 0.0
+                ? IeeeCxMath::div(d, BallCxMath::abs(slope_of[i]))
+                : kInf;
+        roots_within =
+            within == within ? BallCxMath::max(roots_within, within) : kInf;
+      }
+    }
+    // Fn's right and left limits there, and how far from them the exact
+    // values can be with the target anywhere the roots can be.
+    const Ball target{point, roots_within};
+    const Ball from_right = value_with<Fn, Target>(in, target, right);
+    const Ball from_left = value_with<Fn, Target>(in, target, left);
+    if (!is_finite(from_right.mid) || !is_finite(from_left.mid))
       throw "discontinuity_analysis: Fn is not finite on one side of a "
             "crossing point (a pole or an undefined branch there, not a "
             "jump)";
-    const double jump = from_right - from_left;
+    const double jump = from_right.mid - from_left.mid;
     // A kink -- continuous where its branches meet -- has no jump at its
-    // exact root, but that need not be a double, nor the point (snap finds
-    // a double where the crossing's sides are equal, not the branches'), so
-    // rounding can leave a tiny one here. Measured kKinkUlps beyond either
-    // end of the group, with the same crossings forced, it then vanishes or
-    // changes sign; a
-    // jump keeps its sign. A side that is not finite says nothing (`s > k ?
-    // sqrt(s - k) + 1 : 0` is NaN just below k with the right side forced),
-    // so the difference must not stop constant evaluation either.
-    const auto jump_at = [&](double x) {
-      return IeeeCxMath::sub(value_with<Fn, Target>(in, x, right),
-                             value_with<Fn, Target>(in, x, left));
-    };
-    const auto disagrees = [&](double other) {
-      return is_finite(other) &&
-             (other == 0.0 || (other > 0.0) != (jump > 0.0));
-    };
-    if (jump != 0.0 && !disagrees(jump_at(step_ulps(lowest, -kKinkUlps))) &&
-        !disagrees(jump_at(step_ulps(highest, kKinkUlps))))
+    // exact root, but that need not be a double, nor the point (snap finds a
+    // double where the crossing's sides are equal, not the branches'), so
+    // rounding can leave a tiny one at the point, of either sign and any
+    // order (`s > k / 3 ? (3 * s - k) * (3 * s - k) : 0`). A jump is reported
+    // only where it exceeds the two sides' error bounds, which cover that,
+    // with a factor of 2 for the bounds' own rounding and cx_std's measured
+    // (not proven) accuracy. Where the roots and branches are computed
+    // exactly the bound is 0, and any jump is reported (`s > k ? s - k + 1 :
+    // 0` at k = 1e16).
+    const double bound = 2.0 * (from_right.rad + from_left.rad);
+    if (jump != 0.0 && BallCxMath::abs(jump) > bound)
       result.add_point_with_amplitude(point, jump);
   }
 
