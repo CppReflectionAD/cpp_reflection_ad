@@ -294,61 +294,6 @@ template <info Fn, std::size_t ArgIndex> consteval bool is_affine_in_arg() {
 }
 
 template <info Fn, std::size_t ArgIndex, typename T, typename... ExtraArgs>
-constexpr T eval_with_arg(T target_x, ExtraArgs... extras) {
-  static constexpr auto nodes = std::define_static_array(build_nodes<Fn>());
-  constexpr std::size_t N = nodes.size();
-  constexpr std::size_t InputCount = input_count_of<Fn>();
-  static_assert(sizeof...(ExtraArgs) + 1 == InputCount,
-                "inverse_wrt expects all non-target arguments");
-
-  T in[InputCount] = {};
-  const T extra_vals[] = {static_cast<T>(extras)...};
-  std::size_t extra_i = 0;
-  for (std::size_t i = 0; i < InputCount; ++i) {
-    if (i == ArgIndex)
-      in[i] = target_x;
-    else
-      in[i] = extra_vals[extra_i++];
-  }
-
-  T val[N] = {};
-  template for (constexpr auto n : nodes) {
-    if constexpr (n.op == OpKind::Input)
-      val[n.self] = in[n.self];
-    else if constexpr (n.op == OpKind::Const)
-      val[n.self] = static_cast<T>([:n.leaf:]);
-    else if constexpr (n.op == OpKind::Output)
-      val[n.self] = val[n.a];
-    else if constexpr (n.op == OpKind::Add)
-      val[n.self] = val[n.a] + val[n.b];
-    else if constexpr (n.op == OpKind::Sub)
-      val[n.self] = val[n.a] - val[n.b];
-    else if constexpr (n.op == OpKind::Mul)
-      val[n.self] = val[n.a] * val[n.b];
-    else if constexpr (n.op == OpKind::Div)
-      val[n.self] = val[n.a] / val[n.b];
-    else if constexpr (n.op == OpKind::Neg)
-      val[n.self] = -val[n.a];
-    else if constexpr (n.op == OpKind::Sin)
-      val[n.self] = std::sin(val[n.a]);
-    else if constexpr (n.op == OpKind::Cos)
-      val[n.self] = std::cos(val[n.a]);
-    else if constexpr (n.op == OpKind::Exp)
-      val[n.self] = std::exp(val[n.a]);
-    else if constexpr (n.op == OpKind::Log)
-      val[n.self] = std::log(val[n.a]);
-    else if constexpr (n.op == OpKind::Sqrt)
-      val[n.self] = std::sqrt(val[n.a]);
-    else if constexpr (n.op == OpKind::Erfc)
-      val[n.self] = std::erfc(val[n.a]);
-    else
-      val[n.self] = T{};
-  }
-
-  return val[N - 1];
-}
-
-template <info Fn, std::size_t ArgIndex, typename T, typename... ExtraArgs>
 constexpr T eval_fn_with_arg_runtime(T target_x, ExtraArgs... extras) {
   constexpr std::size_t InputCount = sizeof...(ExtraArgs) + 1;
   T in[InputCount] = {};
@@ -737,56 +682,8 @@ auto eval_node_values_with_arg(T target_x, ExtraArgs... extras) {
       val[n.self] = in[static_cast<std::size_t>(n.input_index)];
     else if constexpr (n.op == OpKind::Const)
       val[n.self] = static_cast<T>(n.const_value);
-    else if constexpr (n.op == OpKind::Output)
-      val[n.self] = val[n.a];
-    else if constexpr (n.op == OpKind::Add)
-      val[n.self] = val[n.a] + val[n.b];
-    else if constexpr (n.op == OpKind::Sub)
-      val[n.self] = val[n.a] - val[n.b];
-    else if constexpr (n.op == OpKind::Mul)
-      val[n.self] = val[n.a] * val[n.b];
-    else if constexpr (n.op == OpKind::Div)
-      val[n.self] = val[n.a] / val[n.b];
-    else if constexpr (n.op == OpKind::Neg)
-      val[n.self] = -val[n.a];
-    else if constexpr (n.op == OpKind::Sin)
-      val[n.self] = std::sin(val[n.a]);
-    else if constexpr (n.op == OpKind::Cos)
-      val[n.self] = std::cos(val[n.a]);
-    else if constexpr (n.op == OpKind::Exp)
-      val[n.self] = std::exp(val[n.a]);
-    else if constexpr (n.op == OpKind::Log)
-      val[n.self] = std::log(val[n.a]);
-    else if constexpr (n.op == OpKind::Sqrt)
-      val[n.self] = std::sqrt(val[n.a]);
-    else if constexpr (n.op == OpKind::Erfc)
-      val[n.self] = std::erfc(val[n.a]);
-    else if constexpr (n.op == OpKind::Lt)
-      val[n.self] = (val[n.a] < val[n.b]) ? T{1} : T{0};
-    else if constexpr (n.op == OpKind::Le)
-      val[n.self] = (val[n.a] <= val[n.b]) ? T{1} : T{0};
-    else if constexpr (n.op == OpKind::Gt)
-      val[n.self] = (val[n.a] > val[n.b]) ? T{1} : T{0};
-    else if constexpr (n.op == OpKind::Ge)
-      val[n.self] = (val[n.a] >= val[n.b]) ? T{1} : T{0};
-    else if constexpr (n.op == OpKind::Eq)
-      val[n.self] = (val[n.a] == val[n.b]) ? T{1} : T{0};
-    else if constexpr (n.op == OpKind::Ne)
-      val[n.self] = (val[n.a] != val[n.b]) ? T{1} : T{0};
-    else if constexpr (n.op == OpKind::Not)
-      val[n.self] = (val[n.a] != T{0}) ? T{0} : T{1};
-    else if constexpr (n.op == OpKind::And)
-      val[n.self] = (val[n.a] != T{0} && val[n.b] != T{0}) ? T{1} : T{0};
-    else if constexpr (n.op == OpKind::Or)
-      val[n.self] = (val[n.a] != T{0} || val[n.b] != T{0}) ? T{1} : T{0};
-    else if constexpr (n.op == OpKind::Select)
-      val[n.self] = (val[n.cond] != T{0}) ? val[n.a] : val[n.b];
-    else if constexpr (n.op == OpKind::Abs)
-      val[n.self] = (val[n.a] < T{0}) ? -val[n.a] : val[n.a];
-    else if constexpr (n.op == OpKind::Max)
-      val[n.self] = (val[n.a] < val[n.b]) ? val[n.b] : val[n.a];
-    else if constexpr (n.op == OpKind::Min)
-      val[n.self] = (val[n.b] < val[n.a]) ? val[n.b] : val[n.a];
+    else if constexpr (op_has_primal(n.op))
+      val[n.self] = primal<n.op>(val[n.a], val[n.b], val[n.cond]);
     else
       val[n.self] = T{};
   }
