@@ -751,6 +751,78 @@ consteval std::vector<Node> build_marked_nodes_reversed() {
   return rev;
 }
 
+// ---------------------------------------------------------------------------
+// How each node depends on one input, the target: shared by the analyses that
+// solve for it (discontinuity_analysis, is_invertible).
+// ---------------------------------------------------------------------------
+
+// The reflected DAG of Fn, built once and shared by every analysis of Fn.
+template <info Fn>
+inline constexpr auto nodes_of = std::define_static_array(build_nodes<Fn>());
+
+// Fn's number of arguments.
+template <info Fn> consteval std::size_t input_count_of() {
+  std::size_t count = 0;
+  for (const Node &n : nodes_of<Fn>)
+    count += n.op == OpKind::Input;
+  return count;
+}
+
+struct Dependence {
+  bool varies = false;  // it changes with the target
+  bool affine = true;   // ... and only as c0 + c1 * target
+  bool stepwise = true; // ... and only in steps, where a comparison flips
+};
+
+// A value that changes with the target other than in steps.
+constexpr bool varies_continuously(Dependence d) {
+  return d.varies && !d.stepwise;
+}
+
+// Per node, built in one forward pass (operands precede their users). Affine
+// means built from the target with + -, unary - and * / by target-free
+// values, and `?:` on a target-free condition. Stepwise means piecewise
+// constant: every comparison or logical op is, and so is anything built only
+// from stepwise and target-free values.
+template <info Fn, std::size_t Target>
+consteval std::vector<Dependence> target_dependence() {
+  const auto nodes = nodes_of<Fn>;
+  std::vector<Dependence> dep(nodes.size());
+  for (const Node &n : nodes) {
+    Dependence &d = dep[n.self];
+    if (n.op == OpKind::Input) {
+      d.varies = n.self == Target;
+      d.stepwise = !d.varies;
+      continue;
+    }
+    const Dependence a = op_has_a(n.op) ? dep[n.a] : Dependence{};
+    const Dependence b = op_has_b(n.op) ? dep[n.b] : Dependence{};
+    d.varies =
+        a.varies || b.varies || (op_has_cond(n.op) && dep[n.cond].varies);
+    if (n.op == OpKind::Add || n.op == OpKind::Sub)
+      d.affine = a.affine && b.affine;
+    else if (n.op == OpKind::Neg || n.op == OpKind::Output)
+      d.affine = a.affine;
+    else if (n.op == OpKind::Mul)
+      d.affine = a.affine && b.affine && !(a.varies && b.varies);
+    else if (n.op == OpKind::Div)
+      d.affine = a.affine && !b.varies;
+    else if (n.op == OpKind::Select && !dep[n.cond].varies)
+      d.affine = a.affine && b.affine; // one branch, whatever the target
+    else
+      d.affine = !d.varies;
+    // A Select's condition only picks a branch: if both branches are
+    // stepwise, so is the Select.
+    d.stepwise = op_is_boolean(n.op) ||
+                 (!varies_continuously(a) && !varies_continuously(b));
+  }
+  return dep;
+}
+
+template <info Fn, std::size_t Target>
+inline constexpr auto target_dependence_of =
+    std::define_static_array(target_dependence<Fn, Target>());
+
 } // namespace ad
 
 #endif // REFLECT_DEMO_AUTOGRAD_H

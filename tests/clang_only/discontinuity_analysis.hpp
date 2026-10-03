@@ -144,10 +144,6 @@ template <std::size_t MaxPoints = 16> struct DiscontinuityPointsWithAmplitudes {
 // ---------------------------------------------------------------------------
 namespace detail_disc {
 
-// The reflected DAG of Fn, built once and shared by every analysis of Fn.
-template <info Fn>
-inline constexpr auto nodes_of = std::define_static_array(build_nodes<Fn>());
-
 constexpr bool is_comparison(OpKind op) {
   return op == OpKind::Lt || op == OpKind::Le || op == OpKind::Gt ||
          op == OpKind::Ge || op == OpKind::Eq || op == OpKind::Ne;
@@ -174,71 +170,6 @@ make_inputs(FixedArgs... fixed_args) {
     in[i < Target ? i : i + 1] = fixed[i];
   return in;
 }
-
-template <info Fn> consteval std::size_t input_count() {
-  std::size_t count = 0;
-  for (const Node &n : nodes_of<Fn>)
-    count += n.op == OpKind::Input;
-  return count;
-}
-
-// How a node's value depends on the target input.
-struct Dependence {
-  bool varies = false;  // it changes with the target
-  bool affine = true;   // ... and only as c0 + c1 * target
-  bool stepwise = true; // ... and only in steps, where a comparison flips
-};
-
-// A value that changes with the target other than in steps: one whose own
-// zeros, or whose comparisons, have to be solved for.
-constexpr bool varies_continuously(Dependence d) {
-  return d.varies && !d.stepwise;
-}
-
-// Per node, built in one forward pass (operands precede their users). Affine
-// means built from the target with + -, unary - and * / by target-free
-// values, and `?:` on a target-free condition: what a crossing's sides must be
-// for its point to be solved exactly.
-// Stepwise means piecewise constant: every comparison or logical op is, and
-// so is anything built only from stepwise and target-free values.
-template <info Fn, std::size_t Target>
-consteval std::vector<Dependence> dependence() {
-  const auto nodes = nodes_of<Fn>;
-  std::vector<Dependence> dep(nodes.size());
-  for (const Node &n : nodes) {
-    Dependence &d = dep[n.self];
-    if (n.op == OpKind::Input) {
-      d.varies = n.self == Target;
-      d.stepwise = !d.varies;
-      continue;
-    }
-    const Dependence a = op_has_a(n.op) ? dep[n.a] : Dependence{};
-    const Dependence b = op_has_b(n.op) ? dep[n.b] : Dependence{};
-    d.varies =
-        a.varies || b.varies || (op_has_cond(n.op) && dep[n.cond].varies);
-    if (n.op == OpKind::Add || n.op == OpKind::Sub)
-      d.affine = a.affine && b.affine;
-    else if (n.op == OpKind::Neg || n.op == OpKind::Output)
-      d.affine = a.affine;
-    else if (n.op == OpKind::Mul)
-      d.affine = a.affine && b.affine && !(a.varies && b.varies);
-    else if (n.op == OpKind::Div)
-      d.affine = a.affine && !b.varies;
-    else if (n.op == OpKind::Select && !dep[n.cond].varies)
-      d.affine = a.affine && b.affine; // one branch, whatever the target
-    else
-      d.affine = !d.varies;
-    // A Select's condition only picks a branch: if both branches are
-    // stepwise, so is the Select.
-    d.stepwise = op_is_boolean(n.op) ||
-                 (!varies_continuously(a) && !varies_continuously(b));
-  }
-  return dep;
-}
-
-template <info Fn, std::size_t Target>
-inline constexpr auto dependence_of =
-    std::define_static_array(dependence<Fn, Target>());
 
 // Which nodes are read as conditions: a Select's condition, the operands of
 // `!`, `&&` and `||`, and every guard.
@@ -267,7 +198,7 @@ template <info Fn> consteval std::vector<char> read_as_condition() {
 //    shares one it must be held at its off-point truth.
 template <info Fn, std::size_t Target> consteval std::vector<char> crossings() {
   const auto nodes = nodes_of<Fn>;
-  const auto dep = dependence_of<Fn, Target>;
+  const auto dep = target_dependence_of<Fn, Target>;
   const std::vector<char> read = read_as_condition<Fn>();
   std::vector<char> crossing(nodes.size(), 0);
   for (const Node &n : nodes) {
@@ -454,7 +385,7 @@ constexpr double node_tangent(const std::array<double, N> &val,
   constexpr Node n = nodes_of<Fn>[I];
   constexpr OpKind op = n.op;
   constexpr std::size_t a = n.a, b = n.b, c = n.cond;
-  constexpr auto dep = dependence_of<Fn, Target>;
+  constexpr auto dep = target_dependence_of<Fn, Target>;
   if constexpr (!dep[I].varies)
     return 0.0;
   else if constexpr (op == OpKind::Input)
@@ -503,7 +434,7 @@ template <std::size_t N> struct Sweep {
 template <info Fn, std::size_t Target, std::size_t NumArgs>
 constexpr auto sweep(const std::array<double, NumArgs> &in, double x) {
   static constexpr auto nodes = nodes_of<Fn>;
-  static constexpr auto dep = dependence_of<Fn, Target>;
+  static constexpr auto dep = target_dependence_of<Fn, Target>;
   static constexpr auto cone = crossing_cone_of<Fn, Target>;
   static constexpr auto needs_tangent = tangent_needed_of<Fn, Target>;
   Sweep<nodes.size()> s;
@@ -721,12 +652,12 @@ template <info Fn, std::size_t Target, std::size_t MaxPoints,
 constexpr DiscontinuityPointsWithAmplitudes<MaxPoints>
 analyze(const std::array<double, NumArgs> &in) {
   static constexpr auto nodes = nodes_of<Fn>;
-  static constexpr auto dep = dependence_of<Fn, Target>;
+  static constexpr auto dep = target_dependence_of<Fn, Target>;
   static constexpr auto crossing = crossings_of<Fn, Target>;
-  static_assert(Target < input_count<Fn>(),
+  static_assert(Target < input_count_of<Fn>(),
                 "discontinuity_analysis: the target index is not an argument "
                 "of the function");
-  static_assert(input_count<Fn>() == NumArgs,
+  static_assert(input_count_of<Fn>() == NumArgs,
                 "discontinuity_analysis: pass one fixed value for each "
                 "argument except the target, in order");
   constexpr std::size_t N = nodes.size();
