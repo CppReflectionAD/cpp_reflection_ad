@@ -530,6 +530,63 @@ constexpr std::pair<double, double> gap(const Sweep<N> &s) {
     return {s.val[I], s.tan[I]};
 }
 
+// The nodes crossing I's gap reads, directly or not, in order: its sides (or
+// the condition itself) and their operands. Not their guards: whether a node
+// is reached does not depend on the target, so any sweep already says.
+template <info Fn, std::size_t I>
+consteval std::vector<std::size_t> gap_cone() {
+  const auto nodes = nodes_of<Fn>;
+  std::vector<char> read(I + 1, 0);
+  if (is_comparison(nodes[I].op))
+    read[nodes[I].a] = read[nodes[I].b] = 1;
+  else
+    read[I] = 1;
+  for (std::size_t i = I + 1; i-- > 0;) {
+    const Node &n = nodes[i];
+    if (!read[i])
+      continue;
+    if (op_has_a(n.op))
+      read[n.a] = 1;
+    if (op_has_b(n.op))
+      read[n.b] = 1;
+    if (op_has_cond(n.op))
+      read[n.cond] = 1;
+  }
+  std::vector<std::size_t> cone;
+  for (std::size_t i = 0; i <= I; ++i)
+    if (read[i])
+      cone.push_back(i);
+  return cone;
+}
+
+template <info Fn, std::size_t I>
+inline constexpr auto gap_cone_of = std::define_static_array(gap_cone<Fn, I>());
+
+// Crossing I's gap (as gap() reads it from a sweep) with the target at x,
+// evaluating only the nodes it reads. A node is skipped, as sweep() skips it,
+// if its guard can never hold; `reach` is any sweep, since that does not
+// depend on x.
+template <info Fn, std::size_t Target, std::size_t I, std::size_t N,
+          std::size_t NumArgs>
+constexpr double gap_at(const std::array<double, NumArgs> &in, double x,
+                        const Sweep<N> &reach) {
+  static constexpr auto nodes = nodes_of<Fn>;
+  std::array<double, N> val = {};
+  template for (constexpr std::size_t j : gap_cone_of<Fn, I>) {
+    constexpr std::size_t guard = nodes[j].guard;
+    if constexpr (guard != UNGUARDED) {
+      if (!reach.may_hold[guard])
+        continue;
+    }
+    val[j] = node_value<Fn, j, Target>(val, in, x);
+  }
+  constexpr std::size_t a = nodes[I].a, b = nodes[I].b;
+  if constexpr (is_comparison(nodes[I].op))
+    return IeeeCxMath::sub(val[a], val[b]);
+  else
+    return val[I];
+}
+
 // x moved k ulps up (k > 0) or down (k < 0), through ±0.
 constexpr double step_ulps(double x, int k) {
   const auto up = [](double v) {
@@ -569,9 +626,12 @@ constexpr int roundness(double x) {
 // double, and the same choice for every crossing that has it, so crossings
 // that coincide in exact arithmetic coincide here too and are measured
 // together. With no such double, r stands. The candidates are tried in that
-// order of preference, so the search stops at the first zero.
-template <info Fn, std::size_t Target, std::size_t I, std::size_t NumArgs>
-constexpr double snap(const std::array<double, NumArgs> &in, double r) {
+// order of preference, so the search stops at the first zero. Each candidate
+// evaluates only what crossing I reads (gap_at), not every crossing.
+template <info Fn, std::size_t Target, std::size_t I, std::size_t N,
+          std::size_t NumArgs>
+constexpr double snap(const std::array<double, NumArgs> &in, double r,
+                      const Sweep<N> &reach) {
   std::array<double, 2 * kSnapUlps + 1> candidates = {};
   std::size_t count = 0;
   for (int k = 0; k <= kSnapUlps; ++k) {
@@ -588,7 +648,7 @@ constexpr double snap(const std::array<double, NumArgs> &in, double r) {
     }
   }
   for (const double x : candidates)
-    if (is_finite(x) && gap<Fn, I>(sweep<Fn, Target>(in, x)).first == 0.0)
+    if (is_finite(x) && gap_at<Fn, Target, I>(in, x, reach) == 0.0)
       return x;
   return r;
 }
@@ -698,7 +758,7 @@ analyze(const std::array<double, NumArgs> &in) {
       if (is_finite(r)) {
         rooted[i] = true;
         makes_point[i] = is_ordering(op);
-        root[i] = snap<Fn, Target, i>(in, r);
+        root[i] = snap<Fn, Target, i>(in, r, at_zero);
         // Just above the root, g has the sign of its slope.
         const bool g_positive = slope > 0.0;
         if constexpr (op == OpKind::Gt || op == OpKind::Ge) {
@@ -767,8 +827,7 @@ analyze(const std::array<double, NumArgs> &in) {
       return is_finite(other) &&
              (other == 0.0 || (other > 0.0) != (jump > 0.0));
     };
-    if (jump != 0.0 &&
-        !disagrees(jump_at(step_ulps(point, -kKinkUlps))) &&
+    if (jump != 0.0 && !disagrees(jump_at(step_ulps(point, -kKinkUlps))) &&
         !disagrees(jump_at(step_ulps(point, kKinkUlps))))
       collector.add_point_with_amplitude(point, jump);
   }
