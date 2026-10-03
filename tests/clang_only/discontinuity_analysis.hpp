@@ -14,10 +14,18 @@
 //
 // Strategy:
 //   1. Build the DAG via reflection (like autograd.h)
-//   2. Traverse to find all comparison/select operations
-//   3. For each comparison involving the target input, extract the boundary
-//      value being compared against
+//   2. For each comparison whose operands depend on the target, solve
+//      lhs - rhs = 0 for the target. Both sides must be affine in it (built
+//      with + -, unary - and * / by target-free values); anything else is a
+//      compile-time error rather than a guess.
+//   3. At each root, evaluate the whole function with the comparisons that
+//      flip there forced to their outcome just above, and just below, the
+//      root. The difference is the jump; roots with no jump are dropped.
 //   4. Return as a static array (assuming finite discontinuities)
+//
+// The consteval entry points evaluate the function at compile time, using
+// cx_std for exp/log/sqrt/erfc. sin/cos have no constexpr version, so a
+// function that evaluates them needs the runtime (_rt) entry point.
 
 #include "../autograd.h"
 #include "../cx_std/cx_erfc.hpp"
@@ -42,21 +50,6 @@ namespace detail_disc {
 template <typename T, typename... Args>
 consteval std::array<T, sizeof...(Args)> make_array_impl(Args... args) {
   return {static_cast<T>(args)...};
-}
-
-constexpr double signum(double x) {
-  return x > 0.0 ? 1.0 : (x < 0.0 ? -1.0 : 0.0);
-}
-
-constexpr double comparison_jump_sign(OpKind op, double slope) {
-  const double slope_sign = signum(slope);
-  if (slope_sign == 0.0)
-    return 0.0;
-  if (op == OpKind::Lt || op == OpKind::Le)
-    return -slope_sign;
-  if (op == OpKind::Gt || op == OpKind::Ge)
-    return slope_sign;
-  return 0.0; // Eq/Ne: no step (#67)
 }
 
 } // namespace detail_disc
@@ -178,6 +171,11 @@ namespace detail_disc {
 template <info Fn>
 inline constexpr auto nodes_of = std::define_static_array(build_nodes<Fn>());
 
+constexpr bool is_comparison(OpKind op) {
+  return op == OpKind::Lt || op == OpKind::Le || op == OpKind::Gt ||
+         op == OpKind::Ge || op == OpKind::Eq || op == OpKind::Ne;
+}
+
 // The comparisons whose outcome flips as the target crosses a point. `==` and
 // `!=` are left out: they take their other outcome only at the point itself,
 // so the function's left and right limits there are equal and there is no
@@ -185,11 +183,6 @@ inline constexpr auto nodes_of = std::define_static_array(build_nodes<Fn>());
 constexpr bool is_ordering(OpKind op) {
   return op == OpKind::Lt || op == OpKind::Le || op == OpKind::Gt ||
          op == OpKind::Ge;
-}
-
-constexpr bool is_arithmetic(OpKind op) {
-  return op == OpKind::Add || op == OpKind::Sub || op == OpKind::Mul ||
-         op == OpKind::Div;
 }
 
 // The function's arguments: the fixed values follow TargetArgIndex, and every
@@ -201,47 +194,6 @@ make_inputs(FixedArgs... fixed_args) {
   std::size_t idx = 0;
   ((in[TargetArgIndex + 1 + idx++] = static_cast<double>(fixed_args)), ...);
   return in;
-}
-
-// Value of node I with the target input at x, for the shapes the analyzer
-// understands: literals, inputs, `Levels` nested levels of + - * /, and (where
-// AllowNeg) a negated literal. Anything else reads as 0.
-template <info Fn, std::size_t I, std::size_t Target, std::size_t Levels,
-          bool AllowNeg, std::size_t NumArgs>
-constexpr double shallow_value(const std::array<double, NumArgs> &in,
-                               double x) {
-  static constexpr auto nodes = nodes_of<Fn>;
-  constexpr Node n = nodes[I];
-  // Naming `n` (a consteval-only Node) in a runtime expression would make this
-  // function immediate, so runtime code reads a plain copy of the slot.
-  constexpr std::size_t slot = n.self;
-  if constexpr (n.op == OpKind::Const) {
-    return static_cast<double>([:n.leaf:]);
-  } else if constexpr (n.op == OpKind::Input) {
-    if constexpr (slot == Target)
-      return x;
-    else if constexpr (slot < NumArgs)
-      return in[slot];
-    else
-      return 0.0;
-  } else if constexpr (AllowNeg && n.op == OpKind::Neg &&
-                       nodes[n.a].op == OpKind::Const) {
-    constexpr Node operand = nodes[n.a];
-    return -static_cast<double>([:operand.leaf:]);
-  } else if constexpr (Levels > 0 && is_arithmetic(n.op)) {
-    const double l = shallow_value<Fn, n.a, Target, Levels - 1, false>(in, x);
-    const double r = shallow_value<Fn, n.b, Target, Levels - 1, false>(in, x);
-    if constexpr (n.op == OpKind::Add)
-      return l + r;
-    else if constexpr (n.op == OpKind::Sub)
-      return l - r;
-    else if constexpr (n.op == OpKind::Mul)
-      return l * r;
-    else
-      return (r != 0.0) ? (l / r) : 0.0;
-  } else {
-    return 0.0;
-  }
 }
 
 template <info Fn> consteval std::size_t input_count() {
@@ -293,11 +245,13 @@ template <info Fn, std::size_t Target>
 inline constexpr auto dependence_of =
     std::define_static_array(dependence<Fn, Target>());
 
-// A comparison whose outcome changes as the target moves.
+// A comparison whose outcome changes as the target moves. `==` / `!=` count:
+// they never make a point of their own, but where one shares a root with an
+// ordering comparison it must be held at its limit (see analyze).
 template <info Fn, std::size_t Target>
 consteval bool is_crossing(const Node &n) {
   const auto dep = dependence_of<Fn, Target>;
-  return is_ordering(n.op) && (dep[n.a].varies || dep[n.b].varies);
+  return is_comparison(n.op) && (dep[n.a].varies || dep[n.b].varies);
 }
 
 // The nodes a crossing comparison reads, directly or not: what has to be
@@ -472,22 +426,46 @@ constexpr auto operand_sweep(const std::array<double, NumArgs> &in, double x) {
   return s;
 }
 
-// Sign the output picks up from Select S's direct parents: -1 if S is negated
-// or is the right operand of a Sub.
-template <info Fn, std::size_t S> consteval double parent_scale() {
-  for (const Node &p : nodes_of<Fn>) {
-    if ((p.op == OpKind::Neg && p.a == S) || (p.op == OpKind::Sub && p.b == S))
-      return -1.0;
+// Fn's value with the target input at x, taking branches as Fn does (a
+// guarded node is skipped when its guard is false), except that comparison i
+// takes outcome forced[i] where that is 0 or 1.
+template <info Fn, std::size_t Target, std::size_t N, std::size_t NumArgs>
+constexpr double value_with(const std::array<double, NumArgs> &in, double x,
+                            const std::array<signed char, N> &forced) {
+  static constexpr auto nodes = nodes_of<Fn>;
+  std::array<double, N> val = {};
+  template for (constexpr Node n : nodes) {
+    constexpr std::size_t i = n.self, guard = n.guard;
+    if constexpr (guard != UNGUARDED) {
+      if (val[guard] == 0.0)
+        continue;
+    }
+    if constexpr (is_comparison(n.op)) {
+      if (forced[i] >= 0) {
+        val[i] = forced[i];
+        continue;
+      }
+    }
+    val[i] = node_value<Fn, i, Target>(val, in, x);
   }
-  return 1.0;
+  return val[N - 1];
 }
 
-// The analysis behind every entry point. For each comparison whose outcome
-// changes with the target, find the point where it flips; for each Select it
-// drives, the jump there. PointsOnly records every such point, with amplitude
-// 0, whether or not a Select uses it. `in` holds the function's arguments; the
-// target's slot is ignored.
-template <info Fn, std::size_t Target, std::size_t MaxPoints, bool PointsOnly,
+// The analysis behind every entry point.
+//
+// Each comparison that varies with the target compares g = lhs - rhs with 0,
+// and g is affine in the target, so its value and slope at 0 place the root
+// exactly and say which outcome holds just above it. At each root of an
+// ordering comparison, the jump is Fn's right limit minus its left limit:
+// Fn evaluated at the root with every comparison rooted there forced to its
+// outcome just above, minus the same with the outcome just below. Whatever
+// sits between the comparison and the output (`!`, `&&`, `||`, nested
+// selects, scaling, other jumps at the same point) is evaluated rather than
+// pattern-matched. `==` / `!=` rooted there take their outcome off the point
+// on both sides. Roots with no jump are not reported.
+//
+// `in` holds the function's arguments; the target's slot is ignored.
+template <info Fn, std::size_t Target, std::size_t MaxPoints,
           std::size_t NumArgs>
 constexpr DiscontinuityPointsWithAmplitudes<MaxPoints>
 analyze(const std::array<double, NumArgs> &in) {
@@ -496,41 +474,63 @@ analyze(const std::array<double, NumArgs> &in) {
   static_assert(input_count<Fn>() == NumArgs,
                 "discontinuity_analysis: pass one fixed value for each "
                 "argument after the target");
-  DiscontinuityCollectorWithAmplitudes<MaxPoints> collector;
+  constexpr std::size_t N = nodes.size();
 
-  // Each crossing compares g = lhs - rhs with 0, and g is affine in the
-  // target, so its value and slope at 0 place the root exactly.
+  // Per comparison slot: whether it flips at all, where, its outcome just
+  // below and just above that point, and whether it can make a jump there.
+  std::array<bool, N> rooted = {}, makes_point = {};
+  std::array<double, N> root = {};
+  std::array<signed char, N> below = {}, above = {};
+
   const auto at_zero = operand_sweep<Fn, Target>(in, 0.0);
-
   template for (constexpr Node n : nodes) {
     if constexpr (is_crossing<Fn, Target>(n)) {
       static_assert(dep[n.a].affine && dep[n.b].affine,
                     "discontinuity_analysis: both sides of a comparison on "
                     "the target must be affine in it (built from it with + - "
                     "and * / by values that do not depend on it)");
-      constexpr std::size_t a = n.a, b = n.b;
+      constexpr std::size_t i = n.self, a = n.a, b = n.b;
       constexpr OpKind op = n.op;
       const double slope = at_zero.tan[a] - at_zero.tan[b];
       // A flat g never flips, e.g. `s * k > 1` at k = 0.
       if (slope != 0.0) {
+        rooted[i] = true;
+        makes_point[i] = is_ordering(op);
         // `+ 0.0` turns a -0 root into 0.
-        const double point = -(at_zero.val[a] - at_zero.val[b]) / slope + 0.0;
-        if constexpr (PointsOnly) {
-          collector.add_point_with_amplitude(point, 0.0);
+        root[i] = -(at_zero.val[a] - at_zero.val[b]) / slope + 0.0;
+        // Just above the root, g has the sign of its slope.
+        const bool g_positive = slope > 0.0;
+        if constexpr (op == OpKind::Gt || op == OpKind::Ge) {
+          above[i] = g_positive;
+          below[i] = !g_positive;
+        } else if constexpr (op == OpKind::Lt || op == OpKind::Le) {
+          above[i] = !g_positive;
+          below[i] = g_positive;
         } else {
-          template for (constexpr Node s : nodes) {
-            if constexpr (s.op == OpKind::Select && s.cond == n.self) {
-              constexpr double scale = parent_scale<Fn, s.self>();
-              const double jump =
-                  shallow_value<Fn, s.a, Target, 2, true>(in, point) -
-                  shallow_value<Fn, s.b, Target, 2, true>(in, point);
-              collector.add_point_with_amplitude(
-                  point, jump * comparison_jump_sign(op, slope) * scale);
-            }
-          }
+          above[i] = below[i] = (op == OpKind::Ne);
         }
       }
     }
+  }
+
+  DiscontinuityCollectorWithAmplitudes<MaxPoints> collector;
+  for (std::size_t c = 0; c < N; ++c) {
+    if (!makes_point[c])
+      continue;
+    const double point = root[c];
+    std::array<signed char, N> right, left;
+    right.fill(-1);
+    left.fill(-1);
+    for (std::size_t j = 0; j < N; ++j) {
+      if (rooted[j] && root[j] == point) {
+        right[j] = above[j];
+        left[j] = below[j];
+      }
+    }
+    const double jump = value_with<Fn, Target>(in, point, right) -
+                        value_with<Fn, Target>(in, point, left);
+    if (jump != 0.0)
+      collector.add_point_with_amplitude(point, jump);
   }
 
   collector.sort_by_points();
@@ -543,7 +543,7 @@ template <info Fn, std::size_t TargetArgIndex, std::size_t MaxPoints = 16,
           typename... FixedArgs>
 consteval DiscontinuityPoints<MaxPoints>
 get_discontinuity_points(FixedArgs... fixed_args) {
-  const auto found = detail_disc::analyze<Fn, TargetArgIndex, MaxPoints, true>(
+  const auto found = detail_disc::analyze<Fn, TargetArgIndex, MaxPoints>(
       detail_disc::make_inputs<TargetArgIndex>(fixed_args...));
   DiscontinuityPoints<MaxPoints> result;
   for (std::size_t i = 0; i < found.size(); ++i)
@@ -556,7 +556,7 @@ template <info Fn, std::size_t TargetArgIndex, std::size_t MaxPoints = 16,
           typename... FixedArgs>
 consteval DiscontinuityPointsWithAmplitudes<MaxPoints>
 get_discontinuity_points_and_amplitudes(FixedArgs... fixed_args) {
-  return detail_disc::analyze<Fn, TargetArgIndex, MaxPoints, false>(
+  return detail_disc::analyze<Fn, TargetArgIndex, MaxPoints>(
       detail_disc::make_inputs<TargetArgIndex>(fixed_args...));
 }
 
@@ -567,7 +567,7 @@ template <info Fn, std::size_t TargetArgIndex, std::size_t MaxPoints = 16,
           typename... FixedArgs>
 inline DiscontinuityPointsWithAmplitudes<MaxPoints>
 get_discontinuity_points_and_amplitudes_rt(FixedArgs... fixed_args) {
-  return detail_disc::analyze<Fn, TargetArgIndex, MaxPoints, false>(
+  return detail_disc::analyze<Fn, TargetArgIndex, MaxPoints>(
       detail_disc::make_inputs<TargetArgIndex>(fixed_args...));
 }
 

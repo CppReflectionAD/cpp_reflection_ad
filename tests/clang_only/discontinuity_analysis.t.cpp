@@ -104,6 +104,52 @@ double two_spot_gt_strike(double spot, double strike) {
   return (2.0 * spot > strike) ? 1.0 : 0.0;
 }
 
+// #69: conditions built from comparisons with `!`, `&&`, `||`
+double not_digital_call(double spot, double strike) {
+  return !(spot > strike) ? 1.0 : 0.0;
+}
+double range_digital(double spot, double strike) {
+  return (spot > strike - 1 && spot < strike + 1) ? 1.0 : 0.0;
+}
+double outside_range_digital(double spot, double strike) {
+  return (spot < strike - 1 || spot > strike + 1) ? 1.0 : 0.0;
+}
+
+// #70: the Select's jump scaled on its way to the output
+double minus_two_digital_put(double spot, double strike) {
+  return -2.0 * ((spot < strike) ? 1.0 : 0.0);
+}
+double digital_put_times_minus_two(double spot, double strike) {
+  return ((spot < strike) ? 1.0 : 0.0) * -2.0;
+}
+double half_digital_call(double spot, double strike) {
+  return 0.5 * ((spot > strike) ? 1.0 : 0.0);
+}
+double double_negated_digital_call(double spot, double strike) {
+  return -(-((spot > strike) ? 1.0 : 0.0));
+}
+
+// Jumps are measured on the function, so these come out right too
+// A kink, not a jump: continuous at the strike
+double call_payoff(double spot, double strike) {
+  return (spot > strike) ? spot - strike : 0.0;
+}
+// Two comparisons flipping at the same point: the jumps add up
+double two_steps_at_strike(double spot, double strike) {
+  return ((spot > strike) ? 1.0 : 0.0) + ((spot >= strike) ? 1.0 : 0.0);
+}
+// == at the jump point is held at its off-point outcome on both sides
+double step_times_eq(double spot, double strike) {
+  return ((spot >= strike) ? 1.0 : 0.0) * ((spot == strike) ? 5.0 : 1.0);
+}
+// The inner comparison only matters where the outer branch is taken
+double nested_digital(double spot, double strike) {
+  return (spot > strike) ? ((spot > strike + 10.0) ? 3.0 : 1.0) : 0.0;
+}
+double unreachable_inner_digital(double spot, double strike) {
+  return (spot > strike) ? ((spot < strike - 10.0) ? 3.0 : 1.0) : 0.0;
+}
+
 // Jump of payoff(spot, strike) as spot crosses `point` upward.
 double measure_jump_on_function(double (*payoff)(double, double), double point,
                                 double strike, double epsilon = 1e-8) {
@@ -375,6 +421,95 @@ int main() {
                disc_2s.amplitude(0));
   EXPECT_EQUAL(
       (ad::get_discontinuity_points<^^two_spot_gt_strike, 0>(100.0)[0]), 50.0);
+
+  // #69: `!(s > k)` is a digital put
+  constexpr auto disc_not =
+      ad::get_discontinuity_points_and_amplitudes<^^not_digital_call, 0>(100.0);
+  EXPECT_EQUAL(disc_not.size(), 1);
+  EXPECT_EQUAL(disc_not.point(0), 100.0);
+  EXPECT_EQUAL(disc_not.amplitude(0), -1.0);
+  EXPECT_EQUAL(measure_jump_on_function(not_digital_call, 100.0, 100.0),
+               disc_not.amplitude(0));
+  // && : a range digital steps up at k - 1 and down at k + 1
+  constexpr auto disc_and =
+      ad::get_discontinuity_points_and_amplitudes<^^range_digital, 0>(100.0);
+  EXPECT_EQUAL(disc_and.size(), 2);
+  EXPECT_EQUAL(disc_and.point(0), 99.0);
+  EXPECT_EQUAL(disc_and.amplitude(0), 1.0);
+  EXPECT_EQUAL(disc_and.point(1), 101.0);
+  EXPECT_EQUAL(disc_and.amplitude(1), -1.0);
+  EXPECT_EQUAL(measure_jump_on_function(range_digital, 99.0, 100.0),
+               disc_and.amplitude(0));
+  EXPECT_EQUAL(measure_jump_on_function(range_digital, 101.0, 100.0),
+               disc_and.amplitude(1));
+  // || : its complement
+  const auto disc_or =
+      ad::get_discontinuity_points_and_amplitudes_rt<^^outside_range_digital,
+                                                     0>(100.0);
+  EXPECT_EQUAL(disc_or.size(), 2);
+  EXPECT_EQUAL(disc_or.point(0), 99.0);
+  EXPECT_EQUAL(disc_or.amplitude(0), -1.0);
+  EXPECT_EQUAL(disc_or.point(1), 101.0);
+  EXPECT_EQUAL(disc_or.amplitude(1), 1.0);
+
+  // #70: the jump is scaled by whatever sits between the Select and the output
+  constexpr auto disc_m2put =
+      ad::get_discontinuity_points_and_amplitudes<^^minus_two_digital_put, 0>(
+          100.0);
+  EXPECT_EQUAL(disc_m2put.size(), 1);
+  EXPECT_EQUAL(disc_m2put.amplitude(0), 2.0);
+  EXPECT_EQUAL(measure_jump_on_function(minus_two_digital_put, 100.0, 100.0),
+               disc_m2put.amplitude(0));
+  constexpr auto disc_putm2 =
+      ad::get_discontinuity_points_and_amplitudes<^^digital_put_times_minus_two,
+                                                  0>(100.0);
+  EXPECT_EQUAL(disc_putm2.amplitude(0), 2.0);
+  constexpr auto disc_half =
+      ad::get_discontinuity_points_and_amplitudes<^^half_digital_call, 0>(
+          100.0);
+  EXPECT_EQUAL(disc_half.amplitude(0), 0.5);
+  constexpr auto disc_negneg =
+      ad::get_discontinuity_points_and_amplitudes<^^double_negated_digital_call,
+                                                  0>(100.0);
+  EXPECT_EQUAL(disc_negneg.amplitude(0), 1.0);
+
+  // A kink has no jump, so it is not a discontinuity point
+  EXPECT_EQUAL((ad::get_discontinuity_points<^^call_payoff, 0>(100.0).size()),
+               0);
+  EXPECT_EQUAL(
+      (ad::get_discontinuity_points_and_amplitudes<^^call_payoff, 0>(100.0)
+           .size()),
+      0);
+  // Jumps at a shared point add up
+  constexpr auto disc_two =
+      ad::get_discontinuity_points_and_amplitudes<^^two_steps_at_strike, 0>(
+          100.0);
+  EXPECT_EQUAL(disc_two.size(), 1);
+  EXPECT_EQUAL(disc_two.amplitude(0), 2.0);
+  EXPECT_EQUAL(measure_jump_on_function(two_steps_at_strike, 100.0, 100.0),
+               disc_two.amplitude(0));
+  // Left limit 0, right limit 1 * 1: the 5 at the point itself is not a jump
+  constexpr auto disc_eq =
+      ad::get_discontinuity_points_and_amplitudes<^^step_times_eq, 0>(100.0);
+  EXPECT_EQUAL(disc_eq.size(), 1);
+  EXPECT_EQUAL(disc_eq.amplitude(0), 1.0);
+  EXPECT_EQUAL(measure_jump_on_function(step_times_eq, 100.0, 100.0),
+               disc_eq.amplitude(0));
+  // Nested selects: 0 -> 1 at k, 1 -> 3 at k + 10
+  constexpr auto disc_nested =
+      ad::get_discontinuity_points_and_amplitudes<^^nested_digital, 0>(100.0);
+  EXPECT_EQUAL(disc_nested.size(), 2);
+  EXPECT_EQUAL(disc_nested.point(0), 100.0);
+  EXPECT_EQUAL(disc_nested.amplitude(0), 1.0);
+  EXPECT_EQUAL(disc_nested.point(1), 110.0);
+  EXPECT_EQUAL(disc_nested.amplitude(1), 2.0);
+  // The inner comparison flips at k - 10, inside the untaken branch
+  constexpr auto disc_unreach =
+      ad::get_discontinuity_points_and_amplitudes<^^unreachable_inner_digital,
+                                                  0>(100.0);
+  EXPECT_EQUAL(disc_unreach.size(), 1);
+  EXPECT_EQUAL(disc_unreach.point(0), 100.0);
+  EXPECT_EQUAL(disc_unreach.amplitude(0), 1.0);
 
   TEST_END;
 }
