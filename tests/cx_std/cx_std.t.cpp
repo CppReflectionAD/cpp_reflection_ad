@@ -92,6 +92,15 @@ static_assert(cx::log(5e-324) < -744.0 && cx::log(1e308) > 709.0);
 static_assert(cx::sqrt(5e-324) > 0.0 && cx::sqrt(1e308) > 1e153);
 // Correctly rounded where Newton's iteration alone stops an ulp high
 static_assert(cx::sqrt(8.9049066160978575e+299) == 9.4365812750687717e+149);
+// float, whose range a 2^128 reduction step overflowed (an error for GCC):
+// correctly rounded across it, subnormals included
+static_assert(cx::sqrt(2.0f) == 0x1.6a09e6p+0f &&
+              cx::sqrt(0x1.fffffep+127f) == 0x1.fffffep+63f &&
+              cx::sqrt(0x1p-149f) == 0x1.6a09e6p-75f &&
+              cx::sqrt(0x1.16c2p-133f) == 0x1.79c9cep-67f);
+static_assert(cx::log(0x1.fffffep+127f) > 88.72f &&
+              cx::log(0x1.fffffep+127f) < 88.73f &&
+              cx::log(0x1p-149f) < -103.27f && cx::log(0x1p-149f) > -103.28f);
 static_assert(cx::erfc(26.0) > 0.0 && cx::erfc(30.0) == 0.0);
 static_assert(cx::erfc(0.5) > 0.47 && cx::erfc(-3.0) < 2.0);
 // ... and stays cheap: 1000 calls over [0.5, 1], where the continued fraction
