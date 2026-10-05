@@ -56,13 +56,6 @@ double digital_put_payoff(double spot, double strike) {
   return (spot < strike) ? 1.0 : 0.0;
 }
 
-// Digital call: spot > K ? 1 : 0
-// This has a discontinuity at spot = K with a positive jump (0 -> 1 as spot
-// increases) The jump should be +1
-double digital_call(double spot, double strike) {
-  return (spot > strike) ? 1.0 : 0.0;
-}
-
 // Case 2: fixed_arg < target_arg (reverse operands, slope = -1.0)
 // strike < spot ? 1.0 : 0.0
 double reverse_compare_payoff(double spot, double strike) {
@@ -244,11 +237,11 @@ int main() {
   EXPECT_EQUAL(disc_put.point(0), 100.0);
   EXPECT_EQUAL(disc_put.amplitude(0), -1.0);
 
-  // Test digital_call with amplitudes (verify opposite sign from put)
-  // (spot > strike) ? 1.0 : 0.0
-  // At strike = 100.0, the jump as spot increases is 1.0 - 0.0 = +1.0.
+  // Test digital call with amplitudes using two_arg_compare
+  // (x > y) ? 1.0 : 0.0, with y fixed at 100.0
+  // At y = 100.0, the jump as x increases is 1.0 - 0.0 = +1.0.
   constexpr auto disc_call =
-      ad::get_discontinuity_points_and_amplitudes<^^digital_call, 0>(100.0);
+      ad::get_discontinuity_points_and_amplitudes<^^two_arg_compare, 0>(100.0);
   EXPECT_FALSE(disc_call.empty());
   EXPECT_EQUAL(disc_call.size(), 1);
   EXPECT_EQUAL(disc_call.point(0), 100.0);
