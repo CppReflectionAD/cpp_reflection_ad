@@ -15,6 +15,9 @@ function(compile_check group filelist)
             set(target "${testfile}")
         endif()
 
+        # Extract source path before mangling target for test naming
+        string(REPLACE .cpp "" source_path "${target}")
+
         # Transform target path to test naming format
         string(REPLACE .cpp "" target "${target}")
         string(REPLACE / "." target "${target}")
@@ -34,8 +37,6 @@ function(compile_check group filelist)
         )
 
         # Keep directory structure for the .fail.txt file location
-        set(source_path "${target}")
-        string(REPLACE .cpp "" source_path ${source_path})
         set(expected_output_file "${CMAKE_CURRENT_SOURCE_DIR}/${source_path}.fail.txt")
 
         # Create a test that validates compilation output against snapshot
