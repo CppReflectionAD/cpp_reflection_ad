@@ -1,4 +1,8 @@
 function(compile_check_with_snapshot group filelist)
+    # Get the test_simple directory path
+    # This function is included from tests/CMakeLists.txt with an absolute include path
+    set(test_simple_dir "${CMAKE_SOURCE_DIR}/test_simple")
+
     foreach(testfile IN LISTS filelist)
         if(IS_ABSOLUTE "${testfile}")
             set(_source "${testfile}")
@@ -38,7 +42,8 @@ function(compile_check_with_snapshot group filelist)
                 -DTARGET_NAME=${target_name}
                 -DEXPECTED_OUTPUT_FILE=${expected_output_file}
                 -DCXX_COMPILER_ID=${CMAKE_CXX_COMPILER_ID}
-                -P ${CMAKE_SOURCE_DIR}/test_simple/validate_compile_output.cmake
+                -DTEST_SIMPLE_DIR=${test_simple_dir}
+                -P ${test_simple_dir}/validate_compile_output.cmake
         )
 
         # Create rebase target for this test
@@ -50,7 +55,8 @@ function(compile_check_with_snapshot group filelist)
                 -DOUTPUT_FILE=/tmp/${target_name}_output.txt
                 -DEXPECTED_FILE=${expected_output_file}
                 -DCOMPILER=${CMAKE_CXX_COMPILER_ID}
-                -P ${CMAKE_SOURCE_DIR}/test_simple/extract_error_output.cmake
+                -DTEST_SIMPLE_DIR=${test_simple_dir}
+                -P ${test_simple_dir}/extract_error_output.cmake
             COMMAND ${CMAKE_COMMAND} -E echo "Rebased ${expected_output_file}"
             COMMENT "Rebasing expected output for ${rebase_target}"
             VERBATIM

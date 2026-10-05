@@ -3,7 +3,17 @@
 # Supports multiple compilers: appends/updates current compiler's section
 #
 # Usage (called by rebase-* target):
-#   cmake -DOUTPUT_FILE=... -DEXPECTED_FILE=... -DCOMPILER=... -P extract_error_output.cmake
+#   cmake -DOUTPUT_FILE=... -DEXPECTED_FILE=... -DCOMPILER=... -DTEST_SIMPLE_DIR=... -P extract_error_output.cmake
+
+if(NOT DEFINED TEST_SIMPLE_DIR)
+    message(FATAL_ERROR "TEST_SIMPLE_DIR must be provided")
+endif()
+
+# Include shared extraction functions
+include("${TEST_SIMPLE_DIR}/shared_extract.cmake")
+
+# Compute CMAKE_SOURCE_DIR from TEST_SIMPLE_DIR (its parent)
+get_filename_component(CMAKE_SOURCE_DIR "${TEST_SIMPLE_DIR}" DIRECTORY)
 
 if(NOT DEFINED OUTPUT_FILE OR NOT DEFINED EXPECTED_FILE OR NOT DEFINED COMPILER)
     message(FATAL_ERROR "Missing required parameters: OUTPUT_FILE, EXPECTED_FILE, COMPILER")
@@ -16,28 +26,11 @@ endif()
 
 file(READ "${OUTPUT_FILE}" BUILD_OUTPUT)
 
-# Extract only error and warning lines with continuations (preserve compiler output format)
-# Error/warning blocks: error/warning line followed by continuation lines (starting with space or tab)
-string(REGEX MATCHALL "[^\n]*error:[^\n]*(\n[ \t][^\n]*)*" error_lines "${BUILD_OUTPUT}")
-string(REGEX MATCHALL "[^\n]*warning:[^\n]*(\n[ \t][^\n]*)*" warning_lines "${BUILD_OUTPUT}")
+# Extract error and warning lines
+extract_errors_and_warnings("${BUILD_OUTPUT}" EXTRACTED)
 
-# Combine errors and warnings, preserving newlines
-set(EXTRACTED "")
-foreach(line IN LISTS error_lines)
-    if(EXTRACTED)
-        string(APPEND EXTRACTED "\n${line}")
-    else()
-        set(EXTRACTED "${line}")
-    endif()
-endforeach()
-
-foreach(line IN LISTS warning_lines)
-    if(EXTRACTED)
-        string(APPEND EXTRACTED "\n${line}")
-    else()
-        set(EXTRACTED "${line}")
-    endif()
-endforeach()
+# Normalize paths: strip CMAKE_SOURCE_DIR to make baselines portable
+string(REGEX REPLACE "${CMAKE_SOURCE_DIR}/" "" EXTRACTED "${EXTRACTED}")
 
 # Determine compiler header
 if(COMPILER STREQUAL "Clang")
@@ -55,18 +48,18 @@ set(REBASED_OUTPUT "")
 if(EXISTS "${EXPECTED_FILE}")
     file(READ "${EXPECTED_FILE}" EXISTING_OUTPUT)
 
-    # Extract sections for other compilers
+    # Extract sections for other compilers using the helper function
+    # For Clang being rebased: preserve GCC section
     if(COMPILER_HEADER STREQUAL "=== Clang ===")
-        # Keep GCC section if present
-        string(REGEX MATCH "=== GCC ===\n[^=]*" gcc_section "${EXISTING_OUTPUT}")
+        extract_compiler_section("${EXISTING_OUTPUT}" "GNU" gcc_section)
         if(gcc_section)
-            set(REBASED_OUTPUT "${gcc_section}\n\n")
+            set(REBASED_OUTPUT "=== GCC ===\n${gcc_section}\n\n")
         endif()
+    # For GCC being rebased: preserve Clang section
     elseif(COMPILER_HEADER STREQUAL "=== GCC ===")
-        # Keep Clang section if present
-        string(REGEX MATCH "=== Clang ===\n[^=]*" clang_section "${EXISTING_OUTPUT}")
+        extract_compiler_section("${EXISTING_OUTPUT}" "Clang" clang_section)
         if(clang_section)
-            set(REBASED_OUTPUT "${clang_section}\n\n")
+            set(REBASED_OUTPUT "=== Clang ===\n${clang_section}\n\n")
         endif()
     endif()
 endif()
