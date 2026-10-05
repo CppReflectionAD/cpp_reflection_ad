@@ -380,6 +380,7 @@ analyze_discontinuities_with_amplitudes_impl(
         double point_value = 0.0;
         double comparison_slope = 0.0;
 
+        // Case 1: a is the target input, b is a constant
         if constexpr (operand_a.op == OpKind::Input &&
                       operand_a.self == TargetArgIndex &&
                       operand_b.op == OpKind::Const) {
@@ -387,37 +388,49 @@ analyze_discontinuities_with_amplitudes_impl(
           comparison_slope = 1.0;
           constexpr double b_const = static_cast<double>([:operand_b.leaf:]);
           point_value = b_const;
-        } else if constexpr (operand_b.op == OpKind::Input &&
-                             operand_b.self == TargetArgIndex &&
-                             operand_a.op == OpKind::Const) {
+        }
+
+        // Case 2: b is the target input, a is a constant
+        else if constexpr (operand_b.op == OpKind::Input &&
+                           operand_b.self == TargetArgIndex &&
+                           operand_a.op == OpKind::Const) {
           involves_target = true;
           comparison_slope = -1.0;
           constexpr double a_const = static_cast<double>([:operand_a.leaf:]);
           point_value = a_const;
-        } else if constexpr (operand_a.op == OpKind::Input &&
-                             operand_a.self == TargetArgIndex &&
-                             operand_b.op == OpKind::Input &&
-                             operand_b.self != TargetArgIndex &&
-                             operand_b.self < NumArgs) {
+        }
+
+        // Case 3: a is target input, b is another input (non-target)
+        else if constexpr (operand_a.op == OpKind::Input &&
+                           operand_a.self == TargetArgIndex &&
+                           operand_b.op == OpKind::Input &&
+                           operand_b.self != TargetArgIndex &&
+                           operand_b.self < NumArgs) {
           involves_target = true;
           comparison_slope = 1.0;
           point_value = fixed_args[operand_b.self];
-        } else if constexpr (operand_b.op == OpKind::Input &&
-                             operand_b.self == TargetArgIndex &&
-                             operand_a.op == OpKind::Input &&
-                             operand_a.self != TargetArgIndex &&
-                             operand_a.self < NumArgs) {
+        }
+
+        // Case 4: b is target input, a is another input (non-target)
+        else if constexpr (operand_b.op == OpKind::Input &&
+                           operand_b.self == TargetArgIndex &&
+                           operand_a.op == OpKind::Input &&
+                           operand_a.self != TargetArgIndex &&
+                           operand_a.self < NumArgs) {
           involves_target = true;
           comparison_slope = -1.0;
           point_value = fixed_args[operand_a.self];
-        } else if constexpr (operand_a.op == OpKind::Input &&
-                             operand_a.self == TargetArgIndex &&
-                             (operand_b.op == OpKind::Add ||
-                              operand_b.op == OpKind::Sub ||
-                              operand_b.op == OpKind::Mul ||
-                              operand_b.op == OpKind::Div) &&
-                             operand_b.a < nodes.size() &&
-                             operand_b.b < nodes.size()) {
+        }
+
+        // Case 5: a is target input, b is a binary operation (e.g., strike - 1)
+        else if constexpr (operand_a.op == OpKind::Input &&
+                           operand_a.self == TargetArgIndex &&
+                           (operand_b.op == OpKind::Add ||
+                            operand_b.op == OpKind::Sub ||
+                            operand_b.op == OpKind::Mul ||
+                            operand_b.op == OpKind::Div) &&
+                           operand_b.a < nodes.size() &&
+                           operand_b.b < nodes.size()) {
           involves_target = true;
           comparison_slope = 1.0;
           constexpr auto b_left = nodes[operand_b.a];
@@ -448,14 +461,17 @@ analyze_discontinuities_with_amplitudes_impl(
             point_value =
                 (b_right_val != 0.0) ? (b_left_val / b_right_val) : 0.0;
           }
-        } else if constexpr (operand_b.op == OpKind::Input &&
-                             operand_b.self == TargetArgIndex &&
-                             (operand_a.op == OpKind::Add ||
-                              operand_a.op == OpKind::Sub ||
-                              operand_a.op == OpKind::Mul ||
-                              operand_a.op == OpKind::Div) &&
-                             operand_a.a < nodes.size() &&
-                             operand_a.b < nodes.size()) {
+        }
+
+        // Case 6: b is target input, a is a binary operation (e.g., strike - 1)
+        else if constexpr (operand_b.op == OpKind::Input &&
+                           operand_b.self == TargetArgIndex &&
+                           (operand_a.op == OpKind::Add ||
+                            operand_a.op == OpKind::Sub ||
+                            operand_a.op == OpKind::Mul ||
+                            operand_a.op == OpKind::Div) &&
+                           operand_a.a < nodes.size() &&
+                           operand_a.b < nodes.size()) {
           involves_target = true;
           comparison_slope = -1.0;
           constexpr auto a_left = nodes[operand_a.a];
@@ -899,6 +915,7 @@ get_discontinuity_points_and_amplitudes_rt(FixedArgs... fixed_args) {
         double point_value = 0.0;
         double comparison_slope = 0.0;
 
+        // Case 1: a is the target input, b is a constant
         if constexpr (operand_a.op == OpKind::Input &&
                       operand_a.self == TargetArgIndex &&
                       operand_b.op == OpKind::Const) {
@@ -906,37 +923,49 @@ get_discontinuity_points_and_amplitudes_rt(FixedArgs... fixed_args) {
           comparison_slope = 1.0;
           constexpr double b_const = static_cast<double>([:operand_b.leaf:]);
           point_value = b_const;
-        } else if constexpr (operand_b.op == OpKind::Input &&
-                             operand_b.self == TargetArgIndex &&
-                             operand_a.op == OpKind::Const) {
+        }
+
+        // Case 2: b is the target input, a is a constant
+        else if constexpr (operand_b.op == OpKind::Input &&
+                           operand_b.self == TargetArgIndex &&
+                           operand_a.op == OpKind::Const) {
           involves_target = true;
           comparison_slope = -1.0;
           constexpr double a_const = static_cast<double>([:operand_a.leaf:]);
           point_value = a_const;
-        } else if constexpr (operand_a.op == OpKind::Input &&
-                             operand_a.self == TargetArgIndex &&
-                             operand_b.op == OpKind::Input &&
-                             operand_b.self != TargetArgIndex &&
-                             operand_b.self < NumArgs) {
+        }
+
+        // Case 3: a is target input, b is another input (non-target)
+        else if constexpr (operand_a.op == OpKind::Input &&
+                           operand_a.self == TargetArgIndex &&
+                           operand_b.op == OpKind::Input &&
+                           operand_b.self != TargetArgIndex &&
+                           operand_b.self < NumArgs) {
           involves_target = true;
           comparison_slope = 1.0;
           point_value = all_inputs[operand_b.self];
-        } else if constexpr (operand_b.op == OpKind::Input &&
-                             operand_b.self == TargetArgIndex &&
-                             operand_a.op == OpKind::Input &&
-                             operand_a.self != TargetArgIndex &&
-                             operand_a.self < NumArgs) {
+        }
+
+        // Case 4: b is target input, a is another input (non-target)
+        else if constexpr (operand_b.op == OpKind::Input &&
+                           operand_b.self == TargetArgIndex &&
+                           operand_a.op == OpKind::Input &&
+                           operand_a.self != TargetArgIndex &&
+                           operand_a.self < NumArgs) {
           involves_target = true;
           comparison_slope = -1.0;
           point_value = all_inputs[operand_a.self];
-        } else if constexpr (operand_a.op == OpKind::Input &&
-                             operand_a.self == TargetArgIndex &&
-                             (operand_b.op == OpKind::Add ||
-                              operand_b.op == OpKind::Sub ||
-                              operand_b.op == OpKind::Mul ||
-                              operand_b.op == OpKind::Div) &&
-                             operand_b.a < nodes.size() &&
-                             operand_b.b < nodes.size()) {
+        }
+
+        // Case 5: a is target input, b is a binary operation (e.g., strike - 1)
+        else if constexpr (operand_a.op == OpKind::Input &&
+                           operand_a.self == TargetArgIndex &&
+                           (operand_b.op == OpKind::Add ||
+                            operand_b.op == OpKind::Sub ||
+                            operand_b.op == OpKind::Mul ||
+                            operand_b.op == OpKind::Div) &&
+                           operand_b.a < nodes.size() &&
+                           operand_b.b < nodes.size()) {
           involves_target = true;
           comparison_slope = 1.0;
           constexpr auto b_left = nodes[operand_b.a];
@@ -967,14 +996,17 @@ get_discontinuity_points_and_amplitudes_rt(FixedArgs... fixed_args) {
             point_value =
                 (b_right_val != 0.0) ? (b_left_val / b_right_val) : 0.0;
           }
-        } else if constexpr (operand_b.op == OpKind::Input &&
-                             operand_b.self == TargetArgIndex &&
-                             (operand_a.op == OpKind::Add ||
-                              operand_a.op == OpKind::Sub ||
-                              operand_a.op == OpKind::Mul ||
-                              operand_a.op == OpKind::Div) &&
-                             operand_a.a < nodes.size() &&
-                             operand_a.b < nodes.size()) {
+        }
+
+        // Case 6: b is target input, a is a binary operation (e.g., strike - 1)
+        else if constexpr (operand_b.op == OpKind::Input &&
+                           operand_b.self == TargetArgIndex &&
+                           (operand_a.op == OpKind::Add ||
+                            operand_a.op == OpKind::Sub ||
+                            operand_a.op == OpKind::Mul ||
+                            operand_a.op == OpKind::Div) &&
+                           operand_a.a < nodes.size() &&
+                           operand_a.b < nodes.size()) {
           involves_target = true;
           comparison_slope = -1.0;
           constexpr auto a_left = nodes[operand_a.a];
