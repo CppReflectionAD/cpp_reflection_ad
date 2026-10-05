@@ -37,6 +37,12 @@
 //      the exact roots could be at, and the jump must exceed them.
 //   4. Return as a static array (assuming finite discontinuities)
 //
+// get_discontinuity_points_and_amplitudes also gives each point's amplitude:
+// the jump f(x+) - f(x-) as the target increases through the point x. A
+// digital call (s > k ? 1 : 0) jumps by +1 at k, a digital put
+// (s < k ? 1 : 0) by -1. It is not "true branch minus false branch", which
+// has the wrong sign wherever the comparison holds below the point.
+//
 // Everything is evaluated as Fn evaluates it: branches it does not take are
 // skipped, and arithmetic follows IEEE (1 / 0 is inf, NaN compares false)
 // even during constant evaluation, where such operations would otherwise
@@ -101,7 +107,8 @@ template <std::size_t MaxPoints = 16> struct DiscontinuityPoints {
 };
 
 // Result type for discontinuity points with amplitudes
-// Stores pairs: (point, amplitude), flattened into single array
+// Stores pairs: (point, amplitude), flattened into single array. The amplitude
+// is the jump f(x+) - f(x-) as the target increases through the point x.
 // E.g., points at x=1.0 with amplitude 1.0 and x=4.0 with amplitude -1.0
 // would be stored as [1.0, 1.0, 4.0, -1.0]
 template <std::size_t MaxPoints = 16> struct DiscontinuityPointsWithAmplitudes {
