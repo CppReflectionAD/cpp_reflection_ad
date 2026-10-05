@@ -63,14 +63,6 @@ double digital_call(double spot, double strike) {
   return (spot > strike) ? 1.0 : 0.0;
 }
 
-// Test function that measures the actual jump on the function itself
-double measure_jump_on_function(double (*payoff)(double, double), double strike,
-                                double epsilon = 1e-8) {
-  double before = payoff(strike - epsilon, strike);
-  double after = payoff(strike + epsilon, strike);
-  return after - before; // This is the actual jump in the function value
-}
-
 int main() {
   // Test 0 discontinuities
   constexpr auto disc0 = ad::get_discontinuity_points<^^continuous_linear, 0>();
@@ -232,6 +224,18 @@ int main() {
   // If the bug existed, both would report +1 instead of having opposite signs
   // Digital put should be negative, digital call should be positive
   EXPECT_EQUAL(disc_put.amplitude(0) < disc_call.amplitude(0), true);
+
+  // Test runtime version with runtime arguments
+  // get_discontinuity_points_and_amplitudes_rt exercises the compile-time DAG
+  // analysis with runtime parameter values
+  double runtime_strike = 100.0;
+  auto disc_rt =
+      ad::get_discontinuity_points_and_amplitudes_rt<^^digital_and_call_payoff,
+                                                      0>(runtime_strike);
+  EXPECT_FALSE(disc_rt.empty());
+  EXPECT_EQUAL(disc_rt.size(), 1);
+  EXPECT_EQUAL(disc_rt.point(0), 100.0);
+  EXPECT_EQUAL(disc_rt.amplitude(0), 1.0);
 
   TEST_END;
 }
