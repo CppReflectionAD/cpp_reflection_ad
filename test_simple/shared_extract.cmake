@@ -65,7 +65,6 @@ function(normalize_error_output input output_var)
     string(REGEX REPLACE "[ \t]+\n" "\n" cleaned "${cleaned}")
     # Normalize line number references (in error context)
     string(REGEX REPLACE " [0-9]+ \\|" " N |" cleaned "${cleaned}")
-    string(REGEX REPLACE "\\| +\\^" "| ^" cleaned "${cleaned}")
 
     string(STRIP cleaned "${cleaned}")
     set(${output_var} "${cleaned}" PARENT_SCOPE)

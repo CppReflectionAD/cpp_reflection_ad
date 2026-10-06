@@ -3,7 +3,7 @@
 # Supports multiple compilers: extracts and compares only current compiler's section
 #
 # Usage (called by CMake test):
-#   cmake -DBINARY_DIR=... -DTARGET_NAME=... -DEXPECTED_OUTPUT_FILE=... -DCXX_COMPILER_ID=... -DTEST_SIMPLE_DIR=... -P validate_compile_output.cmake
+#   cmake -DBINARY_DIR=... -DTARGET_NAME=... -DEXPECTED_OUTPUT_FILE=... -DCXX_COMPILER_ID=... -DTEST_SIMPLE_DIR=... -DREBASE_TARGET=... -P validate_compile_output.cmake
 
 if(NOT DEFINED TEST_SIMPLE_DIR)
     message(FATAL_ERROR "TEST_SIMPLE_DIR must be provided")
@@ -69,20 +69,14 @@ extract_errors("${ACTUAL_OUTPUT}" extracted_actual)
 normalize_error_output("${extracted_actual}" normalized_actual)
 normalize_error_output("${EXPECTED_OUTPUT}" normalized_expected)
 
-# Debug output
-string(LENGTH "${normalized_expected}" exp_len)
-string(LENGTH "${normalized_actual}" act_len)
-message(STATUS "Expected bytes: ${exp_len}, Actual bytes: ${act_len}")
-
-# Debug: show what we're comparing
 if(NOT normalized_actual STREQUAL normalized_expected)
     message(FATAL_ERROR
 "Error output changed for ${TARGET_NAME}!
 
-Expected (${CMAKE_CURRENT_LIST_LINE}):
+Expected (normalized):
 [${normalized_expected}]
 
-Actual:
+Actual (normalized):
 [${normalized_actual}]
 
 To update the baseline (rebase):

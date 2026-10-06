@@ -47,7 +47,7 @@ When a test runs for the first time with no `.fail.txt` file, it fails with:
 Expected output file not found: .../inverse_of_non_invertible.fail.txt
 
 This is the first time this test is being run. To create the baseline:
-  cmake --build . --target rebase-reflection_ad.static_fail.inverse_of_non_invertible
+  cmake --build /path/to/build/cmake --target rebase-reflection_ad.static_fail.inverse_of_non_invertible
 ```
 
 Run the rebase command:
@@ -56,10 +56,9 @@ cmake --build build/cmake --target rebase-reflection_ad.static_fail.inverse_of_n
 ```
 
 This:
-- Attempts to compile the target
-- Extracts error/warning lines
-- Adds a compiler header (`=== Clang ===` or `=== GCC ===`)
-- Writes to `.fail.txt`
+- Compiles the target, and refuses to write a baseline if it compiles successfully
+- Extracts the error lines, each with its indented continuation lines (source excerpt, caret, GCC's `•` notes)
+- Writes them under the current compiler's header (`=== Clang ===` or `=== GCC ===`) in `.fail.txt`
 
 ### 3. Review and Commit
 
@@ -86,15 +85,18 @@ A single `.fail.txt` file contains expected errors for multiple compilers:
 
 ```
 === Clang ===
-inverse_of_non_invertible.cpp:42:3: error: static assertion failed: ...
-  ^ ~~
-1 error generated.
+tests/static_fail/../is_invertible.hpp:1019:7: error: static assertion failed due to requirement 'is_invertible<^^(...)>()': ad::inverse requires an explicit inverse plan; ...
+ 1019 |       is_invertible<Fn, RegisteredPairs...>(),
+      |       ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 === GCC ===
-inverse_of_non_invertible.cpp:42:3: error: static assertion failed
-42 |   static_assert(false);
-   |   ^~~~~~~~~~~~~~
+tests/static_fail/../is_invertible.hpp:1019:44: error: static assertion failed: ad::inverse requires an explicit inverse plan; ...
+ 1019 |       is_invertible<Fn, RegisteredPairs...>(),
+      |       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~
+  • 'ad::is_invertible<^^fn_square>()' evaluates to false
 ```
+
+Sections are kept in alphabetical order, separated by one blank line.
 
 ### Rebasing with a Specific Compiler
 
@@ -133,23 +135,26 @@ The validation script:
 
 The `.fail.txt` baseline stores the **full, original error output** (including paths and line numbers). Normalization is applied only during comparison, making tests resilient to:
 
-- **Path variations**: `/path/to/file.cpp:1:2: error:` vs `/other/path/file.cpp:1:2: error:`
-- **Whitespace differences**: Multiple spaces collapse to single space
-- **Formatting noise**: Build system output and caret lines stripped
-- **Line number references in text**: `1 |` → `N |`, `| ^` → `| ^`
+- **Paths, line and column numbers**: `/path/to/file.cpp:42:3: error:` → `file.cpp: error:`
+- **Source-excerpt line numbers**: ` 42 |` → ` N |`
+- **Whitespace**: runs of spaces and tabs collapse to one space; trailing whitespace is removed
+- **Build-system noise**: only error blocks are kept; lines like `ninja: build stopped` or `1 error generated.` are dropped
 
-Only **error messages** are compared (warnings are extracted but not validated).
+The source excerpt and caret lines are kept and compared. Warnings and notes that aren't indented under an error are not extracted, so they are not checked.
 
 Example: actual build output
 ```
 /absolute/path/file.cpp:42:3: error: static assertion failed: message
-42 | code here
-   | ^        ~~~
+   42 | code here
+      | ^        ~~~
+1 error generated.
 ```
 
 Gets normalized to:
 ```
 file.cpp: error: static assertion failed: message
+ N | code here
+ | ^ ~~~
 ```
 
 And compared against the normalized baseline. This ensures tests catch *semantic* changes without false positives from line number shifts or absolute paths.
@@ -215,6 +220,8 @@ cmake --build build/cmake --target rebase-reflection_ad.static_fail.inverse_of_n
 If a test fails, the output shows the mismatch:
 
 ```
+Error output changed for reflection_ad.static.static_fail.inverse_of_non_invertible!
+
 Expected (normalized):
 [file.cpp: error: static assertion failed: ...]
 
