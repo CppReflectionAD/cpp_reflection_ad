@@ -25,8 +25,6 @@ function(extract_errors input output_var)
     set(block_regex "[^\n]*error:[^\n]*(\n[ \t][^\n]*)*")
     set(rest "${input}")
     set(extracted "")
-    # Loop on the match itself, not while(TRUE): these functions run under
-    # cmake -P with no policies set, where TRUE is treated as a variable name.
     string(REGEX MATCH "${block_regex}" block "${rest}")
     while(NOT block STREQUAL "")
         if(extracted STREQUAL "")

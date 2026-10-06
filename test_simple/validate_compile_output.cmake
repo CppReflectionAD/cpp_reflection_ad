@@ -5,6 +5,9 @@
 # Usage (called by CMake test):
 #   cmake -DBINARY_DIR=... -DTARGET_NAME=... -DEXPECTED_OUTPUT_FILE=... -DCXX_COMPILER_ID=... -DTEST_SIMPLE_DIR=... -DREBASE_TARGET=... -P validate_compile_output.cmake
 
+# cmake -P sets no policies; use the same ones as the top-level CMakeLists.txt
+cmake_minimum_required(VERSION 3.25)
+
 if(NOT DEFINED TEST_SIMPLE_DIR)
     message(FATAL_ERROR "TEST_SIMPLE_DIR must be provided")
 endif()
