@@ -56,9 +56,9 @@ function(compile_check group filelist)
         )
         add_custom_target(${rebase_target}
             COMMAND ${CMAKE_COMMAND} --build "${CMAKE_BINARY_DIR}" --target ${target_name} 2>&1
-                | tee /tmp/${target_name}_output.txt || true
+                | tee ${CMAKE_CURRENT_BINARY_DIR}/${target_name}_output.txt || true
             COMMAND ${CMAKE_COMMAND}
-                -DOUTPUT_FILE=/tmp/${target_name}_output.txt
+                -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/${target_name}_output.txt
                 -DEXPECTED_FILE=${expected_output_file}
                 -DCOMPILER=${CMAKE_CXX_COMPILER_ID}
                 -DTEST_SIMPLE_DIR=${test_simple_dir}
@@ -67,10 +67,6 @@ function(compile_check group filelist)
             COMMENT "Rebasing expected output for ${rebase_target}"
             VERBATIM
         )
-
-        # Track for global rebase target
-        list(APPEND ALL_REBASE_TARGETS ${rebase_target})
-        set(ALL_REBASE_TARGETS "${ALL_REBASE_TARGETS}" PARENT_SCOPE)
     endforeach()
 endfunction()
 
