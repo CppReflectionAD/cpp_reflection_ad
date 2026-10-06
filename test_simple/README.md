@@ -19,12 +19,14 @@ test_simple/
 ├── README.md                          (this file)
 ├── test_simple_cmake.cmake            (CMake functions for test registration)
 ├── test_simple_include.hpp            (test macros: EXPECT_EQUAL, EXPECT_NEAR_ABS, etc.)
+├── shared_extract.cmake               (common extraction and normalization functions)
 ├── validate_compile_output.cmake      (test validation script)
-├── extract_error_output.cmake         (baseline extraction script)
-└── tests/
-    └── static_fail/
-        ├── inverse_of_non_invertible.cpp
-        └── inverse_of_non_invertible.fail.txt
+└── extract_error_output.cmake         (baseline extraction script)
+
+tests/
+└── static_fail/
+    ├── inverse_of_non_invertible.cpp
+    └── inverse_of_non_invertible.fail.txt
 ```
 
 The `.fail.txt` file lives next to the `.cpp` file and contains expected compilation errors for all supported compilers.
@@ -35,7 +37,7 @@ The `.fail.txt` file lives next to the `.cpp` file and contains expected compila
 
 ```cmake
 # In CMakeLists.txt
-compile_check_with_snapshot(reflection_ad "static_fail/inverse_of_non_invertible.cpp")
+compile_check(reflection_ad "static_fail/inverse_of_non_invertible.cpp")
 ```
 
 ### 2. Create the First Baseline
@@ -121,27 +123,36 @@ ctest --test-dir build/cmake -R inverse_of_non_invertible
 ctest --test-dir build/cmake -R inverse_of_non_invertible
 ```
 
-## Error Message Normalization
+## Comparison Process
 
-The validation compares normalized error messages. This makes tests resilient to:
+The validation script:
+1. Extracts error lines from actual build output
+2. Reads the expected baseline (saved as-is in `.fail.txt`)
+3. **Normalizes both** for comparison (strips paths, line numbers, whitespace noise)
+4. Compares normalized versions
 
-- **Path variations**: `/path/to/file.cpp:1:2:` → `file.cpp: error:`
-- **Line/column changes**: `42:3:` → `N:N:`
+The `.fail.txt` baseline stores the **full, original error output** (including paths and line numbers). Normalization is applied only during comparison, making tests resilient to:
+
+- **Path variations**: `/path/to/file.cpp:1:2: error:` vs `/other/path/file.cpp:1:2: error:`
 - **Whitespace differences**: Multiple spaces collapse to single space
-- **Formatting noise**: Build system output stripped
+- **Formatting noise**: Build system output and caret lines stripped
+- **Line number references in text**: `1 |` → `N |`, `| ^` → `| ^`
 
-Example:
+Only **error messages** are compared (warnings are extracted but not validated).
+
+Example: actual build output
 ```
-/absolute/path/file.cpp:42:3: error: message
-  ^ ~~~
+/absolute/path/file.cpp:42:3: error: static assertion failed: message
+42 | code here
+   | ^        ~~~
 ```
 
-Becomes (normalized):
+Gets normalized to:
 ```
-file.cpp: error: message
+file.cpp: error: static assertion failed: message
 ```
 
-This ensures tests catch *semantic* changes without false positives from line number shifts.
+And compared against the normalized baseline. This ensures tests catch *semantic* changes without false positives from line number shifts or absolute paths.
 
 ## Typical Workflow Example
 
@@ -161,7 +172,7 @@ int main() {
 EOF
 
 # 2. Register in CMakeLists.txt
-compile_check_with_snapshot(reflection_ad "static_fail/test_negative_inversion.cpp")
+compile_check(reflection_ad "static_fail/test_negative_inversion.cpp")
 
 # 3. Create baseline with Clang
 cmake --build build/cmake --target rebase-reflection_ad.static_fail.test_negative_inversion
@@ -224,7 +235,7 @@ Actual (normalized):
 Register failing compilation tests in `CMakeLists.txt`:
 
 ```cmake
-compile_check_with_snapshot(group_name "relative/path/to/test.cpp")
+compile_check(group_name "relative/path/to/test.cpp")
 ```
 
 This generates:
