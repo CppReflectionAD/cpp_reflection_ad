@@ -55,10 +55,9 @@ function(compile_check group filelist)
                 -P ${test_simple_dir}/validate_compile_output.cmake
         )
         add_custom_target(${rebase_target}
-            COMMAND ${CMAKE_COMMAND} --build "${CMAKE_BINARY_DIR}" --target ${target_name} 2>&1
-                | tee ${CMAKE_CURRENT_BINARY_DIR}/${target_name}_output.txt || true
             COMMAND ${CMAKE_COMMAND}
-                -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/${target_name}_output.txt
+                -DBINARY_DIR=${CMAKE_BINARY_DIR}
+                -DTARGET_NAME=${target_name}
                 -DEXPECTED_FILE=${expected_output_file}
                 -DCOMPILER=${CMAKE_CXX_COMPILER_ID}
                 -DTEST_SIMPLE_DIR=${test_simple_dir}

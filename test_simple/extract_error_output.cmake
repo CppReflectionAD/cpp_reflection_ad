@@ -1,9 +1,10 @@
 # extract_error_output.cmake
-# Extracts compiler error output and saves it to .fail.txt for rebasing
+# Builds a target that is expected to fail and saves its compiler errors to
+# .fail.txt for rebasing
 # Supports multiple compilers: appends/updates current compiler's section
 #
 # Usage (called by rebase-* target):
-#   cmake -DOUTPUT_FILE=... -DEXPECTED_FILE=... -DCOMPILER=... -DTEST_SIMPLE_DIR=... -P extract_error_output.cmake
+#   cmake -DBINARY_DIR=... -DTARGET_NAME=... -DEXPECTED_FILE=... -DCOMPILER=... -DTEST_SIMPLE_DIR=... -P extract_error_output.cmake
 
 if(NOT DEFINED TEST_SIMPLE_DIR)
     message(FATAL_ERROR "TEST_SIMPLE_DIR must be provided")
@@ -15,23 +16,29 @@ include("${TEST_SIMPLE_DIR}/shared_extract.cmake")
 # Compute CMAKE_SOURCE_DIR from TEST_SIMPLE_DIR (its parent)
 get_filename_component(CMAKE_SOURCE_DIR "${TEST_SIMPLE_DIR}" DIRECTORY)
 
-if(NOT DEFINED OUTPUT_FILE OR NOT DEFINED EXPECTED_FILE OR NOT DEFINED COMPILER)
-    message(FATAL_ERROR "Missing required parameters: OUTPUT_FILE, EXPECTED_FILE, COMPILER")
+if(NOT DEFINED BINARY_DIR OR NOT DEFINED TARGET_NAME OR NOT DEFINED EXPECTED_FILE OR NOT DEFINED COMPILER)
+    message(FATAL_ERROR "Missing required parameters: BINARY_DIR, TARGET_NAME, EXPECTED_FILE, COMPILER")
 endif()
 
-# Read the build output
-if(NOT EXISTS "${OUTPUT_FILE}")
-    message(FATAL_ERROR "Output file not found: ${OUTPUT_FILE}")
-endif()
+# Build the target and capture its output, the same way the test does
+execute_process(
+    COMMAND "${CMAKE_COMMAND}" --build "${BINARY_DIR}" --target "${TARGET_NAME}"
+    OUTPUT_VARIABLE BUILD_OUTPUT
+    ERROR_VARIABLE BUILD_ERROR
+    RESULT_VARIABLE BUILD_RESULT
+)
+set(BUILD_OUTPUT "${BUILD_ERROR}${BUILD_OUTPUT}")
 
-file(READ "${OUTPUT_FILE}" BUILD_OUTPUT)
+if(BUILD_RESULT EQUAL 0)
+    message(FATAL_ERROR "${TARGET_NAME} compiled successfully but is expected to fail; not writing a baseline")
+endif()
 
 # Extract error lines
 extract_errors("${BUILD_OUTPUT}" EXTRACTED)
 
-# Refuse to write empty section—if no errors/warnings found, something went wrong
-if(NOT EXTRACTED)
-    message(FATAL_ERROR "No compilation errors or warnings found in build output. The target may have compiled successfully or output may be in an unexpected format.")
+# Refuse to write an empty section: the build failed, but not with a compiler error
+if(EXTRACTED STREQUAL "")
+    message(FATAL_ERROR "${TARGET_NAME} failed to build, but no compiler errors were found in its output:\n${BUILD_OUTPUT}")
 endif()
 
 # Normalize paths: strip CMAKE_SOURCE_DIR to make baselines portable.
