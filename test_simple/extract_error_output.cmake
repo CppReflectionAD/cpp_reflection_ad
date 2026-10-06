@@ -34,8 +34,10 @@ if(NOT EXTRACTED)
     message(FATAL_ERROR "No compilation errors or warnings found in build output. The target may have compiled successfully or output may be in an unexpected format.")
 endif()
 
-# Normalize paths: strip CMAKE_SOURCE_DIR to make baselines portable
-string(REGEX REPLACE "${CMAKE_SOURCE_DIR}/" "" EXTRACTED "${EXTRACTED}")
+# Normalize paths: strip CMAKE_SOURCE_DIR to make baselines portable.
+# Plain REPLACE, not REGEX REPLACE: the path is literal text, and characters
+# like + ( [ . in it would otherwise be read as regex syntax.
+string(REPLACE "${CMAKE_SOURCE_DIR}/" "" EXTRACTED "${EXTRACTED}")
 
 # Determine compiler header using shared helper
 get_compiler_header("${COMPILER}" COMPILER_HEADER)
