@@ -51,45 +51,35 @@ get_compiler_header("${COMPILER}" COMPILER_HEADER)
 
 set(NEW_SECTION "${COMPILER_HEADER}\n${EXTRACTED}")
 
-# Split the existing file into: sections before ours, ours, sections after ours.
-# If our section doesn't exist yet, everything goes in 'before' and ours is
-# appended.
-set(before_sections "")
-set(after_sections "")
+# Collect the headers already in the file plus ours, in alphabetical order, so
+# the section order doesn't depend on which compiler was rebased first.
+# Header lines never contain ';', so a CMake list is safe here.
+set(EXISTING_OUTPUT "")
+set(headers "${COMPILER_HEADER}")
 if(EXISTS "${EXPECTED_FILE}")
     file(READ "${EXPECTED_FILE}" EXISTING_OUTPUT)
-
-    string(FIND "${EXISTING_OUTPUT}" "${COMPILER_HEADER}" header_pos)
-    if(header_pos EQUAL -1)
-        set(before_sections "${EXISTING_OUTPUT}")
-    else()
-        string(SUBSTRING "${EXISTING_OUTPUT}" 0 ${header_pos} before_sections)
-
-        # Our section runs until the next header (\n===) or the end of the file
-        string(LENGTH "${COMPILER_HEADER}" header_len)
-        math(EXPR section_start "${header_pos} + ${header_len}")
-        string(SUBSTRING "${EXISTING_OUTPUT}" ${section_start} -1 after_header)
-        string(FIND "${after_header}" "\n===" next_section_pos)
-        if(NOT next_section_pos EQUAL -1)
-            string(SUBSTRING "${after_header}" ${next_section_pos} -1 after_sections)
-        endif()
-    endif()
+    string(REGEX MATCHALL "(^|\n)=== [^\n]+ ===" found_headers "${EXISTING_OUTPUT}")
+    string(REPLACE "\n" "" found_headers "${found_headers}")
+    list(APPEND headers ${found_headers})
 endif()
+list(REMOVE_DUPLICATES headers)
+list(SORT headers)
 
-# Write one layout whichever path was taken, so repeated rebases don't churn
-# whitespace: no leading blank line, exactly one blank line between sections,
-# and a single newline at the end of the file.
+# Rebuild the file one section at a time, with one layout whatever was there
+# before, so repeated rebases don't churn whitespace: no leading blank line,
+# exactly one blank line between sections, a single newline at the end.
 set(REBASED_OUTPUT "")
-foreach(part_var IN ITEMS before_sections NEW_SECTION after_sections)
-    string(REGEX REPLACE "^\n+" "" part "${${part_var}}")
-    string(REGEX REPLACE "\n+$" "" part "${part}")
-    if(part STREQUAL "")
-        continue()
+foreach(header IN LISTS headers)
+    if(header STREQUAL COMPILER_HEADER)
+        set(section "${NEW_SECTION}")
+    else()
+        extract_section("${EXISTING_OUTPUT}" "${header}" content)
+        set(section "${header}\n${content}")
     endif()
     if(NOT REBASED_OUTPUT STREQUAL "")
         string(APPEND REBASED_OUTPUT "\n\n")
     endif()
-    string(APPEND REBASED_OUTPUT "${part}")
+    string(APPEND REBASED_OUTPUT "${section}")
 endforeach()
 string(APPEND REBASED_OUTPUT "\n")
 

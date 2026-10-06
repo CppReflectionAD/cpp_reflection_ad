@@ -76,7 +76,13 @@ endfunction()
 # Returns an empty string if this compiler has no section; the caller reports it.
 function(extract_compiler_section baseline compiler_id output_var)
     get_compiler_header("${compiler_id}" header)
+    extract_section("${baseline}" "${header}" content)
+    set(${output_var} "${content}" PARENT_SCOPE)
+endfunction()
 
+# Extract the content under a section header (without the header line itself).
+# Returns an empty string if the header isn't in the baseline.
+function(extract_section baseline header output_var)
     string(FIND "${baseline}" "${header}" header_pos)
     if(header_pos EQUAL -1)
         set(${output_var} "" PARENT_SCOPE)
