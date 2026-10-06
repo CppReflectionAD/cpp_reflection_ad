@@ -56,8 +56,9 @@ function(normalize_error_output input output_var)
     # Apply all transformations to the entire block
     # Remove file paths (keep only filename). In CMake regex '.' also matches
     # newlines, so stay within one line: otherwise the match runs to the last
-    # path in the output and deletes every error before it.
-    string(REGEX REPLACE "[^\n]*/([^/\n]+):[0-9]+:[0-9]+:" "\\1: error:" cleaned "${all_errors}")
+    # path in the output and deletes every error before it. The diagnostic's
+    # own label (error:, note:) follows the location and is kept as-is.
+    string(REGEX REPLACE "[^\n]*/([^/\n]+):[0-9]+:[0-9]+:" "\\1:" cleaned "${all_errors}")
     # Collapse multiple spaces
     string(REGEX REPLACE "[ \t]+" " " cleaned "${cleaned}")
     # Strip trailing whitespace
