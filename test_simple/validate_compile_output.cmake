@@ -13,7 +13,7 @@ endif()
 include("${TEST_SIMPLE_DIR}/shared_extract.cmake")
 
 # Check required parameters
-if(NOT DEFINED BINARY_DIR OR NOT DEFINED TARGET_NAME OR NOT DEFINED EXPECTED_OUTPUT_FILE OR NOT DEFINED CXX_COMPILER_ID)
+if(NOT DEFINED BINARY_DIR OR NOT DEFINED TARGET_NAME OR NOT DEFINED EXPECTED_OUTPUT_FILE OR NOT DEFINED CXX_COMPILER_ID OR NOT DEFINED REBASE_TARGET)
     message(FATAL_ERROR "Missing required parameters")
 endif()
 
@@ -39,7 +39,7 @@ if(NOT EXISTS "${EXPECTED_OUTPUT_FILE}")
 "Expected output file not found: ${EXPECTED_OUTPUT_FILE}
 
 This is the first time this test is being run. To create the baseline:
-  cmake --build . --target rebase-${TARGET_NAME}
+  cmake --build ${BINARY_DIR} --target ${REBASE_TARGET}
 
 Then commit the .fail.txt file to version control.")
 endif()
@@ -74,7 +74,7 @@ Actual:
 [${normalized_actual}]
 
 To update the baseline (rebase):
-  cmake --build . --target rebase-${TARGET_NAME}
+  cmake --build ${BINARY_DIR} --target ${REBASE_TARGET}
   git diff ${EXPECTED_OUTPUT_FILE}  # review changes
   git add ${EXPECTED_OUTPUT_FILE}")
 endif()

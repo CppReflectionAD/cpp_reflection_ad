@@ -39,6 +39,9 @@ function(compile_check group filelist)
         # Keep directory structure for the .fail.txt file location
         set(expected_output_file "${CMAKE_CURRENT_SOURCE_DIR}/${source_path}.fail.txt")
 
+        # Create rebase target for this test
+        set(rebase_target "rebase-${test_name}")
+
         # Create a test that validates compilation output against snapshot
         add_test(
             NAME ${test_name}
@@ -48,11 +51,9 @@ function(compile_check group filelist)
                 -DEXPECTED_OUTPUT_FILE=${expected_output_file}
                 -DCXX_COMPILER_ID=${CMAKE_CXX_COMPILER_ID}
                 -DTEST_SIMPLE_DIR=${test_simple_dir}
+                -DREBASE_TARGET=${rebase_target}
                 -P ${test_simple_dir}/validate_compile_output.cmake
         )
-
-        # Create rebase target for this test
-        set(rebase_target "rebase-${test_name}")
         add_custom_target(${rebase_target}
             COMMAND ${CMAKE_COMMAND} --build "${CMAKE_BINARY_DIR}" --target ${target_name} 2>&1
                 | tee /tmp/${target_name}_output.txt || true
