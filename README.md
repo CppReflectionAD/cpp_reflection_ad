@@ -27,6 +27,9 @@ binaries, and reports compile vs runtime failures. A test may add flags via a
 `// TEST-FLAGS: ...` comment near its top (benchmarks use it for `-O2`).
 Tests under `tests/static_fail/` are expected **not** to compile (e.g. they
 trip a `static_assert`); they pass only when compilation fails.
+`run_tests.py` only checks that they fail to compile; `ctest` also compares the
+errors with the `.fail.txt` baseline next to each test (see
+[test_simple/README.md](test_simple/README.md)).
 
 The repo is **self-contained**: `--build-compilers` builds clang from its own
 `clang-p2996` submodule into `build/` — no externally pre-built compiler needed.

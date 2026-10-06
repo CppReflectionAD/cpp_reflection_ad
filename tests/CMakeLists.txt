@@ -88,7 +88,7 @@ if(_is_gcc)
     endforeach()
 endif()
 
-compile_check(reflection_ad "${_static_fail}" TRUE)
+compile_check(reflection_ad "${_static_fail}")
 
 message(STATUS "Compiler : ${CMAKE_CXX_COMPILER_ID} (${CMAKE_CXX_COMPILER})")
 message(STATUS "Static fail tests: ${_static_fail}")

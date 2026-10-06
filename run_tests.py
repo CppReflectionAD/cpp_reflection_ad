@@ -13,7 +13,6 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parent
 TESTS_DIR = ROOT / "tests"
 BENCHMARKS_DIR = ROOT / "benchmarks"
@@ -22,8 +21,9 @@ ARTIFACTS_DIR = BUILD_ROOT / "artifacts"
 CLANG_ONLY_DIR = "clang_only"
 GCC_ONLY_DIR = "gcc_only"
 # Tests under tests/static_fail/ must be rejected by the compiler (e.g. by a
-# static_assert); they pass only when compilation fails. Mirrors the
-# compile_check(... TRUE) registration in tests/CMakeLists.txt.
+# static_assert); they pass only when compilation fails. CTest also compares
+# the error output to the .fail.txt baseline (see compile_check in
+# tests/CMakeLists.txt); this script only checks that compilation fails.
 STATIC_FAIL_DIR = "static_fail"
 
 # The clang reflection fork is built from the clang-p2996 submodule (override
