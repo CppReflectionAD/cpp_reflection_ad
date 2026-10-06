@@ -24,20 +24,24 @@ test_simple/
 └── extract_error_output.cmake         (baseline extraction script)
 
 tests/
+├── CMakeLists.txt                     (registers every static_fail/*.cpp)
 └── static_fail/
     ├── inverse_of_non_invertible.cpp
-    └── inverse_of_non_invertible.fail.txt
+    ├── inverse_of_non_invertible.fail.txt
+    ├── inverse_and_inverse_wrt_of_non_invertible.cpp
+    └── inverse_and_inverse_wrt_of_non_invertible.fail.txt
 ```
 
-The `.fail.txt` file lives next to the `.cpp` file and contains expected compilation errors for all supported compilers.
+Each `.fail.txt` file lives next to its `.cpp` file and contains the expected compilation errors for all supported compilers.
 
 ## Workflow
 
 ### 1. Create a Failing Compilation Test
 
-```cmake
-# In CMakeLists.txt
-compile_check(reflection_ad "static_fail/inverse_of_non_invertible.cpp")
+Add a `.cpp` file under `tests/static_fail/`. There is nothing to register: [tests/CMakeLists.txt](../tests/CMakeLists.txt) globs `static_fail/*.cpp` and passes every match to `compile_check()`. Re-run CMake so the new file is picked up:
+
+```bash
+cmake build/cmake
 ```
 
 ### 2. Create the First Baseline
@@ -163,35 +167,44 @@ And compared against the normalized baseline. This ensures tests catch *semantic
 
 ### Add a New Test
 
-```bash
-# 1. Write failing test
-cat > tests/static_fail/test_negative_inversion.cpp << 'EOF'
-#include "test_simple_include.hpp"
+This is how `inverse_and_inverse_wrt_of_non_invertible` was added. It triggers two different `static_assert`s, so its baseline checks that every error is compared, not just the first.
 
-struct NonInvertible {};
+```bash
+# 1. Write the failing test
+cat > tests/static_fail/inverse_and_inverse_wrt_of_non_invertible.cpp << 'EOF'
+#include "../is_invertible.hpp"
+
+inline double fn_square(double x) { return x * x; }
+inline double fn_square_plus(double x, double y) { return x * x + y; }
+
+static_assert(!ad::is_invertible<^^fn_square>());
+static_assert(!ad::is_invertible_wrt<^^fn_square_plus, 0>());
 
 int main() {
-    // This should fail at compile time
-    static_assert(has_inverse_v<NonInvertible>);
+  // Two independent failures with different messages, so the snapshot only
+  // matches if every error is extracted, not just the first one.
+  [[maybe_unused]] auto inv = ad::inverse<^^fn_square>{};
+  [[maybe_unused]] auto inv_wrt = ad::inverse_wrt<^^fn_square_plus, 0>{};
+  return 0;
 }
 EOF
 
-# 2. Register in CMakeLists.txt
-compile_check(reflection_ad "static_fail/test_negative_inversion.cpp")
+# 2. Re-run CMake so the static_fail/*.cpp glob picks it up
+cmake build/cmake
 
-# 3. Create baseline with Clang
-cmake --build build/cmake --target rebase-reflection_ad.static_fail.test_negative_inversion
+# 3. Create the baseline with the current compiler (e.g. Clang)
+cmake --build build/cmake --target rebase-reflection_ad.static_fail.inverse_and_inverse_wrt_of_non_invertible
 
-# 4. Review and commit
-git add tests/static_fail/test_negative_inversion.fail.txt
+# 4. Switch to the other compiler's CMake session (e.g. GCC) and add its section
+cmake --build build/cmake --target rebase-reflection_ad.static_fail.inverse_and_inverse_wrt_of_non_invertible
 
-# 5. Verify with GCC
-# (switch to GCC CMake session)
-cmake --build build/cmake --target rebase-reflection_ad.static_fail.test_negative_inversion
-git add tests/static_fail/test_negative_inversion.fail.txt
+# 5. Review and commit both files
+git diff tests/static_fail/inverse_and_inverse_wrt_of_non_invertible.fail.txt
+git add tests/static_fail/inverse_and_inverse_wrt_of_non_invertible.cpp \
+        tests/static_fail/inverse_and_inverse_wrt_of_non_invertible.fail.txt
 
-# 6. Run tests
-ctest --test-dir build/cmake -R test_negative_inversion
+# 6. Run the test
+ctest --test-dir build/cmake -R inverse_and_inverse_wrt_of_non_invertible
 ```
 
 ### Update an Intentional Change
@@ -239,15 +252,18 @@ Actual (normalized):
 
 ## CMake API
 
-Register failing compilation tests in `CMakeLists.txt`:
+`compile_check(group filelist)` is called once, from [tests/CMakeLists.txt](../tests/CMakeLists.txt), with every `static_fail/*.cpp` file:
 
 ```cmake
-compile_check(group_name "relative/path/to/test.cpp")
+file(GLOB _static_fail CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/static_fail/*.cpp")
+compile_check(reflection_ad "${_static_fail}")
 ```
 
-This generates:
-- **Test**: `${group_name}.${test_name}` (run with ctest)
-- **Rebase target**: `rebase-${group_name}.${test_name}` (update baseline)
+For each file, e.g. `static_fail/foo.cpp`, it generates:
+- **Test**: `reflection_ad.static_fail.foo` (run with ctest)
+- **Rebase target**: `rebase-reflection_ad.static_fail.foo` (update the baseline)
+- **Executable target**: `reflection_ad.static.static_fail.foo` (excluded from `all`; built only by the test and the rebase target)
 
 ## Reference
 
