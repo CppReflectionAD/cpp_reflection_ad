@@ -1,10 +1,11 @@
 # extract_error_output.cmake
 # Builds a target that is expected to fail and saves its compiler errors to
 # .fail.txt for rebasing
-# Supports multiple compilers: appends/updates current compiler's section
+# Supports multiple compilers: replaces (or adds) the current compiler's
+# section, keeps the others, and writes all sections in alphabetical order
 #
 # Usage (called by rebase-* target):
-#   cmake -DBINARY_DIR=... -DTARGET_NAME=... -DEXPECTED_FILE=... -DCOMPILER=... -DTEST_SIMPLE_DIR=... -P extract_error_output.cmake
+#   cmake -DBINARY_DIR=... -DTARGET_NAME=... -DEXPECTED_FILE=... -DCOMPILER=... -DSOURCE_DIR=... -DTEST_SIMPLE_DIR=... -P extract_error_output.cmake
 
 if(NOT DEFINED TEST_SIMPLE_DIR)
     message(FATAL_ERROR "TEST_SIMPLE_DIR must be provided")
@@ -13,11 +14,8 @@ endif()
 # Include shared extraction functions
 include("${TEST_SIMPLE_DIR}/shared_extract.cmake")
 
-# Compute CMAKE_SOURCE_DIR from TEST_SIMPLE_DIR (its parent)
-get_filename_component(CMAKE_SOURCE_DIR "${TEST_SIMPLE_DIR}" DIRECTORY)
-
-if(NOT DEFINED BINARY_DIR OR NOT DEFINED TARGET_NAME OR NOT DEFINED EXPECTED_FILE OR NOT DEFINED COMPILER)
-    message(FATAL_ERROR "Missing required parameters: BINARY_DIR, TARGET_NAME, EXPECTED_FILE, COMPILER")
+if(NOT DEFINED BINARY_DIR OR NOT DEFINED TARGET_NAME OR NOT DEFINED EXPECTED_FILE OR NOT DEFINED COMPILER OR NOT DEFINED SOURCE_DIR)
+    message(FATAL_ERROR "Missing required parameters: BINARY_DIR, TARGET_NAME, EXPECTED_FILE, COMPILER, SOURCE_DIR")
 endif()
 
 # Build the target and capture its output, the same way the test does
@@ -41,10 +39,10 @@ if(EXTRACTED STREQUAL "")
     message(FATAL_ERROR "${TARGET_NAME} failed to build, but no compiler errors were found in its output:\n${BUILD_OUTPUT}")
 endif()
 
-# Normalize paths: strip CMAKE_SOURCE_DIR to make baselines portable.
+# Normalize paths: strip the project source dir to make baselines portable.
 # Plain REPLACE, not REGEX REPLACE: the path is literal text, and characters
 # like + ( [ . in it would otherwise be read as regex syntax.
-string(REPLACE "${CMAKE_SOURCE_DIR}/" "" EXTRACTED "${EXTRACTED}")
+string(REPLACE "${SOURCE_DIR}/" "" EXTRACTED "${EXTRACTED}")
 
 # Determine compiler header using shared helper
 get_compiler_header("${COMPILER}" COMPILER_HEADER)
@@ -88,6 +86,7 @@ file(WRITE "${EXPECTED_FILE}" "${REBASED_OUTPUT}")
 
 message(STATUS "Wrote baseline to: ${EXPECTED_FILE}")
 message(STATUS "Compiler: ${COMPILER}")
-message(STATUS "Next: review the file, then run:")
-message(STATUS "  git add $(dirname ${EXPECTED_FILE})/*.fail.txt")
+message(STATUS "Next: review the changes, then stage them:")
+message(STATUS "  git diff ${EXPECTED_FILE}")
+message(STATUS "  git add ${EXPECTED_FILE}")
 

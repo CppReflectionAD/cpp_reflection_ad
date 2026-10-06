@@ -60,6 +60,7 @@ function(compile_check group filelist)
                 -DTARGET_NAME=${target_name}
                 -DEXPECTED_FILE=${expected_output_file}
                 -DCOMPILER=${CMAKE_CXX_COMPILER_ID}
+                -DSOURCE_DIR=${CMAKE_SOURCE_DIR}
                 -DTEST_SIMPLE_DIR=${test_simple_dir}
                 -P ${test_simple_dir}/extract_error_output.cmake
             COMMAND ${CMAKE_COMMAND} -E echo "Rebased ${expected_output_file}"
