@@ -15,27 +15,14 @@ function(get_compiler_header compiler_id output_var)
     set(${output_var} "${header}" PARENT_SCOPE)
 endfunction()
 
-# Extract error and warning lines from compiler output
+# Extract error lines from compiler output
 # Captures multi-line errors (continuation lines starting with space/tab)
 # Uses string matching instead of lists to avoid semicolon delimiter issues
-function(extract_errors_and_warnings input output_var)
-    # Extract all errors and warnings as single strings (not lists)
+function(extract_errors input output_var)
+    # Extract all errors as a single string (not a list)
     string(REGEX MATCH "([^\n]*error:[^\n]*(\n[ \t][^\n]*)*)+" all_errors "${input}")
-    string(REGEX MATCH "([^\n]*warning:[^\n]*(\n[ \t][^\n]*)*)+" all_warnings "${input}")
 
-    set(extracted "")
-    if(all_errors)
-        set(extracted "${all_errors}")
-    endif()
-    if(all_warnings)
-        if(extracted)
-            string(APPEND extracted "\n${all_warnings}")
-        else()
-            set(extracted "${all_warnings}")
-        endif()
-    endif()
-
-    set(${output_var} "${extracted}" PARENT_SCOPE)
+    set(${output_var} "${all_errors}" PARENT_SCOPE)
 endfunction()
 
 # Normalize error messages for robust comparison

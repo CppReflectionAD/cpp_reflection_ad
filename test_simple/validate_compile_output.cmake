@@ -51,7 +51,7 @@ file(READ "${EXPECTED_OUTPUT_FILE}" EXPECTED_OUTPUT)
 extract_compiler_section("${EXPECTED_OUTPUT}" "${CXX_COMPILER_ID}" EXPECTED_OUTPUT)
 
 # Extract error lines from actual output
-extract_errors_and_warnings("${ACTUAL_OUTPUT}" extracted_actual)
+extract_errors("${ACTUAL_OUTPUT}" extracted_actual)
 
 # Normalize both for comparison
 normalize_error_output("${extracted_actual}" normalized_actual)

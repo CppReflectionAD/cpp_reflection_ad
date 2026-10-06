@@ -26,8 +26,8 @@ endif()
 
 file(READ "${OUTPUT_FILE}" BUILD_OUTPUT)
 
-# Extract error and warning lines
-extract_errors_and_warnings("${BUILD_OUTPUT}" EXTRACTED)
+# Extract error lines
+extract_errors("${BUILD_OUTPUT}" EXTRACTED)
 
 # Refuse to write empty section—if no errors/warnings found, something went wrong
 if(NOT EXTRACTED)
