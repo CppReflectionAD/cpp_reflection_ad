@@ -1,0 +1,17 @@
+=== GCC ===
+tests/static_fail/../is_invertible.hpp:1019:44: error: static assertion failed: ad::inverse requires an explicit inverse plan; if the inverse is not constructible symbolically, ad::is_invertible<Fn>() is false
+ 1019 |       is_invertible<Fn, RegisteredPairs...>(),
+      |       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~
+  • 'ad::is_invertible<^^fn_square>()' evaluates to false
+tests/static_fail/../is_invertible.hpp:1040:58: error: static assertion failed: ad::inverse_wrt requires either: (1) a registered partial inverse pair, (2) a symbolic inverse path wrt the target argument, or (3) a registered unary outer inverse pair
+ 1040 |       is_invertible_wrt<Fn, ArgIndex, RegisteredPairs...>(),
+      |       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~
+  • 'ad::is_invertible_wrt<^^fn_square_plus, 0>()' evaluates to false
+
+=== Clang ===
+tests/static_fail/../is_invertible.hpp:1019:7: error: static assertion failed due to requirement 'is_invertible<^^(...)>()': ad::inverse requires an explicit inverse plan; if the inverse is not constructible symbolically, ad::is_invertible<Fn>() is false
+ 1019 |       is_invertible<Fn, RegisteredPairs...>(),
+      |       ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+tests/static_fail/../is_invertible.hpp:1040:7: error: static assertion failed due to requirement 'is_invertible_wrt<^^(...), 0UL>()': ad::inverse_wrt requires either: (1) a registered partial inverse pair, (2) a symbolic inverse path wrt the target argument, or (3) a registered unary outer inverse pair
+ 1040 |       is_invertible_wrt<Fn, ArgIndex, RegisteredPairs...>(),
+      |       ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

@@ -15,14 +15,35 @@ function(get_compiler_header compiler_id output_var)
     set(${output_var} "${header}" PARENT_SCOPE)
 endfunction()
 
-# Extract error lines from compiler output
-# Captures multi-line errors (continuation lines starting with space/tab)
-# Uses string matching instead of lists to avoid semicolon delimiter issues
+# Extract every error block from compiler output, joined by newlines.
+# A block is a line containing "error:" plus the continuation lines after it
+# (lines starting with a space or tab: source excerpt, caret, GCC notes).
+# Blocks are consumed one at a time with REGEX MATCH rather than collected
+# with REGEX MATCHALL: MATCHALL returns a ;-separated list, which splits
+# diagnostics at any ';' they contain (e.g. "expected ';'").
 function(extract_errors input output_var)
-    # Extract all errors as a single string (not a list)
-    string(REGEX MATCH "([^\n]*error:[^\n]*(\n[ \t][^\n]*)*)+" all_errors "${input}")
+    set(block_regex "[^\n]*error:[^\n]*(\n[ \t][^\n]*)*")
+    set(rest "${input}")
+    set(extracted "")
+    # Loop on the match itself, not while(TRUE): these functions run under
+    # cmake -P with no policies set, where TRUE is treated as a variable name.
+    string(REGEX MATCH "${block_regex}" block "${rest}")
+    while(NOT block STREQUAL "")
+        if(extracted STREQUAL "")
+            set(extracted "${block}")
+        else()
+            string(APPEND extracted "\n${block}")
+        endif()
+        # Continue after this block. The match is the leftmost one, so FIND
+        # locates the same occurrence.
+        string(FIND "${rest}" "${block}" pos)
+        string(LENGTH "${block}" len)
+        math(EXPR pos "${pos} + ${len}")
+        string(SUBSTRING "${rest}" ${pos} -1 rest)
+        string(REGEX MATCH "${block_regex}" block "${rest}")
+    endwhile()
 
-    set(${output_var} "${all_errors}" PARENT_SCOPE)
+    set(${output_var} "${extracted}" PARENT_SCOPE)
 endfunction()
 
 # Normalize error messages for robust comparison
@@ -30,12 +51,13 @@ endfunction()
 # Keeps semantic content of error messages
 # Uses string matching instead of lists to avoid semicolon delimiter issues
 function(normalize_error_output input output_var)
-    # Extract all errors as a single string (not a list)
-    string(REGEX MATCH "([^\n]*error:[^\n]*(\n[ \t][^\n]*)*)+" all_errors "${input}")
+    extract_errors("${input}" all_errors)
 
     # Apply all transformations to the entire block
-    # Remove file paths (keep only filename)
-    string(REGEX REPLACE ".*/([^/]+):[0-9]+:[0-9]+:" "\\1: error:" cleaned "${all_errors}")
+    # Remove file paths (keep only filename). In CMake regex '.' also matches
+    # newlines, so stay within one line: otherwise the match runs to the last
+    # path in the output and deletes every error before it.
+    string(REGEX REPLACE "[^\n]*/([^/\n]+):[0-9]+:[0-9]+:" "\\1: error:" cleaned "${all_errors}")
     # Collapse multiple spaces
     string(REGEX REPLACE "[ \t]+" " " cleaned "${cleaned}")
     # Strip trailing whitespace
