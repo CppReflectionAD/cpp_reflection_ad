@@ -51,58 +51,47 @@ get_compiler_header("${COMPILER}" COMPILER_HEADER)
 
 set(NEW_SECTION "${COMPILER_HEADER}\n${EXTRACTED}")
 
-# Read existing file and update current compiler's section in place
-set(REBASED_OUTPUT "")
+# Split the existing file into: sections before ours, ours, sections after ours.
+# If our section doesn't exist yet, everything goes in 'before' and ours is
+# appended.
+set(before_sections "")
+set(after_sections "")
 if(EXISTS "${EXPECTED_FILE}")
     file(READ "${EXPECTED_FILE}" EXISTING_OUTPUT)
 
-    # Check if our section already exists in the file
     string(FIND "${EXISTING_OUTPUT}" "${COMPILER_HEADER}" header_pos)
     if(header_pos EQUAL -1)
-        # Our section doesn't exist; append it to the end
-        set(REBASED_OUTPUT "${EXISTING_OUTPUT}")
-        if(REBASED_OUTPUT AND NOT REBASED_OUTPUT MATCHES "\n$")
-            string(APPEND REBASED_OUTPUT "\n")
-        endif()
-        string(APPEND REBASED_OUTPUT "\n${NEW_SECTION}\n")
+        set(before_sections "${EXISTING_OUTPUT}")
     else()
-        # Our section exists; replace it in place
-        # Find the end of our section (start of next "===" or end of file)
+        string(SUBSTRING "${EXISTING_OUTPUT}" 0 ${header_pos} before_sections)
+
+        # Our section runs until the next header (\n===) or the end of the file
         string(LENGTH "${COMPILER_HEADER}" header_len)
         math(EXPR section_start "${header_pos} + ${header_len}")
         string(SUBSTRING "${EXISTING_OUTPUT}" ${section_start} -1 after_header)
         string(FIND "${after_header}" "\n===" next_section_pos)
-
-        # Extract the part before our section
-        string(SUBSTRING "${EXISTING_OUTPUT}" 0 ${header_pos} before_section)
-
-        # Extract the part after our section (if any)
-        if(next_section_pos EQUAL -1)
-            # Our section extends to end of file
-            set(after_section "")
-        else()
-            # There's a next section; extract it
-            math(EXPR after_pos "${section_start} + ${next_section_pos}")
-            string(SUBSTRING "${EXISTING_OUTPUT}" ${after_pos} -1 after_section)
-        endif()
-
-        # Rebuild: before + new section + after
-        # Trim trailing newline from before_section to avoid double newlines
-        string(REGEX REPLACE "\n+$" "" before_section "${before_section}")
-        set(REBASED_OUTPUT "${before_section}\n${NEW_SECTION}")
-
-        # Add after_section if it exists
-        if(after_section)
-            string(REGEX REPLACE "^\n+" "" after_section "${after_section}")
-            string(APPEND REBASED_OUTPUT "\n${after_section}")
-        else()
-            string(APPEND REBASED_OUTPUT "\n")
+        if(NOT next_section_pos EQUAL -1)
+            string(SUBSTRING "${after_header}" ${next_section_pos} -1 after_sections)
         endif()
     endif()
-else()
-    # File doesn't exist; create with our section
-    set(REBASED_OUTPUT "${NEW_SECTION}\n")
 endif()
+
+# Write one layout whichever path was taken, so repeated rebases don't churn
+# whitespace: no leading blank line, exactly one blank line between sections,
+# and a single newline at the end of the file.
+set(REBASED_OUTPUT "")
+foreach(part_var IN ITEMS before_sections NEW_SECTION after_sections)
+    string(REGEX REPLACE "^\n+" "" part "${${part_var}}")
+    string(REGEX REPLACE "\n+$" "" part "${part}")
+    if(part STREQUAL "")
+        continue()
+    endif()
+    if(NOT REBASED_OUTPUT STREQUAL "")
+        string(APPEND REBASED_OUTPUT "\n\n")
+    endif()
+    string(APPEND REBASED_OUTPUT "${part}")
+endforeach()
+string(APPEND REBASED_OUTPUT "\n")
 
 # Write to expected output file
 file(WRITE "${EXPECTED_FILE}" "${REBASED_OUTPUT}")
