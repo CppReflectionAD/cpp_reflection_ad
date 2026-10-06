@@ -62,11 +62,9 @@ To create the baseline for this compiler:
 Then commit the updated .fail.txt file.")
 endif()
 
-# Extract error lines from actual output
-extract_errors("${ACTUAL_OUTPUT}" extracted_actual)
-
-# Normalize both for comparison
-normalize_error_output("${extracted_actual}" normalized_actual)
+# Normalize both for comparison (normalize_error_output extracts the error
+# blocks itself, so the raw build output can be passed in directly)
+normalize_error_output("${ACTUAL_OUTPUT}" normalized_actual)
 normalize_error_output("${EXPECTED_OUTPUT}" normalized_expected)
 
 if(NOT normalized_actual STREQUAL normalized_expected)

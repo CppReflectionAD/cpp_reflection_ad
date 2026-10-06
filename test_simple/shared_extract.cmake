@@ -90,7 +90,7 @@ function(extract_section baseline header output_var)
 
     # Move past the header line (header + \n)
     string(LENGTH "${header}" header_len)
-    math(EXPR start_pos "${header_pos} + ${header_len} + 1")
+    math(EXPR start_pos "${header_pos} + ${header_len}")
 
     # The section runs until the next header (\n===) or the end of the file
     string(SUBSTRING "${baseline}" ${start_pos} -1 rest)
