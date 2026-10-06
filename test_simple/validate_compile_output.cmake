@@ -47,19 +47,14 @@ endif()
 # Read expected output
 file(READ "${EXPECTED_OUTPUT_FILE}" EXPECTED_OUTPUT)
 
-# Check if baseline uses multi-section format by looking for headers
-string(REGEX MATCH "===" has_headers "${EXPECTED_OUTPUT}")
-
 # Extract only the section for the current compiler
 extract_compiler_section("${EXPECTED_OUTPUT}" "${CXX_COMPILER_ID}" EXPECTED_OUTPUT)
 
-# If we didn't find our section but the file has headers, fail with clear instruction
-if(NOT EXPECTED_OUTPUT AND has_headers)
+# A missing or empty section can't be compared against anything
+if(EXPECTED_OUTPUT STREQUAL "")
+    get_compiler_header("${CXX_COMPILER_ID}" expected_header)
     message(FATAL_ERROR
-"No ${CXX_COMPILER_ID} section found in ${EXPECTED_OUTPUT_FILE}
-
-The baseline uses multi-compiler format (=== Clang ===, === GCC ===, etc.)
-but does not have a section for ${CXX_COMPILER_ID}.
+"No '${expected_header}' section (or an empty one) in ${EXPECTED_OUTPUT_FILE}
 
 To create the baseline for this compiler:
   cmake --build ${BINARY_DIR} --target ${REBASE_TARGET}
