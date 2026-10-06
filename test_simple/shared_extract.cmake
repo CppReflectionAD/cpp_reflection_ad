@@ -2,6 +2,19 @@
 # Common functions for extracting and normalizing compiler errors
 # Included by: validate_compile_output.cmake, extract_error_output.cmake
 
+# Get the section header for a compiler ID
+# Maps compiler IDs to their section headers (e.g. "Clang" → "=== Clang ===")
+function(get_compiler_header compiler_id output_var)
+    if(compiler_id STREQUAL "Clang")
+        set(header "=== Clang ===")
+    elseif(compiler_id STREQUAL "GNU")
+        set(header "=== GCC ===")
+    else()
+        set(header "=== ${compiler_id} ===")
+    endif()
+    set(${output_var} "${header}" PARENT_SCOPE)
+endfunction()
+
 # Extract error and warning lines from compiler output
 # Captures multi-line errors (continuation lines starting with space/tab)
 # Uses string matching instead of lists to avoid semicolon delimiter issues
