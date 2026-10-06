@@ -4,26 +4,23 @@
 
 # Extract error and warning lines from compiler output
 # Captures multi-line errors (continuation lines starting with space/tab)
+# Uses string matching instead of lists to avoid semicolon delimiter issues
 function(extract_errors_and_warnings input output_var)
-    string(REGEX MATCHALL "[^\n]*error:[^\n]*(\n[ \t][^\n]*)*" error_lines "${input}")
-    string(REGEX MATCHALL "[^\n]*warning:[^\n]*(\n[ \t][^\n]*)*" warning_lines "${input}")
+    # Extract all errors and warnings as single strings (not lists)
+    string(REGEX MATCH "([^\n]*error:[^\n]*(\n[ \t][^\n]*)*)+" all_errors "${input}")
+    string(REGEX MATCH "([^\n]*warning:[^\n]*(\n[ \t][^\n]*)*)+" all_warnings "${input}")
 
     set(extracted "")
-    foreach(line IN LISTS error_lines)
+    if(all_errors)
+        set(extracted "${all_errors}")
+    endif()
+    if(all_warnings)
         if(extracted)
-            string(APPEND extracted "\n${line}")
+            string(APPEND extracted "\n${all_warnings}")
         else()
-            set(extracted "${line}")
+            set(extracted "${all_warnings}")
         endif()
-    endforeach()
-
-    foreach(line IN LISTS warning_lines)
-        if(extracted)
-            string(APPEND extracted "\n${line}")
-        else()
-            set(extracted "${line}")
-        endif()
-    endforeach()
+    endif()
 
     set(${output_var} "${extracted}" PARENT_SCOPE)
 endfunction()
@@ -31,31 +28,24 @@ endfunction()
 # Normalize error messages for robust comparison
 # Strips paths, line numbers, and formatting noise
 # Keeps semantic content of error messages
+# Uses string matching instead of lists to avoid semicolon delimiter issues
 function(normalize_error_output input output_var)
-    # Extract just error/warning lines
-    string(REGEX MATCHALL "[^\n]*error:[^\n]*(\n[ \t][^\n]*)*" errors "${input}")
+    # Extract all errors as a single string (not a list)
+    string(REGEX MATCH "([^\n]*error:[^\n]*(\n[ \t][^\n]*)*)+" all_errors "${input}")
 
-    set(normalized "")
-    foreach(error IN LISTS errors)
-        # Remove file paths (keep only filename)
-        string(REGEX REPLACE ".*/([^/]+):[0-9]+:[0-9]+:" "\\1: error:" cleaned "${error}")
-        # Collapse multiple spaces
-        string(REGEX REPLACE "[ \t]+" " " cleaned "${cleaned}")
-        # Strip trailing whitespace
-        string(REGEX REPLACE "[ \t]+\n" "\n" cleaned "${cleaned}")
-        # Normalize line number references (in error context)
-        string(REGEX REPLACE " [0-9]+ \\|" " N |" cleaned "${cleaned}")
-        string(REGEX REPLACE "\\| +\\^" "| ^" cleaned "${cleaned}")
+    # Apply all transformations to the entire block
+    # Remove file paths (keep only filename)
+    string(REGEX REPLACE ".*/([^/]+):[0-9]+:[0-9]+:" "\\1: error:" cleaned "${all_errors}")
+    # Collapse multiple spaces
+    string(REGEX REPLACE "[ \t]+" " " cleaned "${cleaned}")
+    # Strip trailing whitespace
+    string(REGEX REPLACE "[ \t]+\n" "\n" cleaned "${cleaned}")
+    # Normalize line number references (in error context)
+    string(REGEX REPLACE " [0-9]+ \\|" " N |" cleaned "${cleaned}")
+    string(REGEX REPLACE "\\| +\\^" "| ^" cleaned "${cleaned}")
 
-        if(normalized)
-            string(APPEND normalized "\n${cleaned}")
-        else()
-            set(normalized "${cleaned}")
-        endif()
-    endforeach()
-
-    string(STRIP normalized "${normalized}")
-    set(${output_var} "${normalized}" PARENT_SCOPE)
+    string(STRIP cleaned "${cleaned}")
+    set(${output_var} "${cleaned}" PARENT_SCOPE)
 endfunction()
 
 # Extract a specific compiler's section from multi-compiler baseline
