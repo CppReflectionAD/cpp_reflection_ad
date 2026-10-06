@@ -49,16 +49,10 @@ function(normalize_error_output input output_var)
 endfunction()
 
 # Extract a specific compiler's section from multi-compiler baseline
-# Handles both old (single section) and new (multi-section) formats
+# All baselines must use multi-section format with headers like "=== Clang ==="
+# If the section doesn't exist, fails with instruction to run rebase
 function(extract_compiler_section baseline compiler_id output_var)
-    # Determine the section header for this compiler
-    if(compiler_id STREQUAL "Clang")
-        set(header "=== Clang ===")
-    elseif(compiler_id STREQUAL "GNU")
-        set(header "=== GCC ===")
-    else()
-        set(header "=== ${compiler_id} ===")
-    endif()
+    get_compiler_header("${compiler_id}" header)
 
     # Check if this header exists in baseline
     if(baseline MATCHES "${header}")
@@ -92,12 +86,19 @@ function(extract_compiler_section baseline compiler_id output_var)
         # Remove leading/trailing newlines
         string(REGEX REPLACE "^\n+" "" content "${content}")
         string(REGEX REPLACE "\n+$" "" content "${content}")
+
+        set(${output_var} "${content}" PARENT_SCOPE)
     else()
-        # Old single-compiler format: use entire baseline
-        # Strip any headers that might be present for backwards compat
-        string(REGEX REPLACE "=== (Clang|GCC|GNU) ===\n" "" content "${baseline}")
-        string(STRIP content "${content}")
+        # Section not found. Check if baseline has any headers (multi-section format)
+        if(baseline MATCHES "===")
+            # Baseline has headers but not ours; this is an error
+            # Pass empty output to trigger validation failure with clear message
+            set(${output_var} "" PARENT_SCOPE)
+        else()
+            # No headers in baseline; this shouldn't happen with new code
+            # but treating as single-section for backwards compat
+            set(${output_var} "${baseline}" PARENT_SCOPE)
+        endif()
     endif()
 
-    set(${output_var} "${content}" PARENT_SCOPE)
 endfunction()
