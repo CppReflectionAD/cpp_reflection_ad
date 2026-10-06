@@ -25,6 +25,11 @@ execute_process(
     RESULT_VARIABLE BUILD_RESULT
 )
 
+# Check that compilation failed
+if(BUILD_RESULT EQUAL 0)
+    message(FATAL_ERROR "${TARGET_NAME} compiled successfully but is expected to fail")
+endif()
+
 # Combine stderr and stdout
 set(ACTUAL_OUTPUT "${BUILD_ERROR}${BUILD_OUTPUT}")
 

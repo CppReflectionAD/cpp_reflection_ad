@@ -29,6 +29,11 @@ file(READ "${OUTPUT_FILE}" BUILD_OUTPUT)
 # Extract error and warning lines
 extract_errors_and_warnings("${BUILD_OUTPUT}" EXTRACTED)
 
+# Refuse to write empty section—if no errors/warnings found, something went wrong
+if(NOT EXTRACTED)
+    message(FATAL_ERROR "No compilation errors or warnings found in build output. The target may have compiled successfully or output may be in an unexpected format.")
+endif()
+
 # Normalize paths: strip CMAKE_SOURCE_DIR to make baselines portable
 string(REGEX REPLACE "${CMAKE_SOURCE_DIR}/" "" EXTRACTED "${EXTRACTED}")
 
