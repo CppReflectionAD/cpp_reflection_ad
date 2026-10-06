@@ -88,7 +88,7 @@ function(extract_section baseline header output_var)
         return()
     endif()
 
-    # Move past the header line (header + \n)
+    # Move past the header text; the newline after it is trimmed below
     string(LENGTH "${header}" header_len)
     math(EXPR start_pos "${header_pos} + ${header_len}")
 
