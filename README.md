@@ -8,11 +8,14 @@ https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2025/p2996r13.html
 Reflection-AD tests live under `tests/`:
 
 - `tests/clang_only/` — the clang (`expr-reflect`) engine (`autograd.h`,
-  `autograd_tensor.h`, `tensor.h`) and its tests: self-checking demos
-  (`ad_scalar_demo.cpp`, `ad_tensor_demo.cpp`) and benchmarks (`ad_bench.cpp`,
-  `ad_tensor_bench.cpp`).
+  `autograd_tensor.h`, `tensor.h`) and its tests, including self-checking demos
+  (`ad_scalar_demo.cpp`, `ad_tensor_demo.cpp`).
 - `tests/gcc_only/` — reserved for the gcc (`no_expression_kind`) port.
 - `tests/` (directly) — compiler-agnostic tests run under **both** compilers.
+
+Benchmarks live under `benchmarks/` (clang-only ones in `benchmarks/clang_only/`),
+e.g. `ad_bench.cpp` and `ad_tensor_bench.cpp`. They are built by CMake but not
+registered with CTest.
 
 The two forks expose different reflection APIs, so tests are compiler-specific
 for now. Each compiler has a **flag profile** (its reflection/stdlib flags), so
