@@ -1,0 +1,90 @@
+# validate_compile_output.cmake
+# Validates that a test's compilation output matches the expected snapshot
+# Supports multiple compilers: extracts and compares only current compiler's section
+#
+# Usage (called by CMake test):
+#   cmake -DBINARY_DIR=... -DTARGET_NAME=... -DEXPECTED_OUTPUT_FILE=... -DCXX_COMPILER_ID=... -DTEST_SIMPLE_DIR=... -DREBASE_TARGET=... -P validate_compile_output.cmake
+
+# cmake -P sets no policies; use the same ones as the top-level CMakeLists.txt
+cmake_minimum_required(VERSION 3.25)
+
+if(NOT DEFINED TEST_SIMPLE_DIR)
+    message(FATAL_ERROR "TEST_SIMPLE_DIR must be provided")
+endif()
+
+# Include shared extraction functions
+include("${TEST_SIMPLE_DIR}/shared_extract.cmake")
+
+# Check required parameters
+if(NOT DEFINED BINARY_DIR OR NOT DEFINED TARGET_NAME OR NOT DEFINED EXPECTED_OUTPUT_FILE OR NOT DEFINED CXX_COMPILER_ID OR NOT DEFINED REBASE_TARGET)
+    message(FATAL_ERROR "Missing required parameters")
+endif()
+
+# Try to build the target and capture output
+execute_process(
+    COMMAND ${CMAKE_COMMAND} --build "${BINARY_DIR}" --target "${TARGET_NAME}"
+    OUTPUT_VARIABLE BUILD_OUTPUT
+    ERROR_VARIABLE BUILD_ERROR
+    RESULT_VARIABLE BUILD_RESULT
+)
+
+# Check that compilation failed
+if(BUILD_RESULT EQUAL 0)
+    message(FATAL_ERROR "${TARGET_NAME} compiled successfully but is expected to fail")
+endif()
+
+# Combine stderr and stdout
+set(ACTUAL_OUTPUT "${BUILD_ERROR}${BUILD_OUTPUT}")
+
+# Check if expected output file exists
+if(NOT EXISTS "${EXPECTED_OUTPUT_FILE}")
+    message(FATAL_ERROR
+"Expected output file not found: ${EXPECTED_OUTPUT_FILE}
+
+This is the first time this test is being run. To create the baseline:
+  cmake --build ${BINARY_DIR} --target ${REBASE_TARGET}
+
+Then commit the .fail.txt file to version control.")
+endif()
+
+# Read expected output
+file(READ "${EXPECTED_OUTPUT_FILE}" EXPECTED_OUTPUT)
+
+# Extract only the section for the current compiler
+extract_compiler_section("${EXPECTED_OUTPUT}" "${CXX_COMPILER_ID}" EXPECTED_OUTPUT)
+
+# A missing or empty section can't be compared against anything
+if(EXPECTED_OUTPUT STREQUAL "")
+    get_compiler_header("${CXX_COMPILER_ID}" expected_header)
+    message(FATAL_ERROR
+"No '${expected_header}' section (or an empty one) in ${EXPECTED_OUTPUT_FILE}
+
+To create the baseline for this compiler:
+  cmake --build ${BINARY_DIR} --target ${REBASE_TARGET}
+
+Then commit the updated .fail.txt file.")
+endif()
+
+# Normalize both for comparison (normalize_error_output extracts the error
+# blocks itself, so the raw build output can be passed in directly)
+normalize_error_output("${ACTUAL_OUTPUT}" normalized_actual)
+normalize_error_output("${EXPECTED_OUTPUT}" normalized_expected)
+
+if(NOT normalized_actual STREQUAL normalized_expected)
+    message(FATAL_ERROR
+"Error output changed for ${TARGET_NAME}!
+
+Expected (normalized):
+[${normalized_expected}]
+
+Actual (normalized):
+[${normalized_actual}]
+
+To update the baseline (rebase):
+  cmake --build ${BINARY_DIR} --target ${REBASE_TARGET}
+  git diff ${EXPECTED_OUTPUT_FILE}  # review changes
+  git add ${EXPECTED_OUTPUT_FILE}")
+endif()
+
+message(STATUS "✓ ${TARGET_NAME}: Compilation failed as expected")
+
