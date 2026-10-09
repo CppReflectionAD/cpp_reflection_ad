@@ -64,12 +64,13 @@ endfunction()
 # Discover and register tests
 # ---------------------------------------------------------------------------
 file(GLOB _common   CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
+file(GLOB _cx_std   CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/cx_std/*.cpp")
 file(GLOB _clang_only CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/clang_only/*.cpp")
 file(GLOB _gcc_only   CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/gcc_only/*.cpp")
 file(GLOB _static_fail CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/static_fail/*.cpp")
 
-foreach(_src IN LISTS _common)
+foreach(_src IN LISTS _common _cx_std)
     get_filename_component(_name "${_src}" NAME_WE)
     add_reflect_test(${_name} "${_src}")
 endforeach()

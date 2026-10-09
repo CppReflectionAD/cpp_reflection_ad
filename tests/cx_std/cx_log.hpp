@@ -1,56 +1,57 @@
-// cx_log.hpp — constexpr log via Taylor series with range reduction.
+// cx_log.hpp — constexpr log via binary range reduction and an atanh series.
 //
 // Algorithm
 // ---------
-// 1. Range reduction: for x > √2, halve the argument recursively:
-//      log(x) = 2 * log(√x)   until x ∈ (0, √2]
-// 2. Flip for x < 1:
-//      log(x) = -log(1/x)
-// 3. Taylor series on the reduced range, u = x - 1 ∈ (-1, √2-1]:
-//      log(1+u) = u * (1 - u/2 + u²/3 - u³/4 + …)  — Horner form
-//    |u| ≤ √2-1 ≈ 0.414 gives rapid convergence; 30 terms yield full
-//    double precision.
+// 1. Range reduction: x = m · 2^e with m ∈ [√½, √2). Scaling by powers of
+//    two is exact.
+// 2. log(m) = 2·atanh(u) with u = (m - 1) / (m + 1), |u| ≤ 0.172:
+//      log(m) = 2·u·(1 + u²/3 + u⁴/5 + …)  — Horner form in u²
+//    u² ≤ 0.03, so 14 terms give full double precision.
+// 3. log(x) = e·ln2 + log(m), with ln2 split as in cx_exp.hpp so e·ln2_hi is
+//    exact.
 //
 // Special cases: NaN → NaN, x<0 → NaN, 0 → -∞, +∞ → +∞, 1 → 0.
+//
+// Accuracy: within a few ulp of std::log (see tests/cx_std/cx_std.t.cpp).
 
 #ifndef CX_STD_CX_LOG_HPP
 #define CX_STD_CX_LOG_HPP
 
-#include "cx_sqrt.hpp"
+#include "cx_exp.hpp"
 
 #include <cstddef>
 #include <limits>
+#include <numbers>
 #include <type_traits>
 
 namespace cx {
 namespace detail {
 
-constexpr std::size_t kLogTerms = 30;
+constexpr std::size_t kLogTerms = 14;
 
-// Horner-form kernel for log(1+u) / u.
-// Computes: Σ_{n=0}^{N-1} (-u)^n / (n+1)  =  1 - u/2 + u²/3 - …
-// so that log(1+u) = u * log_horner(u, 0, N).
+// Horner-form kernel: Σ_{k=n}^{N-1} v^(k-n) / (2k+1), v = u².
 template <typename T>
-constexpr T log_horner(T u, std::size_t n, std::size_t N) {
-  return n >= N ? T(0)
-                : (n % 2 == 0 ? T(1) : T(-1)) / static_cast<T>(n + 1) +
-                      u * log_horner(u, n + 1, N);
+constexpr T log_horner(T v, std::size_t n, std::size_t N) {
+  return n >= N
+             ? T(0)
+             : T(1) / static_cast<T>(2 * n + 1) + v * log_horner(v, n + 1, N);
 }
 
-// Core: x is finite, positive, non-zero.
-// Step 1 — range reduction to (0, √2].
-// Step 2 — Taylor series on reduced range.
+// Core: x is finite, positive and not 1.
 template <typename T> constexpr T log_core(T x) {
-  return x > cx::sqrt(T(2)) // x > √2: halve via log(x) = 2*log(√x)
-             ? T(2) * log_core(cx::sqrt(x))
-             : x < T(1) // x < 1: flip via log(x) = -log(1/x)
-                   ? -log_core(T(1) / x)
-                   : (x - T(1)) * log_horner(x - T(1), 0, kLogTerms); // Taylor
+  auto [m, e] = binary_exponent(x);
+  if (m >= std::numbers::sqrt2_v<T>) {
+    m /= T(2);
+    ++e;
+  }
+  const T u = (m - T(1)) / (m + T(1));
+  const T log_m = T(2) * u * log_horner(u * u, 0, kLogTerms);
+  const T ef = static_cast<T>(e);
+  return ef * static_cast<T>(ln2_hi) + (ef * static_cast<T>(ln2_lo) + log_m);
 }
 
 } // namespace detail
 
-// constexpr log for floating-point types.
 template <typename T, std::enable_if_t<std::is_floating_point_v<T>, int> = 0>
 constexpr T log(T x) {
   return x != x      ? x                                   // NaN  → NaN
@@ -61,7 +62,6 @@ constexpr T log(T x) {
                                                    : detail::log_core(x);
 }
 
-// Integral overload: promote to double.
 template <typename T, std::enable_if_t<std::is_integral_v<T>, int> = 0>
 constexpr double log(T x) {
   return cx::log(static_cast<double>(x));

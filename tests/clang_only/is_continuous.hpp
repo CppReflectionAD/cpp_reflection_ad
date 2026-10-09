@@ -29,13 +29,14 @@
 // Branches are decided over the box: a provably true/false `c` checks only the
 // live branch (`x > 0 ? log(x) : 0.0` is continuous on [-2,-1]); an undecidable
 // one may jump, and is reported. abs/max/min are ops, not branches: kinked but
-// continuous. Not handled: Sin/Cos narrower than 2π — see sin_range.
+// continuous.
 
 #include "../autograd.h" // for ad::Node, ad::OpKind, ad::build_nodes<>
 #include "../cx_std/cx_erfc.hpp"
 #include "../cx_std/cx_exp.hpp"
 #include "../cx_std/cx_log.hpp"
 #include "../cx_std/cx_sqrt.hpp"
+#include "../cx_std/cx_trig.hpp"
 
 #include <algorithm>
 #include <array>
@@ -90,31 +91,45 @@ consteval Interval div(Interval a, Interval b) {
   return mul(a, b_inv);
 }
 
-// LIMITATION: only the `>= 2π` early return works -- the narrow path calls
-// non-constexpr std::sin/std::cos, so it fails to compile rather than answer
-// wrongly. `trig` passes only because it takes the early return. Fix: add
-// cx_std/cx_sin.hpp + cx_cos.hpp, and tighten these loose bounds.
-consteval Interval sin_range(Interval a) {
-  // Conservative: full range [-1, 1] if the interval is >= 2π wide.
+// Whether a contains c + 2πk for some integer k. A k that rounding puts just
+// outside a is missed, but then an endpoint is within rounding of that point.
+consteval bool contains_phase(Interval a, double c) {
   constexpr double two_pi = 2.0 * 3.141592653589793;
-  if (a.hi - a.lo >= two_pi)
+  const double t = (a.lo - c) / two_pi;
+  double k = static_cast<double>(static_cast<long long>(t)); // toward 0
+  if (k < t)
+    k += 1.0; // the least k with c + 2πk >= a.lo
+  return c + k * two_pi <= a.hi;
+}
+
+// The range of a periodic f (sin or cos) over a: its values at the ends,
+// widened to 1 where a contains a maximum (at max_at + 2πk) and to -1 where
+// it contains a minimum (at max_at + π + 2πk). Then widened by a few ulps of
+// 1 for cx_trig's rounding. Past |x| = 1e6, where contains_phase's double 2π
+// has drifted from the period by more than rounding (k·2π is off by about
+// k·2.4e-16), and on any interval 2π wide or more, it is [-1, 1].
+template <typename F>
+consteval Interval periodic_range(Interval a, F f, double max_at) {
+  constexpr double pi = 3.141592653589793;
+  if (!(a.hi - a.lo < 2.0 * pi) || !(-1e6 <= a.lo && a.hi <= 1e6))
     return {-1.0, 1.0};
-  // Otherwise use endpoint values as a rough bound (not tight, but sound).
-  double lo = std::min(std::sin(a.lo), std::sin(a.hi));
-  double hi = std::max(std::sin(a.lo), std::sin(a.hi));
-  // Widen slightly for intermediate extrema (conservative).
-  return {std::min(lo, -1.0 * (lo < 0.0 ? 1.0 : 0.0)),
-          std::max(hi, 1.0 * (hi > 0.0 ? 1.0 : 0.0))};
+  double lo = std::min(f(a.lo), f(a.hi));
+  double hi = std::max(f(a.lo), f(a.hi));
+  if (contains_phase(a, max_at))
+    hi = 1.0;
+  if (contains_phase(a, max_at + pi))
+    lo = -1.0;
+  constexpr double slack = 4 * std::numeric_limits<double>::epsilon();
+  return {std::max(lo - slack, -1.0), std::min(hi + slack, 1.0)};
+}
+
+consteval Interval sin_range(Interval a) {
+  return periodic_range(
+      a, [](double x) { return cx::sin(x); }, 3.141592653589793 / 2.0);
 }
 
 consteval Interval cos_range(Interval a) {
-  constexpr double two_pi = 2.0 * 3.141592653589793;
-  if (a.hi - a.lo >= two_pi)
-    return {-1.0, 1.0};
-  double lo = std::min(std::cos(a.lo), std::cos(a.hi));
-  double hi = std::max(std::cos(a.lo), std::cos(a.hi));
-  return {std::min(lo, -1.0 * (lo < 0.0 ? 1.0 : 0.0)),
-          std::max(hi, 1.0 * (hi > 0.0 ? 1.0 : 0.0))};
+  return periodic_range(a, [](double x) { return cx::cos(x); }, 0.0);
 }
 
 // Tan is discontinuous at π/2 + k·π.
