@@ -31,6 +31,7 @@ jobs:
         build_type: [Release, RelWithDebInfo, Debug]
     env:
       BUILD_DIR: build/cmake-${{ matrix.build_type }}
+      SANITIZE_FLAGS: ${{ matrix.build_type == 'Debug' && '-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer' || '' }}
 
     steps:
       - name: Checkout code
@@ -68,7 +69,7 @@ jobs:
           cmake -S . -B "$BUILD_DIR" \
             -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
             -DCMAKE_CXX_COMPILER=/opt/toolchain-clang/bin/clang++ \
-            -DCMAKE_CXX_FLAGS="-stdlib=libc++" \
+            -DCMAKE_CXX_FLAGS="-stdlib=libc++ ${SANITIZE_FLAGS}" \
             -DCMAKE_EXE_LINKER_FLAGS="-stdlib=libc++ -L/opt/toolchain-clang/lib -Wl,-rpath,/opt/toolchain-clang/lib"
 
       - name: Build tests
