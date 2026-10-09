@@ -1,4 +1,3 @@
-// TEST-FLAGS: -O2
 // ad_tensor_bench.cpp — tensor/ML AD: reflection reverse-mode vs a runtime tape
 // vs hand-written, on the same MLP gradient.
 //
@@ -11,7 +10,8 @@
 // written is smaller than for scalars (matmuls dominate), but the *absolute*
 // time saved per call is larger.
 //
-// Build/run: `make run-tensor-bench` (built at -O2).
+// Build/run: `run_tests.py --run-executables --tests
+// clang_only/ad_tensor_bench.cpp` (built at -O3).
 
 #include "autograd_tensor.h"
 #include "tensor.h"

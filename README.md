@@ -10,7 +10,7 @@ Reflection-AD tests live under `tests/`:
 - `tests/clang_only/` — the clang (`expr-reflect`) engine (`autograd.h`,
   `autograd_tensor.h`, `tensor.h`) and its tests: self-checking demos
   (`ad_scalar_demo.cpp`, `ad_tensor_demo.cpp`) and benchmarks (`ad_bench.cpp`,
-  `ad_tensor_bench.cpp`, which carry `// TEST-FLAGS: -O2`).
+  `ad_tensor_bench.cpp`).
 - `tests/gcc_only/` — reserved for the gcc (`no_expression_kind`) port.
 - `tests/` (directly) — compiler-agnostic tests run under **both** compilers.
 
@@ -23,8 +23,10 @@ once a gcc engine exposes the same `ad::` interface its drivers can move up to
 
 `run_tests.py` selects `clang`/`gcc`/both, compiles every `.cpp` under `tests/`
 (respecting the `clang_only`/`gcc_only`/shared dirs), optionally runs the
-binaries, and reports compile vs runtime failures. A test may add flags via a
-`// TEST-FLAGS: ...` comment near its top (benchmarks use it for `-O2`).
+binaries, and reports compile vs runtime failures. Everything is built at
+`-O3` (as CMake's Release build), so benchmark timings are meaningful;
+`--opt-level` changes that. A test may add flags via a `// TEST-FLAGS: ...`
+comment near its top; they come after `--opt-level`, so they can override it.
 Tests under `tests/static_fail/` are expected **not** to compile (e.g. they
 trip a `static_assert`); they pass only when compilation fails.
 `run_tests.py` only checks that they fail to compile; `ctest` also compares the
