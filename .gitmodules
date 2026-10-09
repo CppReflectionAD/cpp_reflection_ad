@@ -9,7 +9,10 @@
 [submodule "gcc-darwin-reflect"]
 	path = gcc-darwin-reflect
 	url = https://github.com/iains/gcc-darwin-arm64.git
-	branch = master-wip-apple-si
-	# Keep this submodule out of parent git status: we frequently carry local
-	# reflection backports here without intending to update the superproject pin.
+	branch = master-wip-apple-si-on-r17-4662-g386d81e74305e7
+	# The pin must be an upstream iains snapshot commit whose GCC base matches
+	# gcc-mirror's upstream merge-base. run_tests.py applies the reflection
+	# commits on top of it locally (git am), so ignore=all keeps those local-only
+	# commits from being committed as the pin. Bump it deliberately with:
+	#   git update-index --cacheinfo 160000,<sha>,gcc-darwin-reflect
 	ignore = all
