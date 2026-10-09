@@ -1,4 +1,3 @@
-// TEST-FLAGS: -O2
 // ad_bench.cpp — performance: reflection AD vs the ways people do AD *without*
 // reflection, vs hand-written.
 //
@@ -20,7 +19,8 @@
 // identical ones aren't merged, warm up, and take the min over trials. Every AD
 // result is checked against hand-written before timing.
 //
-// Build at -O2 (see `make run-bench`).
+// Build/run: `run_tests.py --run-executables --tests ad_bench.cpp` (built at
+// -O3).
 
 #include "autograd.h"
 #include "forward_derivative.h"
