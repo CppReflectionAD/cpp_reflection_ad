@@ -50,6 +50,46 @@ double negated_select_payoff(double spot, double strike) {
   return -((spot > strike + 1) ? 1.0 : 0.0);
 }
 
+// Digital put style payoff: the Heaviside argument has negative derivative in
+// spot, so the jump amplitude should be negative as spot increases.
+double digital_put_payoff(double spot, double strike) {
+  return (spot < strike) ? 1.0 : 0.0;
+}
+
+// Case 2: fixed_arg < target_arg (reverse operands, slope = -1.0)
+// strike < spot ? 1.0 : 0.0
+double reverse_compare_payoff(double spot, double strike) {
+  return (strike < spot) ? 1.0 : 0.0;
+}
+
+// Case 2b: const < target_arg (constant on left, slope = -1.0)
+// 99.0 < spot ? 1.0 : 0.0
+double const_compare_payoff(double spot) { return (99.0 < spot) ? 1.0 : 0.0; }
+
+// Case 6: expression + fixed_arg < target (binary operation on left, slope =
+// -1.0) strike + 1 < spot ? 1.0 : 0.0
+double offset_compare_payoff(double spot, double strike) {
+  return (strike + 1 < spot) ? 1.0 : 0.0;
+}
+
+// Case 6: offset + fixed_arg < target (expression on left, target on right,
+// slope = -1.0) 1 + strike < spot ? 1.0 : 0.0
+double offset_compare_sum_payoff(double spot, double strike) {
+  return (1 + strike < spot) ? 1.0 : 0.0;
+}
+
+// Using <= operator (case 1: target <= fixed)
+// spot <= strike ? 1.0 : 0.0
+double digital_call_le_payoff(double spot, double strike) {
+  return (spot <= strike) ? 1.0 : 0.0;
+}
+
+// Using >= operator (case 2: fixed >= target)
+// strike >= spot ? 1.0 : 0.0
+double digital_put_ge_payoff(double spot, double strike) {
+  return (strike >= spot) ? 1.0 : 0.0;
+}
+
 int main() {
   // Test 0 discontinuities
   constexpr auto disc0 = ad::get_discontinuity_points<^^continuous_linear, 0>();
@@ -185,6 +225,115 @@ int main() {
   EXPECT_EQUAL(disc_neg_sel.size(), 1);
   EXPECT_EQUAL(disc_neg_sel.point(0), 101.0);
   EXPECT_EQUAL(disc_neg_sel.amplitude(0), -1.0);
+
+  // Test digital_put_payoff with amplitudes
+  // (spot < strike) ? 1.0 : 0.0
+  // At strike = 100.0, the jump as spot increases is 0.0 - 1.0 = -1.0.
+  constexpr auto disc_put =
+      ad::get_discontinuity_points_and_amplitudes<^^digital_put_payoff, 0>(
+          100.0);
+  EXPECT_FALSE(disc_put.empty());
+  EXPECT_EQUAL(disc_put.size(), 1);
+  EXPECT_EQUAL(disc_put.point(0), 100.0);
+  EXPECT_EQUAL(disc_put.amplitude(0), -1.0);
+
+  // Test digital call with amplitudes using two_arg_compare
+  // (x > y) ? 1.0 : 0.0, with y fixed at 100.0
+  // At y = 100.0, the jump as x increases is 1.0 - 0.0 = +1.0.
+  constexpr auto disc_call =
+      ad::get_discontinuity_points_and_amplitudes<^^two_arg_compare, 0>(100.0);
+  EXPECT_FALSE(disc_call.empty());
+  EXPECT_EQUAL(disc_call.size(), 1);
+  EXPECT_EQUAL(disc_call.point(0), 100.0);
+  EXPECT_EQUAL(disc_call.amplitude(0), 1.0);
+
+  // Test runtime version with runtime arguments
+  // get_discontinuity_points_and_amplitudes_rt exercises the compile-time DAG
+  // analysis with runtime parameter values
+  double runtime_strike = 100.0;
+  auto disc_rt =
+      ad::get_discontinuity_points_and_amplitudes_rt<^^digital_and_call_payoff,
+                                                     0>(runtime_strike);
+  EXPECT_FALSE(disc_rt.empty());
+  EXPECT_EQUAL(disc_rt.size(), 1);
+  EXPECT_EQUAL(disc_rt.point(0), 100.0);
+  EXPECT_EQUAL(disc_rt.amplitude(0), 1.0);
+
+  // Test Case 2 (pure): const < target (slope = -1.0)
+  // (99.0 < spot) ? 1.0 : 0.0
+  // Discontinuity at spot = 99.0 with amplitude +1.0
+  constexpr auto disc_case2 =
+      ad::get_discontinuity_points_and_amplitudes<^^const_compare_payoff, 0>();
+  EXPECT_FALSE(disc_case2.empty());
+  EXPECT_EQUAL(disc_case2.size(), 1);
+  EXPECT_EQUAL(disc_case2.point(0), 99.0);
+  EXPECT_EQUAL(disc_case2.amplitude(0), 1.0);
+
+  // Test Case 4: other_input < target (slope = -1.0)
+  // (strike < spot) ? 1.0 : 0.0
+  // Discontinuity at spot = strike with amplitude +1.0
+  constexpr auto disc_case4 =
+      ad::get_discontinuity_points_and_amplitudes<^^reverse_compare_payoff, 0>(
+          100.0);
+  EXPECT_FALSE(disc_case4.empty());
+  EXPECT_EQUAL(disc_case4.size(), 1);
+  EXPECT_EQUAL(disc_case4.point(0), 100.0);
+  EXPECT_EQUAL(disc_case4.amplitude(0), 1.0);
+
+  // Test Case 6 (first variant): expression + fixed_arg < target (slope = -1.0)
+  // (strike + 1 < spot) ? 1.0 : 0.0
+  // Discontinuity at spot = strike + 1 with amplitude +1.0
+  constexpr auto disc_case6a =
+      ad::get_discontinuity_points_and_amplitudes<^^offset_compare_payoff, 0>(
+          100.0);
+  EXPECT_FALSE(disc_case6a.empty());
+  EXPECT_EQUAL(disc_case6a.size(), 1);
+  EXPECT_EQUAL(disc_case6a.point(0), 101.0);
+  EXPECT_EQUAL(disc_case6a.amplitude(0), 1.0);
+
+  // Test Case 6 (second variant): offset + fixed_arg < target (slope = -1.0)
+  // (1 + strike < spot) ? 1.0 : 0.0
+  // Discontinuity at spot = 1 + strike with amplitude +1.0
+  constexpr auto disc_case6b =
+      ad::get_discontinuity_points_and_amplitudes<^^offset_compare_sum_payoff,
+                                                  0>(100.0);
+  EXPECT_FALSE(disc_case6b.empty());
+  EXPECT_EQUAL(disc_case6b.size(), 1);
+  EXPECT_EQUAL(disc_case6b.point(0), 101.0);
+  EXPECT_EQUAL(disc_case6b.amplitude(0), 1.0);
+
+  // Test <= operator (tests Le arm of comparison_jump_sign)
+  // (spot <= strike) ? 1.0 : 0.0
+  // At strike = 100.0, jump as spot increases is -1.0 (1.0 -> 0.0)
+  constexpr auto disc_le =
+      ad::get_discontinuity_points_and_amplitudes<^^digital_call_le_payoff, 0>(
+          100.0);
+  EXPECT_FALSE(disc_le.empty());
+  EXPECT_EQUAL(disc_le.size(), 1);
+  EXPECT_EQUAL(disc_le.point(0), 100.0);
+  EXPECT_EQUAL(disc_le.amplitude(0), -1.0);
+
+  // Test >= operator (tests Ge arm of comparison_jump_sign)
+  // (strike >= spot) ? 1.0 : 0.0
+  // At strike = 100.0, this is true on left (spot <= 100), false on right
+  // Jump as spot increases is -1.0 (1.0 -> 0.0)
+  constexpr auto disc_ge =
+      ad::get_discontinuity_points_and_amplitudes<^^digital_put_ge_payoff, 0>(
+          100.0);
+  EXPECT_FALSE(disc_ge.empty());
+  EXPECT_EQUAL(disc_ge.size(), 1);
+  EXPECT_EQUAL(disc_ge.point(0), 100.0);
+  EXPECT_EQUAL(disc_ge.amplitude(0), -1.0);
+
+  // Test Case 4 runtime version
+  double runtime_strike_case4 = 100.0;
+  auto disc_case4_rt =
+      ad::get_discontinuity_points_and_amplitudes_rt<^^reverse_compare_payoff,
+                                                     0>(runtime_strike_case4);
+  EXPECT_FALSE(disc_case4_rt.empty());
+  EXPECT_EQUAL(disc_case4_rt.size(), 1);
+  EXPECT_EQUAL(disc_case4_rt.point(0), 100.0);
+  EXPECT_EQUAL(disc_case4_rt.amplitude(0), 1.0);
 
   TEST_END;
 }

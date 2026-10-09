@@ -40,6 +40,21 @@ consteval std::array<T, sizeof...(Args)> make_array_impl(Args... args) {
   return {static_cast<T>(args)...};
 }
 
+constexpr double signum(double x) {
+  return x > 0.0 ? 1.0 : (x < 0.0 ? -1.0 : 0.0);
+}
+
+constexpr double comparison_jump_sign(OpKind op, double slope) {
+  const double slope_sign = signum(slope);
+  if (slope_sign == 0.0)
+    return 0.0;
+  if (op == OpKind::Lt || op == OpKind::Le)
+    return -slope_sign;
+  if (op == OpKind::Gt || op == OpKind::Ge)
+    return slope_sign;
+  return 1.0;
+}
+
 } // namespace detail_disc
 
 // ---------------------------------------------------------------------------
@@ -363,12 +378,14 @@ analyze_discontinuities_with_amplitudes_impl(
         // Determine if this comparison involves the target input
         bool involves_target = false;
         double point_value = 0.0;
+        double comparison_slope = 0.0;
 
         // Case 1: a is the target input, b is a constant
         if constexpr (operand_a.op == OpKind::Input &&
                       operand_a.self == TargetArgIndex &&
                       operand_b.op == OpKind::Const) {
           involves_target = true;
+          comparison_slope = 1.0;
           constexpr double b_const = static_cast<double>([:operand_b.leaf:]);
           point_value = b_const;
         }
@@ -378,6 +395,7 @@ analyze_discontinuities_with_amplitudes_impl(
                            operand_b.self == TargetArgIndex &&
                            operand_a.op == OpKind::Const) {
           involves_target = true;
+          comparison_slope = -1.0;
           constexpr double a_const = static_cast<double>([:operand_a.leaf:]);
           point_value = a_const;
         }
@@ -389,6 +407,7 @@ analyze_discontinuities_with_amplitudes_impl(
                            operand_b.self != TargetArgIndex &&
                            operand_b.self < NumArgs) {
           involves_target = true;
+          comparison_slope = 1.0;
           point_value = fixed_args[operand_b.self];
         }
 
@@ -399,6 +418,7 @@ analyze_discontinuities_with_amplitudes_impl(
                            operand_a.self != TargetArgIndex &&
                            operand_a.self < NumArgs) {
           involves_target = true;
+          comparison_slope = -1.0;
           point_value = fixed_args[operand_a.self];
         }
 
@@ -412,7 +432,7 @@ analyze_discontinuities_with_amplitudes_impl(
                            operand_b.a < nodes.size() &&
                            operand_b.b < nodes.size()) {
           involves_target = true;
-          // Evaluate the binary operation with fixed arguments
+          comparison_slope = 1.0;
           constexpr auto b_left = nodes[operand_b.a];
           constexpr auto b_right = nodes[operand_b.b];
           double b_left_val = 0.0, b_right_val = 0.0;
@@ -453,7 +473,7 @@ analyze_discontinuities_with_amplitudes_impl(
                            operand_a.a < nodes.size() &&
                            operand_a.b < nodes.size()) {
           involves_target = true;
-          // Evaluate the binary operation with fixed arguments
+          comparison_slope = -1.0;
           constexpr auto a_left = nodes[operand_a.a];
           constexpr auto a_right = nodes[operand_a.b];
           double a_left_val = 0.0, a_right_val = 0.0;
@@ -769,6 +789,8 @@ analyze_discontinuities_with_amplitudes_impl(
               }
 
               double amplitude = true_val - false_val;
+              amplitude *=
+                  detail_disc::comparison_jump_sign(n.op, comparison_slope);
 
               // Check if this Select node is used in any binary operations or
               // unary negation that would affect its amplitude
@@ -891,12 +913,14 @@ get_discontinuity_points_and_amplitudes_rt(FixedArgs... fixed_args) {
         // Determine if this comparison involves the target input
         bool involves_target = false;
         double point_value = 0.0;
+        double comparison_slope = 0.0;
 
         // Case 1: a is the target input, b is a constant
         if constexpr (operand_a.op == OpKind::Input &&
                       operand_a.self == TargetArgIndex &&
                       operand_b.op == OpKind::Const) {
           involves_target = true;
+          comparison_slope = 1.0;
           constexpr double b_const = static_cast<double>([:operand_b.leaf:]);
           point_value = b_const;
         }
@@ -906,6 +930,7 @@ get_discontinuity_points_and_amplitudes_rt(FixedArgs... fixed_args) {
                            operand_b.self == TargetArgIndex &&
                            operand_a.op == OpKind::Const) {
           involves_target = true;
+          comparison_slope = -1.0;
           constexpr double a_const = static_cast<double>([:operand_a.leaf:]);
           point_value = a_const;
         }
@@ -917,7 +942,7 @@ get_discontinuity_points_and_amplitudes_rt(FixedArgs... fixed_args) {
                            operand_b.self != TargetArgIndex &&
                            operand_b.self < NumArgs) {
           involves_target = true;
-          // Use the runtime value of operand_b
+          comparison_slope = 1.0;
           point_value = all_inputs[operand_b.self];
         }
 
@@ -928,7 +953,7 @@ get_discontinuity_points_and_amplitudes_rt(FixedArgs... fixed_args) {
                            operand_a.self != TargetArgIndex &&
                            operand_a.self < NumArgs) {
           involves_target = true;
-          // Use the runtime value of operand_a
+          comparison_slope = -1.0;
           point_value = all_inputs[operand_a.self];
         }
 
@@ -942,7 +967,7 @@ get_discontinuity_points_and_amplitudes_rt(FixedArgs... fixed_args) {
                            operand_b.a < nodes.size() &&
                            operand_b.b < nodes.size()) {
           involves_target = true;
-          // Evaluate the binary operation with fixed arguments
+          comparison_slope = 1.0;
           constexpr auto b_left = nodes[operand_b.a];
           constexpr auto b_right = nodes[operand_b.b];
           double b_left_val = 0.0, b_right_val = 0.0;
@@ -983,7 +1008,7 @@ get_discontinuity_points_and_amplitudes_rt(FixedArgs... fixed_args) {
                            operand_a.a < nodes.size() &&
                            operand_a.b < nodes.size()) {
           involves_target = true;
-          // Evaluate the binary operation with fixed arguments
+          comparison_slope = -1.0;
           constexpr auto a_left = nodes[operand_a.a];
           constexpr auto a_right = nodes[operand_a.b];
           double a_left_val = 0.0, a_right_val = 0.0;
@@ -1300,6 +1325,8 @@ get_discontinuity_points_and_amplitudes_rt(FixedArgs... fixed_args) {
               }
 
               double amplitude = true_val - false_val;
+              amplitude *=
+                  detail_disc::comparison_jump_sign(n.op, comparison_slope);
 
               // Check if this Select node is used in any binary operations or
               // unary negation that would affect its amplitude
