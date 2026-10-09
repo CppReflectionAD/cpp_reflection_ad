@@ -59,7 +59,7 @@ double digital_put_payoff(double spot, double strike) {
   return (spot < strike) ? 1.0 : 0.0;
 }
 
-// Case 2: fixed_arg < target_arg (reverse operands, slope = -1.0)
+// Other input on the left, target on the right
 // strike < spot ? 1.0 : 0.0
 double reverse_compare_payoff(double spot, double strike) {
   return (strike < spot) ? 1.0 : 0.0;
@@ -80,7 +80,7 @@ double strike_plus_one_gt_spot(double spot, double strike) {
   return (strike + 1 > spot) ? 1.0 : 0.0;
 }
 
-// Ge with the target on the left (Le is digital_call_le_payoff above)
+// Ge with the target on the left (Le is digital_put_le_payoff below)
 double digital_call_ge(double spot, double strike) {
   return (spot >= strike) ? 1.0 : 0.0;
 }
@@ -390,29 +390,29 @@ double measure_jump_on_function(double (*payoff)(double, double), double point,
   return payoff(point + epsilon, strike) - payoff(point - epsilon, strike);
 }
 
-// Case 2b: const < target_arg (constant on left, slope = -1.0)
+// Constant on the left, target on the right
 // 99.0 < spot ? 1.0 : 0.0
 double const_compare_payoff(double spot) { return (99.0 < spot) ? 1.0 : 0.0; }
 
-// Case 6: expression + fixed_arg < target (binary operation on left, slope =
-// -1.0) strike + 1 < spot ? 1.0 : 0.0
+// Expression on the left, target on the right
+// strike + 1 < spot ? 1.0 : 0.0
 double offset_compare_payoff(double spot, double strike) {
   return (strike + 1 < spot) ? 1.0 : 0.0;
 }
 
-// Case 6: offset + fixed_arg < target (expression on left, target on right,
-// slope = -1.0) 1 + strike < spot ? 1.0 : 0.0
+// Expression on the left with the constant first, target on the right
+// 1 + strike < spot ? 1.0 : 0.0
 double offset_compare_sum_payoff(double spot, double strike) {
   return (1 + strike < spot) ? 1.0 : 0.0;
 }
 
-// Using <= operator (case 1: target <= fixed)
+// A digital put with <=, target on the left
 // spot <= strike ? 1.0 : 0.0
-double digital_call_le_payoff(double spot, double strike) {
+double digital_put_le_payoff(double spot, double strike) {
   return (spot <= strike) ? 1.0 : 0.0;
 }
 
-// Using >= operator (case 2: fixed >= target)
+// A digital put with >=, target on the right
 // strike >= spot ? 1.0 : 0.0
 double digital_put_ge_payoff(double spot, double strike) {
   return (strike >= spot) ? 1.0 : 0.0;
@@ -587,61 +587,61 @@ int main() {
   EXPECT_EQUAL(disc_rt.point(0), 100.0);
   EXPECT_EQUAL(disc_rt.amplitude(0), 1.0);
 
-  // Test Case 2 (pure): const < target (slope = -1.0)
+  // Constant on the left: const < target
   // (99.0 < spot) ? 1.0 : 0.0
   // Discontinuity at spot = 99.0 with amplitude +1.0
-  constexpr auto disc_case2 =
+  constexpr auto disc_const_lhs =
       ad::get_discontinuity_points_and_amplitudes<^^const_compare_payoff, 0>();
-  EXPECT_FALSE(disc_case2.empty());
-  EXPECT_EQUAL(disc_case2.size(), 1);
-  EXPECT_EQUAL(disc_case2.point(0), 99.0);
-  EXPECT_EQUAL(disc_case2.amplitude(0), 1.0);
+  EXPECT_FALSE(disc_const_lhs.empty());
+  EXPECT_EQUAL(disc_const_lhs.size(), 1);
+  EXPECT_EQUAL(disc_const_lhs.point(0), 99.0);
+  EXPECT_EQUAL(disc_const_lhs.amplitude(0), 1.0);
 
-  // Test Case 4: other_input < target (slope = -1.0)
+  // Other input on the left: other_input < target
   // (strike < spot) ? 1.0 : 0.0
   // Discontinuity at spot = strike with amplitude +1.0
-  constexpr auto disc_case4 =
+  constexpr auto disc_strike_lhs =
       ad::get_discontinuity_points_and_amplitudes<^^reverse_compare_payoff, 0>(
           100.0);
-  EXPECT_FALSE(disc_case4.empty());
-  EXPECT_EQUAL(disc_case4.size(), 1);
-  EXPECT_EQUAL(disc_case4.point(0), 100.0);
-  EXPECT_EQUAL(disc_case4.amplitude(0), 1.0);
+  EXPECT_FALSE(disc_strike_lhs.empty());
+  EXPECT_EQUAL(disc_strike_lhs.size(), 1);
+  EXPECT_EQUAL(disc_strike_lhs.point(0), 100.0);
+  EXPECT_EQUAL(disc_strike_lhs.amplitude(0), 1.0);
 
-  // Test Case 6 (first variant): expression + fixed_arg < target (slope = -1.0)
+  // Expression on the left: expression < target
   // (strike + 1 < spot) ? 1.0 : 0.0
   // Discontinuity at spot = strike + 1 with amplitude +1.0
-  constexpr auto disc_case6a =
+  constexpr auto disc_offset_lhs =
       ad::get_discontinuity_points_and_amplitudes<^^offset_compare_payoff, 0>(
           100.0);
-  EXPECT_FALSE(disc_case6a.empty());
-  EXPECT_EQUAL(disc_case6a.size(), 1);
-  EXPECT_EQUAL(disc_case6a.point(0), 101.0);
-  EXPECT_EQUAL(disc_case6a.amplitude(0), 1.0);
+  EXPECT_FALSE(disc_offset_lhs.empty());
+  EXPECT_EQUAL(disc_offset_lhs.size(), 1);
+  EXPECT_EQUAL(disc_offset_lhs.point(0), 101.0);
+  EXPECT_EQUAL(disc_offset_lhs.amplitude(0), 1.0);
 
-  // Test Case 6 (second variant): offset + fixed_arg < target (slope = -1.0)
+  // Expression on the left, constant first: expression < target
   // (1 + strike < spot) ? 1.0 : 0.0
   // Discontinuity at spot = 1 + strike with amplitude +1.0
-  constexpr auto disc_case6b =
+  constexpr auto disc_offset_sum_lhs =
       ad::get_discontinuity_points_and_amplitudes<^^offset_compare_sum_payoff,
                                                   0>(100.0);
-  EXPECT_FALSE(disc_case6b.empty());
-  EXPECT_EQUAL(disc_case6b.size(), 1);
-  EXPECT_EQUAL(disc_case6b.point(0), 101.0);
-  EXPECT_EQUAL(disc_case6b.amplitude(0), 1.0);
+  EXPECT_FALSE(disc_offset_sum_lhs.empty());
+  EXPECT_EQUAL(disc_offset_sum_lhs.size(), 1);
+  EXPECT_EQUAL(disc_offset_sum_lhs.point(0), 101.0);
+  EXPECT_EQUAL(disc_offset_sum_lhs.amplitude(0), 1.0);
 
-  // Test <= operator (tests Le arm of comparison_jump_sign)
+  // Le: a digital put
   // (spot <= strike) ? 1.0 : 0.0
   // At strike = 100.0, jump as spot increases is -1.0 (1.0 -> 0.0)
   constexpr auto disc_le =
-      ad::get_discontinuity_points_and_amplitudes<^^digital_call_le_payoff, 0>(
+      ad::get_discontinuity_points_and_amplitudes<^^digital_put_le_payoff, 0>(
           100.0);
   EXPECT_FALSE(disc_le.empty());
   EXPECT_EQUAL(disc_le.size(), 1);
   EXPECT_EQUAL(disc_le.point(0), 100.0);
   EXPECT_EQUAL(disc_le.amplitude(0), -1.0);
 
-  // Test >= operator (tests Ge arm of comparison_jump_sign)
+  // Ge with the target on the right: a digital put
   // (strike >= spot) ? 1.0 : 0.0
   // At strike = 100.0, this is true on left (spot <= 100), false on right
   // Jump as spot increases is -1.0 (1.0 -> 0.0)
@@ -653,15 +653,15 @@ int main() {
   EXPECT_EQUAL(disc_ge.point(0), 100.0);
   EXPECT_EQUAL(disc_ge.amplitude(0), -1.0);
 
-  // Test Case 4 runtime version
-  double runtime_strike_case4 = 100.0;
-  auto disc_case4_rt =
+  // Runtime version, other input on the left
+  double runtime_strike_lhs = 100.0;
+  auto disc_strike_lhs_rt =
       ad::get_discontinuity_points_and_amplitudes_rt<^^reverse_compare_payoff,
-                                                     0>(runtime_strike_case4);
-  EXPECT_FALSE(disc_case4_rt.empty());
-  EXPECT_EQUAL(disc_case4_rt.size(), 1);
-  EXPECT_EQUAL(disc_case4_rt.point(0), 100.0);
-  EXPECT_EQUAL(disc_case4_rt.amplitude(0), 1.0);
+                                                     0>(runtime_strike_lhs);
+  EXPECT_FALSE(disc_strike_lhs_rt.empty());
+  EXPECT_EQUAL(disc_strike_lhs_rt.size(), 1);
+  EXPECT_EQUAL(disc_strike_lhs_rt.point(0), 100.0);
+  EXPECT_EQUAL(disc_strike_lhs_rt.amplitude(0), 1.0);
 
   // #67: equality comparisons are not discontinuities
   EXPECT_EQUAL((ad::get_discontinuity_points<^^eq_payoff, 0>(100.0).size()), 0);
@@ -691,15 +691,15 @@ int main() {
   // The cases above, measured on the function itself
   EXPECT_EQUAL(const_compare_payoff(99.0 + 1e-8) -
                    const_compare_payoff(99.0 - 1e-8),
-               disc_case2.amplitude(0));
+               disc_const_lhs.amplitude(0));
   EXPECT_EQUAL(measure_jump_on_function(reverse_compare_payoff, 100.0, 100.0),
-               disc_case4.amplitude(0));
+               disc_strike_lhs.amplitude(0));
   EXPECT_EQUAL(measure_jump_on_function(offset_compare_payoff, 101.0, 100.0),
-               disc_case6a.amplitude(0));
+               disc_offset_lhs.amplitude(0));
   EXPECT_EQUAL(
       measure_jump_on_function(offset_compare_sum_payoff, 101.0, 100.0),
-      disc_case6b.amplitude(0));
-  EXPECT_EQUAL(measure_jump_on_function(digital_call_le_payoff, 100.0, 100.0),
+      disc_offset_sum_lhs.amplitude(0));
+  EXPECT_EQUAL(measure_jump_on_function(digital_put_le_payoff, 100.0, 100.0),
                disc_le.amplitude(0));
   EXPECT_EQUAL(measure_jump_on_function(digital_put_ge_payoff, 100.0, 100.0),
                disc_ge.amplitude(0));
