@@ -1,15 +1,15 @@
-# actions/cache variant — see gcc_prebuilt.yml for the GHCR/oras variant.
+# Tests against the GCC toolchain cached by toolchain-cache-gcc.yml.
 name: Test GCC (Prebuilt Cache)
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
     paths-ignore:
       - "gcc-mirror"
       - ".github/workflows/toolchain-cache-gcc.yml"
   workflow_run:
-    workflows: [ "Build GCC Toolchain (Cache)" ]
-    types: [ completed ]
+    workflows: ["Build GCC Toolchain (Cache)"]
+    types: [completed]
   pull_request:
     paths-ignore:
       - "gcc-mirror"
@@ -21,9 +21,16 @@ permissions:
 
 jobs:
   test:
+    name: test (${{ matrix.build_type }})
     if: ${{ github.event_name != 'workflow_run' ||
       github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        build_type: [Release, RelWithDebInfo, Debug]
+    env:
+      BUILD_DIR: build/cmake-${{ matrix.build_type }}
 
     steps:
       - name: Checkout code
@@ -53,20 +60,20 @@ jobs:
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
           echo "GCC toolchain not in cache: ${{ steps.key.outputs.cache_key }}"
-          echo "Run workflow 'Build Toolchains (Cache)' first to populate the cache."
+          echo "Run workflow 'Build GCC Toolchain (Cache)' first to populate the cache."
           exit 1
 
-      - name: Configure CMake (gcc cached)
+      - name: Configure CMake
         run: |
           GCC_LIBSTDCPP_DIR="$(dirname "$(/opt/toolchain-gcc/bin/g++ -print-file-name=libstdc++.so.6)")"
           GCC_LIBGCC_DIR="$(dirname "$(/opt/toolchain-gcc/bin/g++ -print-file-name=libgcc_s.so.1)")"
-          cmake -S . -B build/cmake \
-            -DCMAKE_BUILD_TYPE=Release \
+          cmake -S . -B "$BUILD_DIR" \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
             -DCMAKE_CXX_COMPILER=/opt/toolchain-gcc/bin/g++ \
             "-DCMAKE_BUILD_RPATH=${GCC_LIBSTDCPP_DIR};${GCC_LIBGCC_DIR}"
 
-      - name: Build tests (gcc cached)
-        run: cmake --build build/cmake --parallel
+      - name: Build tests
+        run: cmake --build "$BUILD_DIR" --parallel
 
       - name: Test AD with CTest
-        run: ctest --test-dir build/cmake --output-on-failure
+        run: ctest --test-dir "$BUILD_DIR" --output-on-failure
