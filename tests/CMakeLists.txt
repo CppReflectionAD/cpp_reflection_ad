@@ -87,6 +87,9 @@ if(_is_gcc)
         get_filename_component(_name "${_src}" NAME_WE)
         add_reflect_test(${_name} "${_src}")
     endforeach()
+    # Reproducer for a GCC bug: the only file built with this UBSan check.
+    target_compile_options(ubsan_reflection_repro PRIVATE
+        "$<$<CONFIG:Debug>:-fsanitize=float-divide-by-zero>")
 endif()
 
 compile_check(reflection_ad "${_static_fail}")
