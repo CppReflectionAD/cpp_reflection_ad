@@ -58,6 +58,9 @@
 // k = inf, which never flips), for its sides to overflow with the target at
 // 0 (`(s - k) * 1e10 > 0` at k = 1e300), for a jump's rounding error not to
 // be bounded, or to have more points than MaxPoints.
+//
+// Known limitations are listed in discontinuity_analysis.md, next to this
+// file.
 
 #include "../autograd.h"
 #include "../cx_std/cx_erfc.hpp"
