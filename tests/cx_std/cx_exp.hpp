@@ -26,6 +26,26 @@
 #include <limits>
 #include <type_traits>
 
+// The error-free transformations in the cx headers (Veltkamp's split,
+// Dekker's product, the Cody–Waite reduction) need every product rounded on
+// its own. Fusing a product into the following add or subtract (FMA
+// contraction, which compilers do by default on targets with FMA, such as
+// arm64) breaks them, so each header turns it off for its own code.
+#if defined(__clang__)
+#define CX_FP_CONTRACT_OFF_BEGIN                                               \
+  _Pragma("float_control(push)") _Pragma("clang fp contract(off)")
+#define CX_FP_CONTRACT_OFF_END _Pragma("float_control(pop)")
+#elif defined(__GNUC__)
+#define CX_FP_CONTRACT_OFF_BEGIN                                               \
+  _Pragma("GCC push_options") _Pragma("GCC optimize(\"fp-contract=off\")")
+#define CX_FP_CONTRACT_OFF_END _Pragma("GCC pop_options")
+#else
+#define CX_FP_CONTRACT_OFF_BEGIN
+#define CX_FP_CONTRACT_OFF_END
+#endif
+
+CX_FP_CONTRACT_OFF_BEGIN
+
 namespace cx {
 namespace detail {
 
@@ -170,5 +190,7 @@ constexpr double exp(T x) {
 }
 
 } // namespace cx
+
+CX_FP_CONTRACT_OFF_END
 
 #endif // CX_STD_CX_EXP_HPP

@@ -31,6 +31,8 @@
 #include <numbers>
 #include <type_traits>
 
+CX_FP_CONTRACT_OFF_BEGIN
+
 namespace cx {
 namespace detail {
 
@@ -175,5 +177,7 @@ constexpr double erfc(T x) {
 }
 
 } // namespace cx
+
+CX_FP_CONTRACT_OFF_END
 
 #endif // CX_STD_CX_ERFC_HPP
