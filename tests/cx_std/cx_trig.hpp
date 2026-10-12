@@ -32,12 +32,15 @@
 #define CX_STD_CX_TRIG_HPP
 
 #include "cx_exp.hpp"
+#include "cx_fp_contract.hpp"
 
 #include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <type_traits>
+
+CX_FP_CONTRACT_OFF_BEGIN
 
 namespace cx {
 namespace detail {
@@ -251,5 +254,7 @@ constexpr double cos(T x) {
 }
 
 } // namespace cx
+
+CX_FP_CONTRACT_OFF_END
 
 #endif // CX_STD_CX_TRIG_HPP
