@@ -24,6 +24,7 @@
 #define CX_STD_CX_SQRT_HPP
 
 #include "cx_exp.hpp"
+#include "cx_fp_contract.hpp"
 
 #include <limits>
 #include <type_traits>

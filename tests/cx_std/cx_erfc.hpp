@@ -25,6 +25,7 @@
 #define CX_STD_CX_ERFC_HPP
 
 #include "cx_exp.hpp"
+#include "cx_fp_contract.hpp"
 
 #include <cstddef>
 #include <limits>

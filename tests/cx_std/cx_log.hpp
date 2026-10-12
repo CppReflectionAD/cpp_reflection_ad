@@ -18,6 +18,7 @@
 #define CX_STD_CX_LOG_HPP
 
 #include "cx_exp.hpp"
+#include "cx_fp_contract.hpp"
 
 #include <cstddef>
 #include <limits>

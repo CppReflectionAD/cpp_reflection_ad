@@ -32,6 +32,7 @@
 #define CX_STD_CX_TRIG_HPP
 
 #include "cx_exp.hpp"
+#include "cx_fp_contract.hpp"
 
 #include <bit>
 #include <cstddef>
