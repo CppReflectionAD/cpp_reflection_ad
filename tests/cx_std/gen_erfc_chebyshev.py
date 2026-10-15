@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate cx_erfc.hpp's Chebyshev table.
 
-    uv run --with mpmath python tests/cx_std/gen_erfc_chebyshev.py
+    uv run --group scripts tests/cx_std/gen_erfc_chebyshev.py
 
 For x >= 0.5, cx::erfc computes erfc(x) = exp(-x^2) * g(x), with
 g(x) = exp(x^2) * erfc(x) smooth and slowly varying. g is fitted on the
@@ -29,8 +29,10 @@ def chebyshev(f, a, b, n):
     N = n + 1
     theta = [mpmath.pi * (j + mpmath.mpf(1) / 2) / N for j in range(N)]
     fs = [f((b - a) / 2 * mpmath.cos(t) + (a + b) / 2) for t in theta]
-    c = [2 * sum(fs[j] * mpmath.cos(k * theta[j]) for j in range(N)) / N
-         for k in range(N)]
+    c = [
+        2 * sum(fs[j] * mpmath.cos(k * theta[j]) for j in range(N)) / N
+        for k in range(N)
+    ]
     c[0] /= 2
     return c
 
@@ -62,11 +64,14 @@ def main():
     width = max(len(c) for c in pieces)
     print(f"inline constexpr std::size_t kErfcPieces = {len(pieces)};")
     print(f"inline constexpr std::size_t kErfcMaxTerms = {width};")
-    print("inline constexpr std::size_t erfc_terms[kErfcPieces] = {"
-          + ", ".join(str(len(c)) for c in pieces) + "};")
+    print(
+        "inline constexpr std::size_t erfc_terms[kErfcPieces] = {"
+        + ", ".join(str(len(c)) for c in pieces)
+        + "};"
+    )
     print("inline constexpr double erfc_chebyshev[kErfcPieces][kErfcMaxTerms] = {")
     for i, c in enumerate(pieces):
-        print(f"    // [{float(2.0 ** (i - 1))}, {float(2.0 ** i)}]")
+        print(f"    // [{float(2.0 ** (i - 1))}, {float(2.0**i)}]")
         print("    {" + ", ".join(repr(float(v)) for v in c) + "},")
     print("};")
 
