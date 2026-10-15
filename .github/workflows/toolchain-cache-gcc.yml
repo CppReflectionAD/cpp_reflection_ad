@@ -1,5 +1,8 @@
 # Restores the GCC toolchain from cache, building it on a miss.
 # Called by gcc_prebuilt_cache.yml so tests wait for the toolchain.
+# The cache key is the submodule commit plus a hash of the build script, so
+# edits to this file don't invalidate the cache. The build itself is in
+# .github/scripts/build-gcc-toolchain.sh.
 name: Build GCC Toolchain (Cache)
 
 on:
@@ -15,7 +18,9 @@ permissions:
 
 jobs:
   gcc:
-    runs-on: ubuntu-latest
+    # Pinned to match the test jobs in gcc_prebuilt_cache.yml: the cache key
+    # doesn't record the image, so both sides must run on the same one.
+    runs-on: ubuntu-24.04
     outputs:
       cache_key: ${{ steps.key.outputs.cache_key }}
 
@@ -34,7 +39,7 @@ jobs:
         run: |
           set -euo pipefail
           GCC_MIRROR_SHA="$(git rev-parse HEAD:gcc-mirror)"
-          BUILD_INPUT_HASH="$(sha256sum .github/workflows/toolchain-cache-gcc.yml | sha256sum | cut -d' ' -f1)"
+          BUILD_INPUT_HASH="$(sha256sum .github/scripts/build-gcc-toolchain.sh | cut -d' ' -f1)"
           CACHE_KEY="gcc-${{ runner.os }}-${{ runner.arch }}-${GCC_MIRROR_SHA:0:12}-${BUILD_INPUT_HASH:0:12}"
           echo "cache_key=${CACHE_KEY}" >> "$GITHUB_OUTPUT"
 
@@ -45,43 +50,9 @@ jobs:
           path: /opt/toolchain-gcc
           key: ${{ steps.key.outputs.cache_key }}
 
-      - name: Install gcc build dependencies
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential flex bison libgmp-dev libmpfr-dev \
-            libmpc-dev texinfo zlib1g-dev dejagnu python3 git
-
       - name: Build and install GCC into clean prefix
         if: steps.cache.outputs.cache-hit != 'true'
-        run: |
-          set -euo pipefail
-          PREFIX=/opt/toolchain-gcc
-          sudo mkdir -p "$PREFIX"
-          mkdir -p build/gcc-mirror
-
-          cd gcc-mirror
-          contrib/download_prerequisites
-
-          cd ../build/gcc-mirror
-          ../../gcc-mirror/configure \
-            --disable-bootstrap \
-            --disable-multilib \
-            --disable-nls \
-            --enable-languages=c,c++ \
-            "--prefix=$PREFIX"
-
-          make -j$(nproc)
-          sudo make install
-
-      - name: Strip GCC binaries
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: |
-          set -euo pipefail
-          PREFIX=/opt/toolchain-gcc
-          sudo find "$PREFIX" -type f \( -name "*.so*" -o -perm /111 \) \
-            -exec sh -c 'file "$1" | grep -q ELF && strip --strip-unneeded "$1"' _ {} \; 2>/dev/null || true
-          echo "Installed size: $(du -sh $PREFIX | cut -f1)"
+        run: .github/scripts/build-gcc-toolchain.sh gcc-mirror /opt/toolchain-gcc
 
       - name: Verify cached prefix
         run: |

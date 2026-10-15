@@ -30,6 +30,22 @@ if(_is_clang)
         -isystem "${_clang_root}/include/c++/v1"
     )
 
+    # Link and load the fork's libc++ rather than the system one, as
+    # run_tests.py does.
+    set(_reflect_link_flags
+        -stdlib=libc++
+        "-L${_clang_root}/lib"
+        "-Wl,-rpath,${_clang_root}/lib"
+    )
+    # On Linux the runtimes build puts libc++ in a per-target subdirectory.
+    file(GLOB _clang_target_lib_dirs LIST_DIRECTORIES true
+        "${_clang_root}/lib/*linux*")
+    foreach(_dir IN LISTS _clang_target_lib_dirs)
+        if(IS_DIRECTORY "${_dir}")
+            list(APPEND _reflect_link_flags "-L${_dir}" "-Wl,-rpath,${_dir}")
+        endif()
+    endforeach()
+
     if(APPLE)
         execute_process(COMMAND xcrun --show-sdk-path
             OUTPUT_VARIABLE _sdk OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
@@ -53,6 +69,7 @@ function(add_reflect_test name source)
         -std=c++2c
         ${_reflect_flags}
     )
+    target_link_options(${name} PRIVATE ${_reflect_link_flags})
     target_include_directories(${name} PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}"
         "${CMAKE_SOURCE_DIR}/test_simple"
