@@ -18,7 +18,9 @@ permissions:
 
 jobs:
   gcc:
-    runs-on: ubuntu-latest
+    # Pinned to match the test jobs in gcc_prebuilt_cache.yml: the cache key
+    # doesn't record the image, so both sides must run on the same one.
+    runs-on: ubuntu-24.04
     outputs:
       cache_key: ${{ steps.key.outputs.cache_key }}
 
