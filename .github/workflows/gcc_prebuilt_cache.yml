@@ -11,6 +11,12 @@ on:
 permissions:
   contents: read
 
+# A new push to a PR cancels that PR's previous run. Runs on main are never
+# cancelled, so a toolchain build there always finishes and saves its cache.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   toolchain:
     uses: ./.github/workflows/toolchain-cache-gcc.yml
@@ -18,7 +24,9 @@ jobs:
   test:
     name: test (${{ matrix.build_type }})
     needs: toolchain
-    runs-on: ubuntu-latest
+    # Pinned to match toolchain-cache-gcc.yml, which builds the toolchain
+    # restored here; the cache key doesn't record the image.
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:

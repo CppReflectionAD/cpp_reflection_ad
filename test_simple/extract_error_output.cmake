@@ -92,4 +92,3 @@ message(STATUS "Compiler: ${COMPILER}")
 message(STATUS "Next: review the changes, then stage them:")
 message(STATUS "  git diff ${EXPECTED_FILE}")
 message(STATUS "  git add ${EXPECTED_FILE}")
-
