@@ -1,5 +1,5 @@
-from sympy import *
 import mpmath
+from sympy import Symbol, erfc, lambdify, log, sqrt
 
 mpmath.mp.dps = 20
 

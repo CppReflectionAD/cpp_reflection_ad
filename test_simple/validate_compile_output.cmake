@@ -87,4 +87,3 @@ To update the baseline (rebase):
 endif()
 
 message(STATUS "✓ ${TARGET_NAME}: Compilation failed as expected")
-

@@ -764,7 +764,7 @@ def build_gcc(spec: CompilerSpec, args: argparse.Namespace) -> None:
     build_result = run_command_streamed(build, cwd=spec.build_dir, verbose=args.verbose)
     require_success(build_result, "gcc build")
 
-    log(f"[gcc] installing...")
+    log("[gcc] installing...")
     install = ["make", "install"]
     install_result = run_command_streamed(
         install, cwd=spec.build_dir, verbose=args.verbose
@@ -1172,7 +1172,7 @@ def summarize(results: list[TestResult], ran_executables: bool) -> int:
         passes = sum(result.compile_ok and result.run_ok for result in compiler_results)
         overall_failures += compile_failures + run_failures
         summary = (
-            f"{compiler_name}: {passes} passed, " f"{compile_failures} compile failures"
+            f"{compiler_name}: {passes} passed, {compile_failures} compile failures"
         )
         if ran_executables:
             summary += f", {run_failures} runtime failures"
