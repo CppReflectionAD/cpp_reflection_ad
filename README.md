@@ -74,6 +74,17 @@ python3 run_tests.py --compiler clang --build-compilers --run-executables \
 
 Each demo prints its own `ALL CHECKS PASSED` / `ALL MATCH` on success.
 
+## Formatting and linting
+
+[pre-commit](https://pre-commit.com) checks formatting (clang-format 21 for C++, ruff for Python), lint and whitespace. CI runs the same hooks. Python tooling is managed by [uv](https://docs.astral.sh/uv/):
+
+```sh
+uv run pre-commit run --all-files   # check and fix everything
+uv run pre-commit install           # optional: run the hooks on every commit
+```
+
+The Python helper scripts' dependencies are in the `scripts` group, e.g. `uv run --group scripts tests/black_scholes_sympy_value_check.py`.
+
 ## How to Debug with VSCode
 
 1. Install these extensions (or verify they are already installed):
