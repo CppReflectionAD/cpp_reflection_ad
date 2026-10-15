@@ -1,29 +1,23 @@
 # Tests against the clang toolchain cached by toolchain-cache-clang.yml.
+# The toolchain job restores the cache, or builds it on a miss, before tests run.
 name: Test Clang (Prebuilt Cache)
 
 on:
   push:
     branches: ["main"]
-    paths-ignore:
-      - "clang-p2996"
-      - ".github/workflows/toolchain-cache-clang.yml"
-  workflow_run:
-    workflows: ["Build Clang Toolchain (Cache)"]
-    types: [completed]
   pull_request:
-    paths-ignore:
-      - "clang-p2996"
-      - ".github/workflows/toolchain-cache-clang.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  toolchain:
+    uses: ./.github/workflows/toolchain-cache-clang.yml
+
   test:
     name: test (${{ matrix.build_type }})
-    if: ${{ github.event_name != 'workflow_run' ||
-      github.event.workflow_run.conclusion == 'success' }}
+    needs: toolchain
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -35,33 +29,13 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
-        with:
-          ref: ${{ github.event_name == 'workflow_run' &&
-            github.event.workflow_run.head_sha || github.sha }}
-
-      - name: Compute cache key
-        id: key
-        shell: bash
-        run: |
-          set -euo pipefail
-          CLANG_SHA="$(git rev-parse HEAD:clang-p2996)"
-          BUILD_INPUT_HASH="$(sha256sum .github/workflows/toolchain-cache-clang.yml | sha256sum | cut -d' ' -f1)"
-          CACHE_KEY="clang-${{ runner.os }}-${{ runner.arch }}-${CLANG_SHA:0:12}-${BUILD_INPUT_HASH:0:12}"
-          echo "cache_key=${CACHE_KEY}" >> "$GITHUB_OUTPUT"
 
       - name: Restore clang toolchain from cache
-        id: cache
-        uses: actions/cache@v6
+        uses: actions/cache/restore@v6
         with:
           path: /opt/toolchain-clang
-          key: ${{ steps.key.outputs.cache_key }}
-
-      - name: Fail fast on cache miss
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: |
-          echo "Clang toolchain not in cache: ${{ steps.key.outputs.cache_key }}"
-          echo "Run workflow 'Build Clang Toolchain (Cache)' first to populate the cache."
-          exit 1
+          key: ${{ needs.toolchain.outputs.cache_key }}
+          fail-on-cache-miss: true
 
       - name: Configure CMake
         run: |
