@@ -1,0 +1,28 @@
+# Python tooling for this repository: the lint/format gate and the helper
+# scripts' dependencies. It is not a Python package.
+#
+#   uv run pre-commit run --all-files                       # lint and format
+#   uv run --group scripts tests/black_scholes_sympy_value_check.py
+#
+# run_tests.py uses only the standard library and still runs as
+# `python3 run_tests.py`.
+
+[project]
+name = "cpp-reflection-ad-tools"
+version = "0.0.0"
+requires-python = ">=3.11"
+dependencies = []
+
+[dependency-groups]
+# Hook versions (ruff, clang-format, ...) are pinned by `rev` in
+# .pre-commit-config.yaml; this pins pre-commit itself.
+dev = ["pre-commit>=4.6.2"]
+scripts = ["sympy>=1.14.0", "mpmath>=1.3.0"]
+
+[tool.uv]
+package = false
+default-groups = ["dev"]
+
+[tool.ruff.lint]
+# Spelled out so that ruff upgrades don't change which rules apply.
+select = ["E4", "E7", "E9", "F", "I"]

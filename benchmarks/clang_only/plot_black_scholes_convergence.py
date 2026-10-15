@@ -5,7 +5,6 @@ import math
 import sys
 from pathlib import Path
 
-
 WIDTH = 1200
 HEIGHT = 900
 MARGIN_LEFT = 90
@@ -27,7 +26,7 @@ FINITE_DIFFERENCE_COLOR = "#17becf"
 
 
 def usage() -> str:
-    return "Usage: python plot_black_scholes_convergence.py " "[input.csv] [output.svg]"
+    return "Usage: python plot_black_scholes_convergence.py [input.csv] [output.svg]"
 
 
 def escape_xml(text: str) -> str:
