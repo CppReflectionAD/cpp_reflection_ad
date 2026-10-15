@@ -434,7 +434,7 @@ def clang_cxxflags(
             flags.extend([f"-L{sub}", f"-Wl,-rpath,{sub}"])
 
     if sys.platform == "darwin":
-        flags.extend(["-isysroot", macos_sdk_path(verbose)])
+        flags.extend(["-isysroot", macos_sdk_path(verbose), "-lunwind"])
     elif gcc_toolchain:
         flags.append(f"--gcc-toolchain={gcc_toolchain}")
 

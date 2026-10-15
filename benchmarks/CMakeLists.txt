@@ -49,6 +49,11 @@ if(_is_clang)
         if(_sdk)
             list(APPEND _reflect_flags -isysroot "${_sdk}")
         endif()
+        # The fork's libc++/libc++abi depend on @rpath/libunwind.1.dylib; ld
+        # treats that non-public indirect dylib as implicitly re-exported and
+        # warns when it can't tie it to a parent. Linking it directly avoids
+        # the warning.
+        list(APPEND _reflect_link_flags -lunwind)
     endif()
 elseif(_is_gcc)
     set(_reflect_flags -freflection -fconstexpr-ops-limit=96000000)
