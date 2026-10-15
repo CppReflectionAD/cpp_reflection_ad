@@ -25,6 +25,9 @@ GCC_ONLY_DIR = "gcc_only"
 # the error output to the .fail.txt baseline (see compile_check in
 # tests/CMakeLists.txt); this script only checks that compilation fails.
 STATIC_FAIL_DIR = "static_fail"
+# Tests under tests/known_gap/ need per-file flags and a .fail.txt comparison
+# that only CTest provides (see tests/CMakeLists.txt), so this script skips them.
+KNOWN_GAP_DIR = "known_gap"
 
 # The clang reflection fork is built from the clang-p2996 submodule (override
 # with --clang-source-dir / REFLECT_CLANG_SOURCE_DIR) into this repo's own
@@ -505,6 +508,8 @@ def is_test_applicable(test_file: Path, base_dir: Path, compiler_name: str) -> b
         return True
 
     top_level_dir = relative_path.parts[0]
+    if top_level_dir == KNOWN_GAP_DIR:
+        return False
     if top_level_dir == CLANG_ONLY_DIR:
         return compiler_name == "clang"
     if top_level_dir == GCC_ONLY_DIR:
