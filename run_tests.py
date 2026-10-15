@@ -742,6 +742,7 @@ def build_gcc(spec: CompilerSpec, args: argparse.Namespace) -> None:
 
     deps = ["contrib/download_prerequisites"]
     deps_result = run_command(deps, cwd=spec.source_dir, verbose=args.verbose)
+    require_success(deps_result, "gcc download_prerequisites")
 
     log("[gcc] configuring gcc...")
     configure = [
