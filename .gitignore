@@ -3,3 +3,8 @@
 .vscode
 build/
 **/.DS_Store
+# Python tooling (uv, pre-commit, ruff)
+.venv/
+__pycache__/
+*.py[cod]
+.ruff_cache/

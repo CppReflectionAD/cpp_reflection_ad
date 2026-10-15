@@ -94,4 +94,3 @@ function(run_check group filelist)
         add_test(NAME ${test_name} COMMAND ${test_name})
     endforeach()
 endfunction()
-
