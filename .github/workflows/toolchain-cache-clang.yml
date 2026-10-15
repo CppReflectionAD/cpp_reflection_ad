@@ -1,7 +1,8 @@
 # Restores the clang toolchain from cache, building it on a miss.
 # Called by clang_prebuilt_cache.yml so tests wait for the toolchain.
 # The cache key is the submodule commit plus a hash of the build script, so
-# edits to this file don't invalidate the cache.
+# edits to this file don't invalidate the cache. The build itself is in
+# .github/scripts/build-clang-toolchain.sh.
 name: Build Clang Toolchain (Cache)
 
 on:
