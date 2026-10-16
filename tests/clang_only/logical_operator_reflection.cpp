@@ -2,8 +2,8 @@
 //
 // clang only, because GCC classifies all three wrongly: see
 // tests/known_gap/gcc/logical_operator_reflection.cpp, which holds the same
-// asserts. When GCC fixes the gap, move this file to tests/ and delete that
-// one.
+// asserts. When GCC fixes the gap, move this file to tests/common/ and delete
+// that one.
 #include <meta>
 
 namespace m = std::meta;

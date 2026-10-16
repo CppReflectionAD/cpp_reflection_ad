@@ -4,13 +4,13 @@
 // is_binary_operator == true. For the logical operators, clang reports
 // is_binary_operator / is_unary_operator == true, but GCC reports false, even
 // though its expression_operator_of() and operands_of() already handle these
-// expressions (see tests/gcc_logical_operator_reflection.cpp).
+// expressions (see tests/common/gcc_logical_operator_reflection.cpp).
 //
 // tests/CMakeLists.txt expects all three static_asserts below to fail, with the
 // errors in logical_operator_reflection.fail.txt, so the test also fails if GCC
 // fixes only some of them. clang checks the same asserts in
 // tests/clang_only/logical_operator_reflection.cpp. When GCC fixes the gap,
-// move that file to tests/ and delete this one and its .fail.txt.
+// move that file to tests/common/ and delete this one and its .fail.txt.
 #include <meta>
 
 namespace m = std::meta;

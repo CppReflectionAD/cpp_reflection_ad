@@ -2,7 +2,7 @@
 # scripts' dependencies. It is not a Python package.
 #
 #   uv run pre-commit run --all-files                       # lint and format
-#   uv run --group scripts tests/black_scholes_sympy_value_check.py
+#   uv run --group scripts tools/black_scholes_sympy_value_check.py
 #
 # run_tests.py uses only the standard library and still runs as
 # `python3 run_tests.py`.

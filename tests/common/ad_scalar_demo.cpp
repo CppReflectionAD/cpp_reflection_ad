@@ -7,12 +7,12 @@
 
 #include <test_simple_include.hpp>
 
-#include "autograd.h"
-#include "forward_derivative.h"
-#include "higher_order_taylor_ad.h"
+#include <ad/autograd.h>
+#include <ad/forward_derivative.h>
+#include <ad/higher_order_taylor_ad.h>
 
-#include "recursive_higher_order_derivative.h"
-#include "reverse_derivative.h"
+#include <ad/recursive_higher_order_derivative.h>
+#include <ad/reverse_derivative.h>
 
 #include "functions/1-poly.h"
 #include "functions/2-trig.h"

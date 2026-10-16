@@ -62,12 +62,13 @@
 // Known limitations are listed in discontinuity_analysis.md, next to this
 // file.
 
-#include "../autograd.h"
-#include "../cx_std/cx_erfc.hpp"
-#include "../cx_std/cx_exp.hpp"
-#include "../cx_std/cx_log.hpp"
-#include "../cx_std/cx_sqrt.hpp"
-#include "../cx_std/cx_trig.hpp"
+#include <ad/autograd.h>
+#include <cx_std/cx_erfc.hpp>
+#include <cx_std/cx_exp.hpp>
+#include <cx_std/cx_log.hpp>
+#include <cx_std/cx_sqrt.hpp>
+#include <cx_std/cx_trig.hpp>
+
 #include <array>
 #include <bit>
 #include <cstddef>

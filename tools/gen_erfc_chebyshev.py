@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate cx_erfc.hpp's Chebyshev table.
 
-    uv run --group scripts tests/cx_std/gen_erfc_chebyshev.py
+    uv run --group scripts tools/gen_erfc_chebyshev.py
 
 For x >= 0.5, cx::erfc computes erfc(x) = exp(-x^2) * g(x), with
 g(x) = exp(x^2) * erfc(x) smooth and slowly varying. g is fitted on the

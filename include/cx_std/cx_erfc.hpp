@@ -19,7 +19,7 @@
 //
 // Special cases: NaN → NaN, +∞ → 0, -∞ → 2, 0 → 1.
 //
-// Accuracy: within a few ulp of std::erfc (see tests/cx_std/cx_std.t.cpp).
+// Accuracy: within a few ulp of std::erfc (see tests/common/cx_std.t.cpp).
 
 #ifndef CX_STD_CX_ERFC_HPP
 #define CX_STD_CX_ERFC_HPP
