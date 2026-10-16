@@ -12,7 +12,7 @@
 #include <cmath>
 #include <vector>
 
-namespace nn {
+namespace toy_tensor {
 
 struct Tensor { // row-major 2-D; scalars are 1x1
   int r = 1, c = 1;
@@ -118,6 +118,6 @@ inline Tensor loss(Tensor x, Tensor W1, Tensor b1, Tensor W2, Tensor b2) {
   return L;
 }
 
-} // namespace nn
+} // namespace toy_tensor
 
 #endif // REFLECT_DEMO_TENSOR_H

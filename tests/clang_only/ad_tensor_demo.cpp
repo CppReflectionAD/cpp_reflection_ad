@@ -14,14 +14,16 @@
 #include <cmath>
 #include <cstdio>
 
-static double loss_scalar(const nn::Tensor &x, const nn::Tensor &W1,
-                          const nn::Tensor &b1, const nn::Tensor &W2,
-                          const nn::Tensor &b2) {
-  return nn::loss(x, W1, b1, W2, b2).d[0];
+static double loss_scalar(const toy_tensor::Tensor &x,
+                          const toy_tensor::Tensor &W1,
+                          const toy_tensor::Tensor &b1,
+                          const toy_tensor::Tensor &W2,
+                          const toy_tensor::Tensor &b2) {
+  return toy_tensor::loss(x, W1, b1, W2, b2).d[0];
 }
 
 int main() {
-  using nn::Tensor;
+  using toy_tensor::Tensor;
   int B = 4, In = 3, H = 5, Out = 2;
   Tensor x(B, In), W1(In, H), b1(1, H), W2(H, Out), b2(1, Out);
   auto fill = [](Tensor &t, double s) {
@@ -35,8 +37,8 @@ int main() {
   fill(b2, 4.0);
 
   // Gradients w.r.t. parameters (indices 1..4), NOT data x (0).
-  auto grads =
-      ad::gradient_wrt<^^nn::loss, Tensor, 1, 2, 3, 4>(x, W1, b1, W2, b2);
+  auto grads = ad::gradient_wrt<^^toy_tensor::loss, Tensor, 1, 2, 3, 4>(
+      x, W1, b1, W2, b2);
 
   std::printf("=== reflection AD on a 1-hidden-layer MLP ===\n");
   std::printf("loss = %.6f   (batch=%d, in=%d, hidden=%d, out=%d)\n",
