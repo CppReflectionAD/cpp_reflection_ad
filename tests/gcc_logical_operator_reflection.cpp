@@ -6,6 +6,11 @@
 // even though GCC's expression_operator_of() and operands_of() already
 // handle these expressions correctly.
 //
+// This file checks what works on both compilers. The classification asserts
+// that fail on GCC are in tests/known_gap/gcc/logical_operator_reflection.cpp
+// (which expects them to fail) and tests/clang_only/
+// logical_operator_reflection.cpp (which expects them to pass).
+//
 // Build:
 //   g++     -std=c++2c -freflection -fsyntax-only
 //   gcc_logical_operator_reflection.cpp
@@ -13,8 +18,7 @@
 //           gcc_logical_operator_reflection.cpp
 //   (on macOS, also pass -isysroot "$(xcrun --show-sdk-path)" to clang)
 //
-// Expected: compiles cleanly. clang: OK. GCC: the three asserts marked
-// "FAILS on GCC" fire with "static assertion failed".
+// Expected: compiles cleanly on both compilers.
 
 #include <meta>
 
@@ -46,12 +50,7 @@ constexpr m::info NOT = return_expr(^^f_not);
 // Comparison: fine on both compilers.
 static_assert(m::is_binary_operator(CMP));
 
-// Logical operators: the classification is wrong on GCC.
-static_assert(m::is_binary_operator(OR));  // FAILS on GCC
-static_assert(m::is_binary_operator(AND)); // FAILS on GCC
-static_assert(m::is_unary_operator(NOT));  // FAILS on GCC
-
-// ...yet the operator and operands can already be queried on GCC.
+// Logical operators: the operator and operands can be queried on GCC too.
 static_assert(m::expression_operator_of(OR) == m::operators::op_pipe_pipe);
 static_assert(m::expression_operator_of(AND) ==
               m::operators::op_ampersand_ampersand);
