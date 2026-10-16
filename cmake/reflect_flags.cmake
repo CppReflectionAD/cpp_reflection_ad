@@ -87,6 +87,40 @@ else() # GCC
     endforeach()
 endif()
 
+# ---------------------------------------------------------------------------
+# Check that the compiler supports reflection, so that a wrong compiler gives
+# one message here instead of a wall of errors in the first test. The result
+# is cached for this compiler and flag set.
+# ---------------------------------------------------------------------------
+set(_probe_key "${CMAKE_CXX_COMPILER};${_reflect_flags};${_reflect_link_flags}")
+if(NOT "${_probe_key}" STREQUAL "${REFLECTION_AD_PROBED}")
+    try_compile(_reflection_ok
+        SOURCE_FROM_CONTENT reflection_probe.cpp [=[
+#include <meta>
+constexpr std::meta::info r = ^^int;
+static_assert(r == ^^int);
+int main() {}
+]=]
+        COMPILE_DEFINITIONS -std=c++2c ${_reflect_flags}
+        LINK_OPTIONS ${_reflect_link_flags}
+        OUTPUT_VARIABLE _probe_output)
+    if(NOT _reflection_ok)
+        string(REGEX MATCHALL "[^\n]*error[^\n]*" _probe_errors "${_probe_output}")
+        list(JOIN _probe_errors "\n  " _probe_errors)
+        message(FATAL_ERROR
+            "${CMAKE_CXX_COMPILER} can't compile a minimal reflection program "
+            "(#include <meta>, ^^int) with this project's flags.\n"
+            "This project needs the clang-p2996 or the GCC reflection fork. "
+            "Build both with `python3 run_tests.py --build-compilers` (into "
+            "build/clang-p2996/bin/clang++ and build/gcc-p2996/artifacts/bin/g++), "
+            "then configure a fresh build directory with "
+            "-DCMAKE_CXX_COMPILER=<one of them>.\n"
+            "Compiler errors:\n  ${_probe_errors}")
+    endif()
+    set(REFLECTION_AD_PROBED "${_probe_key}" CACHE INTERNAL
+        "Compiler and flags that passed the reflection probe")
+endif()
+
 add_library(reflection_ad_flags INTERFACE)
 add_library(reflection_ad::flags ALIAS reflection_ad_flags)
 target_compile_options(reflection_ad_flags INTERFACE
