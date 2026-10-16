@@ -3,6 +3,37 @@
 Proof of concept for automatic differentiation of C++ code using static reflection. Based on (and hoping to extend) the C++ reflection proposal P2996R13:
 https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2025/p2996r13.html
 
+## Try it on Compiler Explorer (godbolt)
+
+The `expr-reflect` clang fork this repo builds on
+([siqiyyyy/clang-p2996, branch `expr-reflect`](https://github.com/siqiyyyy/clang-p2996/tree/expr-reflect))
+is available on [Compiler Explorer](https://godbolt.org/) as
+**x86-64 clang (expr-reflect)**, so you can try expression reflection and this
+library in the browser without building a compiler. It is rebuilt nightly from
+the tip of the `expr-reflect` branch, the same way Bloomberg's P2996 fork is
+offered as "x86-64 clang (reflection - C++26)".
+
+Example: <https://godbolt.org/z/z3nsh4GcW>
+
+To use it:
+
+1. Open <https://godbolt.org/>, choose C++ as the language, and pick
+   **x86-64 clang (expr-reflect)** from the compiler list (it is in the
+   experimental Clang x86-64 group; type `expr-reflect` in the compiler picker
+   to find it).
+2. The default options are
+   `-std=c++26 -freflection -fexpansion-statements -stdlib=libc++`.
+   Code from this repo also uses `std::meta::parameters_of`, so add
+   `-fparameter-reflection` to the compiler options.
+3. Paste in your code. The library headers are not available on Compiler
+   Explorer, so paste the headers you need (for example `tests/autograd.h`)
+   into the source, above your own code.
+4. To run the program as well as compile it, enable "Execute the code" in the
+   compiler pane's Output menu (or add an execution pane).
+
+If you use Boost, pick Boost 1.84 or older from the Libraries menu for now;
+newer Boost versions are not yet packaged for this compiler.
+
 ## Tests
 
 Reflection-AD tests live under `tests/`:
@@ -35,14 +66,20 @@ trip a `static_assert`); they pass only when compilation fails.
 `run_tests.py` only checks that they fail to compile; `ctest` also compares the
 errors with the `.fail.txt` baseline next to each test (see
 [test_simple/README.md](test_simple/README.md)).
+Tests under `tests/known_gap/{clang,gcc}/` record a known bug or missing
+feature in that compiler's reflection fork: code it should accept but rejects.
+Only `ctest` runs them, for that compiler, against their `.fail.txt`, so a test
+fails once the gap is fixed (the file compiles); then move it into the normal
+test tree. `run_tests.py` skips them.
 
 The repo is **self-contained**: `--build-compilers` builds clang from its own
 `clang-p2996` submodule into `build/` — no externally pre-built compiler needed.
 It checks out the submodule, builds clang (host `clang` + `lld`), builds the
 Darwin `LTO` target as well on macOS so `libLTO.dylib` is present for the local
-toolchain driver, builds the `libc++`/`libc++abi`/`libunwind` runtimes with that
-clang, and syncs the fork's `<meta>` header. Host prerequisites: `git`, `cmake`,
-`ninja`, host `clang`/`clang++`, `ld.lld`.
+toolchain driver, builds the `libc++`/`libc++abi` runtimes (plus `libunwind`
+except on macOS, where the system unwinder is used) with that clang, and syncs
+the fork's `<meta>` header. Host prerequisites: `git`, `cmake`, `ninja`, host
+`clang`/`clang++`, `ld.lld`.
 
 ```bash
 # one-time: build clang + runtimes into build/clang-p2996 (slow — builds LLVM)
