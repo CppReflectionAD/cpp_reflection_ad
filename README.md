@@ -3,6 +3,37 @@
 Proof of concept for automatic differentiation of C++ code using static reflection. Based on (and hoping to extend) the C++ reflection proposal P2996R13:
 https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2025/p2996r13.html
 
+## Try it on Compiler Explorer (godbolt)
+
+The `expr-reflect` clang fork this repo builds on
+([siqiyyyy/clang-p2996, branch `expr-reflect`](https://github.com/siqiyyyy/clang-p2996/tree/expr-reflect))
+is available on [Compiler Explorer](https://godbolt.org/) as
+**x86-64 clang (expr-reflect)**, so you can try expression reflection and this
+library in the browser without building a compiler. It is rebuilt nightly from
+the tip of the `expr-reflect` branch, the same way Bloomberg's P2996 fork is
+offered as "x86-64 clang (reflection - C++26)".
+
+Example: <https://godbolt.org/z/z3nsh4GcW>
+
+To use it:
+
+1. Open <https://godbolt.org/>, choose C++ as the language, and pick
+   **x86-64 clang (expr-reflect)** from the compiler list (it is in the
+   experimental Clang x86-64 group; type `expr-reflect` in the compiler picker
+   to find it).
+2. The default options are
+   `-std=c++26 -freflection -fexpansion-statements -stdlib=libc++`.
+   Code from this repo also uses `std::meta::parameters_of`, so add
+   `-fparameter-reflection` to the compiler options.
+3. Paste in your code. The library headers are not available on Compiler
+   Explorer, so paste the headers you need (for example `tests/autograd.h`)
+   into the source, above your own code.
+4. To run the program as well as compile it, enable "Execute the code" in the
+   compiler pane's Output menu (or add an execution pane).
+
+If you use Boost, pick Boost 1.84 or older from the Libraries menu for now;
+newer Boost versions are not yet packaged for this compiler.
+
 ## Tests
 
 Reflection-AD tests live under `tests/`:
