@@ -26,8 +26,10 @@ function(add_reflect_benchmark name source)
     add_executable(${name} ${source})
     target_link_libraries(${name} PRIVATE
         reflection_ad::ad
+        reflection_ad::warnings
         reflection_ad_benchmark_flags
     )
+    set_target_properties(${name} PROPERTIES COMPILE_WARNING_AS_ERROR ON)
     # The Black-Scholes model (mc_sim/) is shared with the tests.
     target_include_directories(${name} PRIVATE "${CMAKE_SOURCE_DIR}/tests/fixtures")
     # Intentionally no add_test() — benchmarks are run manually.

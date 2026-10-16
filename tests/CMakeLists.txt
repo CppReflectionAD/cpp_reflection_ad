@@ -15,7 +15,8 @@ include_directories(
 # ---------------------------------------------------------------------------
 function(add_reflect_test name source)
     add_executable(${name} ${source})
-    target_link_libraries(${name} PRIVATE reflection_ad::ad)
+    target_link_libraries(${name} PRIVATE reflection_ad::ad reflection_ad::warnings)
+    set_target_properties(${name} PROPERTIES COMPILE_WARNING_AS_ERROR ON)
     add_test(NAME ${name} COMMAND ${name})
 endfunction()
 

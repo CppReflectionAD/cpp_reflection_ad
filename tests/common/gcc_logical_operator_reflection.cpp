@@ -12,9 +12,9 @@
 // logical_operator_reflection.cpp (which expects them to pass).
 //
 // Build:
-//   g++     -std=c++2c -freflection -fsyntax-only -I ../fixtures \
+//   g++     -std=c++2c -freflection -fsyntax-only -I ../fixtures
 //           gcc_logical_operator_reflection.cpp
-//   clang++ -std=c++26 -freflection-latest -stdlib=libc++ -fsyntax-only \
+//   clang++ -std=c++26 -freflection-latest -stdlib=libc++ -fsyntax-only
 //           -I ../fixtures gcc_logical_operator_reflection.cpp
 //   (on macOS, also pass -isysroot "$(xcrun --show-sdk-path)" to clang)
 //
