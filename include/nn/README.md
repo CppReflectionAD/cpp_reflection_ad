@@ -160,10 +160,11 @@ Clang:
 
 GCC:
 - **A class with a non-trivial destructor (e.g. `std::vector` storage) is
-  unusable.** A call returning one is reflected as an `AGGR_INIT_EXPR`-like
-  construct with cleanups, and returns go missing. This is likely why the older
-  `include/ad/clang_only/` tensor prototype is Clang-only. Fixed-size trivially
-  copyable types avoid it.
+  unusable.** The `return` statement goes missing from `statements_of`, both
+  after a local of such a type and in a body that is just `return make(x);`.
+  See [tests/known_gap/gcc/nontrivial_destructor_reflection.cpp](../../tests/known_gap/gcc/nontrivial_destructor_reflection.cpp).
+  This is likely why the older `include/ad/clang_only/` tensor prototype is
+  Clang-only. Fixed-size trivially copyable types avoid it.
 - Binding to `const T&` shows as `cast(&x)`. A temporary or return slot is
   `construct(<unnamed var>, init)`. `strip()` in autodiff.hpp peels both.
 - **Each declaration statement appears twice** in `statements_of`. The engine
