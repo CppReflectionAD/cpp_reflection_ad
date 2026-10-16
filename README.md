@@ -72,9 +72,10 @@ which the library targets carry, so every test and benchmark gets it from there.
 
 ## Test Runner
 
-`run_tests.py` is the one command for building and testing, used the same way
-locally and in CI. It is a thin driver over the [CMake presets](#building-with-cmake-presets):
-for each selected compiler (`--compiler clang`, `gcc` or `both`, the default)
+`run_tests.py` is the one command for building and testing locally. It is a
+thin driver over the [CMake presets](#building-with-cmake-presets); CI calls
+the presets directly.
+For each selected compiler (`--compiler clang`, `gcc` or `both`, the default)
 and build type (`--build-type release`, the default, `debug`, `relwithdebinfo`,
 or `all` for each in turn) it configures the preset (`clang-release`, ...) with
 that compiler, builds, and runs `ctest`, then prints a summary. Everything else
@@ -112,7 +113,7 @@ python3 run_tests.py --compiler clang --build-compilers
 # build and run every test (Release; the clang root defaults to build/clang-p2996)
 python3 run_tests.py --compiler clang
 
-# every build type, both compilers: what CI checks
+# every build type, both compilers: the same presets CI runs
 python3 run_tests.py --build-type all
 
 # a single test, by ctest name or by path under tests/
