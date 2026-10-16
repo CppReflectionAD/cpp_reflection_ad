@@ -100,7 +100,7 @@ python3 run_tests.py --compiler clang --build-compilers
 python3 run_tests.py --compiler clang --run-executables
 
 # a single test; --verbose prints the exact compile commands
-python3 run_tests.py --compiler clang --tests 'ad_scalar_demo.cpp' --run-executables
+python3 run_tests.py --compiler clang --tests 'common/ad_scalar_demo.cpp' --run-executables
 
 # a single benchmark (ITERATIONS=... tunes the workload)
 ITERATIONS=1000000 python3 run_tests.py --compiler clang --benchmarks 'black_scholes_timing.cpp' --run-executables

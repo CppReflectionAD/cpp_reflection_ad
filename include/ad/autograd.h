@@ -114,14 +114,14 @@ inline constexpr std::size_t UNGUARDED = static_cast<std::size_t>(-1);
 // reflection, not its name, so a same-named function in another namespace -- or
 // a different overload -- is a different key and does not collide. Register a
 // vocabulary with:
-//   template <> struct ad::primitive<^^nn::relu> {
+//   template <> struct ad::primitive<^^toy_tensor::relu> {
 //     static constexpr ad::OpKind op = ad::OpKind::Relu;
 //   };
 template <info F> struct primitive; // declared, never defined
 
 // `^^f` is ill-formed when `f` names an overload set, so a specific overload is
 // selected by signature:
-//   template <> struct ad::primitive<ad::overload_of(^^nn, "sum",
+//   template <> struct ad::primitive<ad::overload_of(^^toy_tensor, "sum",
 //   ^^Tensor(const Tensor &))>
 consteval info overload_of(info scope, std::string_view name, info fnType) {
   for (info mem : m::members_of(scope, m::access_context::current()))
