@@ -1,7 +1,9 @@
 === GCC ===
-tests/known_gap/gcc/nontrivial_destructor_reflection.cpp:54:25: error: static assertion failed: no return statement after a local with a destructor
-   54 | static_assert(has_return(^^local_then_return),
-      |               ~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~~
-tests/known_gap/gcc/nontrivial_destructor_reflection.cpp:56:29: error: static assertion failed: `return make(x);` is not a return of a function call
-   56 | static_assert(returns_a_call(^^return_call),
-      |               ~~~~~~~~~~~~~~^~~~~~~~~~~~~~~
+tests/known_gap/gcc/nontrivial_destructor_reflection.cpp:65:25: error: non-constant condition for static assertion
+   65 | static_assert(has_return(^^d_local_then_return));
+      |               ~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~
+tests/known_gap/gcc/nontrivial_destructor_reflection.cpp:65:25: error: uncaught exception '(const char*)"no return statement"'
+tests/known_gap/gcc/nontrivial_destructor_reflection.cpp:66:34: error: non-constant condition for static assertion
+   66 | static_assert(m::is_function_call(return_expr(^^d_return_call)),
+      |               ~~~~~~~~~~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+tests/known_gap/gcc/nontrivial_destructor_reflection.cpp:66:34: error: uncaught exception '(const char*)"no return statement"'

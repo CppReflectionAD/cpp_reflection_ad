@@ -12,27 +12,36 @@ says which compilers it runs on and what it checks:
 | `known_gap/clang/`, `known_gap/gcc/` | Code a compiler fork **should** accept but can't yet (a bug or missing feature in the fork) | it fails to compile on that compiler with the errors in its `.fail.txt` |
 
 `fixtures/` is not a test directory. It holds headers that tests (and
-benchmarks) share: the functions to differentiate (`functions/`) and the
-Black-Scholes Monte Carlo model (`mc_sim/`). Include them as
+benchmarks) share: the functions to differentiate (`functions/`), the
+Black-Scholes Monte Carlo model (`mc_sim/`), and helpers for tests that inspect
+reflected function bodies (`reflection/`). Include them as
 `"functions/1-poly.h"` or `"mc_sim/black_scholes.hpp"`.
 
 ## Adding a test
 
 - Add a `.cpp` file to the right directory. There is nothing to register:
   `CMakeLists.txt` finds it (re-run CMake to pick it up), and so does
-  `run_tests.py`, except that it skips `known_gap/` and only checks that a
+  `run_tests.py`, except that it skips `known_gap/` (but see
+  `TEST-PASSES-ON` below) and only checks that a
   `static_fail/` test fails to compile; the `.fail.txt` comparison is `ctest`
   only. A `.cpp` anywhere else under `tests/` stops the configure.
 - Include the engine by its path under `include/`, e.g.
   `#include <ad/autograd.h>`, and the checks from `test_simple_include.hpp`
   (`EXPECT_EQUAL`, `EXPECT_NEAR_REL`, ...).
 - The ctest name is the file name up to its first `.` (`cx_std.t.cpp` is
-  `cx_std`), so it must be unique across `common/`, `clang_only/` and
-  `gcc_only/`.
+  `cx_std`), so it must be unique across `common/`, `clang_only/`,
+  `gcc_only/` and `known_gap/`.
 - A `static_fail/` or `known_gap/` test needs a `.fail.txt` snapshot of its
   expected errors; generate it with the `rebase-...` target. See
   [test_simple/README.md](../test_simple/README.md).
 
+If the other compiler already accepts a `known_gap/` test, don't copy it into
+`*_only/` for that compiler. Put `// TEST-PASSES-ON: clang` (or `gcc`) in the
+first 10 lines instead: both `ctest` and `run_tests.py` then build and run it
+as an ordinary test on that compiler, so one file checks the same asserts on
+both. See `known_gap/gcc/nontrivial_destructor_reflection.cpp`.
+
 When a known gap is fixed, the `known_gap/` test starts failing (the file
 compiles). Move the file to `common/` or the right `*_only/` directory, turn
-its expected failures into checks, and delete its `.fail.txt`.
+its expected failures into checks, drop any `TEST-PASSES-ON` line, and delete
+its `.fail.txt`.
