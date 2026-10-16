@@ -67,6 +67,15 @@ endif()
 set_source_files_properties(known_gap/gcc/ubsan_reflection_repro.cpp
     PROPERTIES COMPILE_OPTIONS -fsanitize=float-divide-by-zero)
 
+# GCC's statements_of() for this file's d_return_call depends on the flags:
+# optimization (any -O but -O0) together with -g turns the gap's <init_expr>
+# back into a return statement. Appending -O0 pins the result its .fail.txt
+# records, whatever the build type. clang builds it with the usual flags.
+if(_is_gcc)
+    set_source_files_properties(known_gap/gcc/nontrivial_destructor_reflection.cpp
+        PROPERTIES COMPILE_OPTIONS -O0)
+endif()
+
 foreach(_src IN LISTS _common)
     get_filename_component(_name "${_src}" NAME_WE)
     add_reflect_test(${_name} "${_src}")

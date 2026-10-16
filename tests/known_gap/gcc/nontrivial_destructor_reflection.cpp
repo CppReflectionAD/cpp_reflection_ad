@@ -17,6 +17,11 @@
 // call, even for the trivially destructible type, so once it finds the
 // returns, the second gap assert may still fail, with a different error.
 //
+// What GCC reports for d_return_call also depends on the flags: with
+// optimization and -g together (e.g. RelWithDebInfo's -O2 -g) it does find
+// the return, as a construct like make_t's. tests/CMakeLists.txt appends -O0
+// on GCC so the result, and the .fail.txt, don't depend on the build type.
+//
 // tests/CMakeLists.txt builds this file as an ordinary test on clang (see
 // TEST-PASSES-ON above). On GCC it expects both gap asserts to fail, with the
 // errors in nontrivial_destructor_reflection.fail.txt, so the test also fails
