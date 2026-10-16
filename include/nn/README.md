@@ -3,7 +3,7 @@
 A header-only library that differentiates tensor-level C++ (a small
 multilayer perceptron, or MLP) in reverse mode. It reflects the bodies of
 ordinary functions with the statement/expression reflection proposed in
-`Reflecting Function Bodies_ Expression and Statement Introspection.md`.
+*Reflecting Function Bodies: Expression and Statement Introspection*.
 
 ```cpp
 #include <nn/nn.hpp>
@@ -104,14 +104,14 @@ Code calling primitives must be straight-line. That is the split between
 primitive has a hand-written VJP", which is the same design as PyTorch / JAX
 (Python libraries) at the op level.
 
-## What we established in the discussion (context for the paper, adv2.md §2.1)
+## Design notes
 
 - **Feed-forward networks are straight-line at the tensor level.** For each
   operation, z = Wx gives W̄ += z̄ xᵀ and x̄ += Wᵀ z̄. A bias add gives
   b̄ += z̄, ReLU gives a mask, and MSE gives ȳ = 2(y − t)/n. The proposal's
   current surface (declarations, return, operators, calls, `callee_of`,
   `body_of`) is enough for this. The test demonstrates it.
-- **Comparison with Python frameworks (keep honest in the paper):**
+- **Comparison with Python frameworks:**
   - PyTorch autograd is an operator-overloading tape that is rebuilt on every
     call; it is not tracing.
   - `torch.compile`/TorchDynamo analyses bytecode, with graph breaks.
@@ -137,7 +137,7 @@ primitive has a hand-written VJP", which is the same design as PyTorch / JAX
   - *No `type_of(expr)`.* See "Types" above.
   - *No expression splicing / code injection.* Codegen uses the existing
     splices (`[:fn:]`, `[:value:]`) plus `template for` over the DAG.
-- **Proof-of-concept ladder:**
+- **Proof-of-concept milestones:**
   1. dense + MSE, checked against finite differences — **done**;
   2. 2-layer MLP on XOR — **done**;
   3. depth fixed by a template;
@@ -145,12 +145,12 @@ primitive has a hand-written VJP", which is the same design as PyTorch / JAX
      glue works (`regularised` in the test), but scalar `<cmath>` calls are not
      primitives here yet; see next steps.
 
-## Compiler notes (found while building this)
+## Compiler notes
 
 Both forks:
 - An **overloaded operator is `is_function_call`, not `is_binary_operator`**.
-  The proposal (§4.2) says `a+b` classifies as an operator, so this
-  disagreement is worth raising.
+  The proposal (§4.2) says `a+b` classifies as an operator, so both
+  implementations differ from the proposal here.
 - `operands_of(call)` is `[callee, args...]`.
 - `type_of` on an expression is an error.
 
@@ -175,13 +175,12 @@ GCC:
   `vjp<^^nn::matvec>`. Comparing the two specializations even causes an
   internal compiler error (ICE): "canonical types differ for identical types".
   The workaround is `nn::ad::key()`, which normalises via `members_of(parent)`
-  and must be used when registering. Candidate for a `tests/known_gap/gcc/`
-  test.
+  and must be used when registering.
 - `expression_of` / `is_expression_statement` are absent.
 
-## GPU: the way forward (not implemented; current builds are CPU-only)
+## GPU: possible directions (not implemented; current builds are CPU-only)
 
-Current setup: macOS AArch64. The Clang fork is built with
+The current builds target macOS AArch64. The Clang fork is built with
 `LLVM_TARGETS_TO_BUILD=AArch64` (no NVPTX). GCC is configured for
 aarch64-apple-darwin without offload targets. macOS has no CUDA.
 
@@ -208,14 +207,13 @@ aarch64-apple-darwin without offload targets. macOS has no CUDA.
      `--enable-offload-targets`, on Linux. Generated code could put
      `#pragma omp target` loops inside primitives. *Unverified:* whether
      reflection-generated code survives into the offload compilation (the
-     "lowered IR goes to the offload compiler" assumption). Test this before
-     claiming it.
+     "lowered IR goes to the offload compiler" assumption).
 4. Fusion at reflection time is the interesting research angle. The whole
    DAG is known at compile time, so adjacent elementwise primitives
    (`add` → `relu`) could be merged into one generated loop or kernel. That is
    what `torch.compile` does at run time.
 
-## Status and next steps (pick up here)
+## Status and next steps
 
 Done:
 - the library;
@@ -226,21 +224,17 @@ Done:
   assignment, fails the test.
 
 Next, roughly in order:
-1. **Template-depth MLP** (ladder step 3), e.g. `mlp<Sizes...>` recursing
+1. **Template-depth MLP** (milestone 3), e.g. `mlp<Sizes...>` recursing
    through a layer template with `if constexpr`. Check how discarded branches
    reflect on both compilers.
 2. **Scalar `<cmath>` primitives** (`exp`, `log`, `tanh`, ...) for mixing with
    scalar models. Reuse the probe trick from `include/ad/autograd.h`:
    `^^std::exp` names an overload set, so recover the callee from a one-line
-   probe function. Then a Black-Scholes-style model with a NN term (ladder
-   step 4).
+   probe function. Then a Black-Scholes-style model with a NN term
+   (milestone 4).
 3. **Batched data**: `Mat<B, In>` inputs with a row-broadcast bias primitive,
    instead of one inlined copy per sample.
 4. More ops: `tanh`, softmax + cross-entropy (one fused primitive, for
    stability), maybe convolution as a primitive.
 5. A `known_gap/gcc` test for the registry-identity bug (see compiler notes).
-6. Paper (adv2.md): the "(find examples)" placeholder could cite this. The
-   matrix-level VJP argument is that rules are per tensor op, so reflection
-   only needs the straight-line tensor program. Also raise the
-   overloaded-operator classification finding.
-7. GPU route 1 on a Linux + CUDA machine, then the Clang+NVPTX rebuild.
+6. GPU route 1 on a Linux + CUDA machine, then the Clang+NVPTX rebuild.
