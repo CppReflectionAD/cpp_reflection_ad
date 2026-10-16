@@ -89,41 +89,42 @@ inline double predict(const Mat<H, 2> &W1, const Vec<H> &b1,
 // The reflected DAG, checked at compile time.
 // ---------------------------------------------------------------------------
 
-namespace ad = nn::ad;
+namespace nad = nn::ad;
 
-template <ad::Kind K>
-consteval std::size_t count_live(std::span<const ad::Node> tape,
+template <nad::Kind K>
+consteval std::size_t count_live(std::span<const nad::Node> tape,
                                  bool varied_only = false) {
   std::size_t n = 0;
-  for (const ad::Node &node : tape)
+  for (const nad::Node &node : tape)
     n += node.kind == K && node.live && (node.varied || !varied_only);
   return n;
 }
 
 // Seven primitive calls: matvec, add, relu, matvec, add, sigmoid, mse. The
 // operators and dense_relu were inlined, so none of them is a call node.
-constexpr auto mlp_all = ad::tape<^^model::mlp_loss, ad::mask_of<0, 1, 2, 3>>;
-static_assert(count_live<ad::Kind::Call>(mlp_all) == 7);
-static_assert(count_live<ad::Kind::Call>(mlp_all, true) == 7);
+constexpr auto mlp_all = nad::tape<^^model::mlp_loss, nad::mask_of<0, 1, 2, 3>>;
+static_assert(count_live<nad::Kind::Call>(mlp_all) == 7);
+static_assert(count_live<nad::Kind::Call>(mlp_all, true) == 7);
 // The data (x, t) are inputs but not differentiated.
 static_assert(mlp_all[0].varied && mlp_all[3].varied);
 static_assert(!mlp_all[4].varied && !mlp_all[5].varied);
 
 // Differentiating the output layer only: the hidden layer's three calls are
 // not varied, so the reverse sweep skips them.
-constexpr auto mlp_out = ad::tape<^^model::mlp_loss, ad::mask_of<2, 3>>;
-static_assert(count_live<ad::Kind::Call>(mlp_out, true) == 4);
+constexpr auto mlp_out = nad::tape<^^model::mlp_loss, nad::mask_of<2, 3>>;
+static_assert(count_live<nad::Kind::Call>(mlp_out, true) == 4);
 
 // dense_mse's matvec, add, mse, then dot; `sum(b)` is dead. (`double four =
 // 4` is a Convert node on Clang; GCC folds it to 4.0 before reflection sees
 // it.)
-constexpr auto reg = ad::tape<^^model::regularised, ad::mask_of<0, 1, 2>>;
-static_assert(count_live<ad::Kind::Call>(reg) == 4);
-static_assert(count_live<ad::Kind::Neg>(reg) == 1);
+constexpr auto reg = nad::tape<^^model::regularised, nad::mask_of<0, 1, 2>>;
+static_assert(count_live<nad::Kind::Call>(reg) == 4);
+static_assert(count_live<nad::Kind::Neg>(reg) == 1);
 
 // Four inlined copies of the MLP.
-constexpr auto xor_tape = ad::tape<^^model::xor_loss, ad::mask_of<0, 1, 2, 3>>;
-static_assert(count_live<ad::Kind::Call>(xor_tape) == 4 * 7);
+constexpr auto xor_tape =
+    nad::tape<^^model::xor_loss, nad::mask_of<0, 1, 2, 3>>;
+static_assert(count_live<nad::Kind::Call>(xor_tape) == 4 * 7);
 
 // ---------------------------------------------------------------------------
 // Run time.
@@ -166,7 +167,7 @@ void test_dense_mse() {
   const auto t = filled_with<Vec<2>>(0.4, 1.0);
 
   // Parameters and, for once, the input too (a saliency map).
-  auto [L, g] = ad::value_and_grad<^^model::dense_mse, 0, 1, 2>(W, b, x, t);
+  auto [L, g] = nad::value_and_grad<^^model::dense_mse, 0, 1, 2>(W, b, x, t);
   const auto &[gW, gb, gx] = g;
 
   EXPECT_EQUAL(L, model::dense_mse(W, b, x, t));
@@ -190,7 +191,7 @@ void test_mlp() {
   const Vec<1> t{{1.0}};
 
   auto [L, g] =
-      ad::value_and_grad<^^model::mlp_loss, 0, 1, 2, 3>(W1, b1, W2, b2, x, t);
+      nad::value_and_grad<^^model::mlp_loss, 0, 1, 2, 3>(W1, b1, W2, b2, x, t);
   const auto &[gW1, gb1, gW2, gb2] = g;
 
   EXPECT_EQUAL(L, model::mlp_loss(W1, b1, W2, b2, x, t));
@@ -201,7 +202,7 @@ void test_mlp() {
   expect_matches_fd<3>(model::mlp_loss, args, gb2);
 
   // Fewer parameters, same values for those asked.
-  auto [gW2_only] = ad::grad<^^model::mlp_loss, 2>(W1, b1, W2, b2, x, t);
+  auto [gW2_only] = nad::grad<^^model::mlp_loss, 2>(W1, b1, W2, b2, x, t);
   for (std::size_t i = 0; i < H; ++i)
     EXPECT_EQUAL(gW2_only.d[i], gW2.d[i]);
 }
@@ -212,7 +213,7 @@ void test_regularised() {
   const auto x = filled_with<Vec<3>>(0.7, 1.0);
   const auto t = filled_with<Vec<2>>(0.8, 1.0);
 
-  auto [L, g] = ad::value_and_grad<^^model::regularised, 0, 1>(W, b, x, t);
+  auto [L, g] = nad::value_and_grad<^^model::regularised, 0, 1>(W, b, x, t);
   const auto &[gW, gb] = g;
 
   EXPECT_NEAR_ABS(L, model::regularised(W, b, x, t), 1e-15);
@@ -230,7 +231,7 @@ void test_xor_training() {
   // The batch gradient: four inlined MLPs sharing the parameters.
   {
     auto [L, g] =
-        ad::value_and_grad<^^model::xor_loss, 0, 1, 2, 3>(W1, b1, W2, b2);
+        nad::value_and_grad<^^model::xor_loss, 0, 1, 2, 3>(W1, b1, W2, b2);
     const auto &[gW1, gb1, gW2, gb2] = g;
     EXPECT_EQUAL(L, model::xor_loss(W1, b1, W2, b2));
     const auto args = std::tuple{W1, b1, W2, b2};
@@ -245,7 +246,7 @@ void test_xor_training() {
   constexpr double lr = 2.0;
   for (int step = 0; step < 2000; ++step) {
     auto [gW1, gb1, gW2, gb2] =
-        ad::grad<^^model::xor_loss, 0, 1, 2, 3>(W1, b1, W2, b2);
+        nad::grad<^^model::xor_loss, 0, 1, 2, 3>(W1, b1, W2, b2);
     nn::sgd_update(W1, gW1, lr);
     nn::sgd_update(b1, gb1, lr);
     nn::sgd_update(W2, gW2, lr);
