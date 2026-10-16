@@ -27,12 +27,13 @@ auto &[gW1, gb1, gW2, gb2] = g;   // each gradient has its parameter's type
 ```
 
 It works with both forks: Clang p2996 and GCC `-freflection`. The test is
-[tests/nn_mlp.t.cpp](../../tests/nn_mlp.t.cpp). It checks gradients against
-finite differences, checks the DAG's structure with `static_assert`s, and
-trains a 2-8-1 MLP on XOR in a few milliseconds. Run it with:
+[tests/common/nn_mlp.t.cpp](../../tests/common/nn_mlp.t.cpp). It checks
+gradients against finite differences, checks the DAG's structure with
+`static_assert`s, and trains a 2-8-1 MLP on XOR in a few milliseconds. Run it
+with:
 
 ```sh
-python3 run_tests.py --compiler both --run-executables --tests 'nn_mlp.t.cpp'
+python3 run_tests.py --compiler both --run-executables --tests 'common/nn_mlp.t.cpp'
 ```
 
 or through CMake (target and test `nn_mlp`).
@@ -161,7 +162,7 @@ GCC:
 - **A class with a non-trivial destructor (e.g. `std::vector` storage) is
   unusable.** A call returning one is reflected as an `AGGR_INIT_EXPR`-like
   construct with cleanups, and returns go missing. This is likely why the older
-  `tests/clang_only/` tensor prototype is Clang-only. Fixed-size trivially
+  `include/ad/clang_only/` tensor prototype is Clang-only. Fixed-size trivially
   copyable types avoid it.
 - Binding to `const T&` shows as `cast(&x)`. A temporary or return slot is
   `construct(<unnamed var>, init)`. `strip()` in autodiff.hpp peels both.
@@ -218,11 +219,9 @@ aarch64-apple-darwin without offload targets. macOS has no CUDA.
 
 Done:
 - the library;
-- [tests/nn_mlp.t.cpp](../../tests/nn_mlp.t.cpp), passing on Clang and GCC via
-  `run_tests.py` and via CMake (Clang RelWithDebInfo; GCC Debug + sanitizers);
-- `include/` added to the test include path in
-  [tests/CMakeLists.txt](../../tests/CMakeLists.txt) and
-  [run_tests.py](../../run_tests.py);
+- [tests/common/nn_mlp.t.cpp](../../tests/common/nn_mlp.t.cpp), passing on
+  Clang and GCC via `run_tests.py` and via CMake (Clang RelWithDebInfo; GCC
+  Debug + sanitizers);
 - mutation-checked: breaking the sigmoid rule, or replacing accumulation with
   assignment, fails the test.
 
@@ -231,9 +230,10 @@ Next, roughly in order:
    through a layer template with `if constexpr`. Check how discarded branches
    reflect on both compilers.
 2. **Scalar `<cmath>` primitives** (`exp`, `log`, `tanh`, ...) for mixing with
-   scalar models. Reuse the probe trick from `tests/autograd.h`: `^^std::exp`
-   names an overload set, so recover the callee from a one-line probe
-   function. Then a Black-Scholes-style model with a NN term (ladder step 4).
+   scalar models. Reuse the probe trick from `include/ad/autograd.h`:
+   `^^std::exp` names an overload set, so recover the callee from a one-line
+   probe function. Then a Black-Scholes-style model with a NN term (ladder
+   step 4).
 3. **Batched data**: `Mat<B, In>` inputs with a row-broadcast bias primitive,
    instead of one inlined copy per sample.
 4. More ops: `tanh`, softmax + cross-entropy (one fused primitive, for

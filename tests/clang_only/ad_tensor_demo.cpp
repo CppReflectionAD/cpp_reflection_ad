@@ -7,9 +7,10 @@
 //
 // Build/run: `make run-tensor`.
 
-#include "autograd_tensor.h"
-#include "tensor.h"
-#include "tensor_rules.h"
+#include <ad/clang_only/autograd_tensor.h>
+#include <ad/clang_only/tensor.h>
+#include <ad/clang_only/tensor_rules.h>
+
 #include <cmath>
 #include <cstdio>
 

@@ -18,7 +18,7 @@
 //
 // Special cases: negative → NaN, +∞ → +∞, 0 → 0.
 //
-// Accuracy: identical to std::sqrt (see tests/cx_std/cx_std.t.cpp).
+// Accuracy: identical to std::sqrt (see tests/common/cx_std.t.cpp).
 
 #ifndef CX_STD_CX_SQRT_HPP
 #define CX_STD_CX_SQRT_HPP

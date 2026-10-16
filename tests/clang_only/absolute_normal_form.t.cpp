@@ -1,4 +1,4 @@
-#include "absolute_normal_form.hpp"
+#include <ad/clang_only/absolute_normal_form.hpp>
 #include <test_simple_include.hpp>
 
 #include <cmath>

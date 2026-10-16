@@ -2,11 +2,11 @@
 // ranges the discontinuity analysis and limit algebra evaluate them on, plus
 // the special values and the extremes constant evaluation must get through.
 
-#include "cx_erfc.hpp"
-#include "cx_exp.hpp"
-#include "cx_log.hpp"
-#include "cx_sqrt.hpp"
-#include "cx_trig.hpp"
+#include <cx_std/cx_erfc.hpp>
+#include <cx_std/cx_exp.hpp>
+#include <cx_std/cx_log.hpp>
+#include <cx_std/cx_sqrt.hpp>
+#include <cx_std/cx_trig.hpp>
 #include <test_simple_include.hpp>
 
 #include <bit>

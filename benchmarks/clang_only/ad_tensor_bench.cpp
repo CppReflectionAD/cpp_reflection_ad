@@ -13,9 +13,10 @@
 // Build/run: `run_tests.py --run-executables --tests
 // clang_only/ad_tensor_bench.cpp` (built at -O3).
 
-#include "autograd_tensor.h"
-#include "tensor.h"
-#include "tensor_rules.h"
+#include <ad/clang_only/autograd_tensor.h>
+#include <ad/clang_only/tensor.h>
+#include <ad/clang_only/tensor_rules.h>
+
 #include <array>
 #include <chrono>
 #include <cmath>

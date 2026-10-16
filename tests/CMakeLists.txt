@@ -1,5 +1,6 @@
-# The flag profile (reflection_ad::flags) and _is_clang / _is_gcc come from
-# cmake/reflect_flags.cmake, included by the top-level CMakeLists.txt.
+# The engine (reflection_ad::ad, which carries the flag profile) is defined in
+# the top-level CMakeLists.txt; _is_clang / _is_gcc come from
+# cmake/reflect_flags.cmake. See README.md here for where each kind of test goes.
 include("${CMAKE_SOURCE_DIR}/test_simple/test_simple_cmake.cmake")
 
 # ---------------------------------------------------------------------------
@@ -7,10 +8,9 @@ include("${CMAKE_SOURCE_DIR}/test_simple/test_simple_cmake.cmake")
 # ---------------------------------------------------------------------------
 function(add_reflect_test name source)
     add_executable(${name} ${source})
-    target_link_libraries(${name} PRIVATE reflection_ad::flags)
+    target_link_libraries(${name} PRIVATE reflection_ad::ad)
     target_include_directories(${name} PRIVATE
-        "${CMAKE_CURRENT_SOURCE_DIR}"
-        "${CMAKE_SOURCE_DIR}/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
         "${CMAKE_SOURCE_DIR}/test_simple"
     )
     add_test(NAME ${name} COMMAND ${name})
@@ -19,8 +19,7 @@ endfunction()
 # ---------------------------------------------------------------------------
 # Discover and register tests
 # ---------------------------------------------------------------------------
-file(GLOB _common   CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
-file(GLOB _cx_std   CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/cx_std/*.cpp")
+file(GLOB _common   CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/common/*.cpp")
 file(GLOB _clang_only CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/clang_only/*.cpp")
 file(GLOB _gcc_only   CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/gcc_only/*.cpp")
 file(GLOB _static_fail CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -33,11 +32,22 @@ file(GLOB _known_gap_clang CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DI
     "${CMAKE_CURRENT_SOURCE_DIR}/known_gap/clang/*.cpp")
 file(GLOB _known_gap_gcc CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/known_gap/gcc/*.cpp")
+# run_tests.py compiles every .cpp under tests/, so a test anywhere else (e.g.
+# directly in tests/ or in fixtures/) would build there but not here.
+file(GLOB_RECURSE _stray CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
+list(FILTER _stray EXCLUDE REGEX
+    "^(common|clang_only|gcc_only|static_fail|known_gap/clang|known_gap/gcc)/[^/]+\\.cpp$")
+if(_stray)
+    message(FATAL_ERROR "Tests outside the test directories: ${_stray}. "
+                        "Move each into one of them (see tests/README.md).")
+endif()
+
 # The gap only shows with this UBSan check enabled.
 set_source_files_properties(known_gap/gcc/ubsan_reflection_repro.cpp
     PROPERTIES COMPILE_OPTIONS -fsanitize=float-divide-by-zero)
 
-foreach(_src IN LISTS _common _cx_std)
+foreach(_src IN LISTS _common)
     get_filename_component(_name "${_src}" NAME_WE)
     add_reflect_test(${_name} "${_src}")
 endforeach()

@@ -26,7 +26,7 @@ To use it:
    Code from this repo also uses `std::meta::parameters_of`, so add
    `-fparameter-reflection` to the compiler options.
 3. Paste in your code. The library headers are not available on Compiler
-   Explorer, so paste the headers you need (for example `tests/autograd.h`)
+   Explorer, so paste the headers you need (for example `include/ad/autograd.h`)
    into the source, above your own code.
 4. To run the program as well as compile it, enable "Execute the code" in the
    compiler pane's Output menu (or add an execution pane).
@@ -34,31 +34,40 @@ To use it:
 If you use Boost, pick Boost 1.84 or older from the Libraries menu for now;
 newer Boost versions are not yet packaged for this compiler.
 
-## Tests
+## Layout
 
-Reflection-AD tests live under `tests/`:
+The libraries are header-only, under `include/`:
 
-- `tests/clang_only/` — the clang (`expr-reflect`) engine (`autograd.h`,
-  `autograd_tensor.h`, `tensor.h`) and its tests, including self-checking demos
-  (`ad_scalar_demo.cpp`, `ad_tensor_demo.cpp`).
-- `tests/gcc_only/` — reserved for the gcc (`no_expression_kind`) port.
-- `tests/` (directly) — compiler-agnostic tests run under **both** compilers.
+- `include/ad/` — the AD engine (`autograd.h`, forward and reverse derivatives,
+  higher-order Taylor AD, `is_invertible.hpp`).
+- `include/ad/clang_only/` — the parts of the engine that need the clang
+  (`expr-reflect`) fork: tensors (`tensor.h`, `autograd_tensor.h`) and the
+  analyses (`is_continuous.hpp`, `limit_algebra.hpp`,
+  `discontinuity_analysis.hpp`, `absolute_normal_form.hpp`).
+- `include/cx_std/` — `constexpr` maths (`exp`, `log`, `sqrt`, `erfc`, `sin`,
+  `cos`) for use in constant evaluation.
 
-Benchmarks live under `benchmarks/` (clang-only ones in `benchmarks/clang_only/`),
-e.g. `ad_bench.cpp` and `ad_tensor_bench.cpp`. They are built by CMake but not
-registered with CTest.
+Include them by their path under `include/`, e.g. `#include <ad/autograd.h>`.
+In CMake, link `reflection_ad::ad` (or `reflection_ad::cx_std`), which also
+brings the compiler's flag profile.
+
+Tests live under `tests/`, one directory per kind; [tests/README.md](tests/README.md)
+says where a new test goes. Benchmarks live under `benchmarks/` (clang-only ones
+in `benchmarks/clang_only/`), e.g. `ad_bench.cpp` and `ad_tensor_bench.cpp`. They
+are built by CMake but not registered with CTest. `tools/` holds the Python
+scripts that generate reference values and coefficient tables.
 
 The two forks expose different reflection APIs, so tests are compiler-specific
 for now. Each compiler has a **flag profile** (its reflection/stdlib flags), so
-once a gcc engine exposes the same `ad::` interface its drivers can move up to
-`tests/` and run under both compilers unchanged. In CMake the profile is the
-`reflection_ad::flags` target in [cmake/reflect_flags.cmake](cmake/reflect_flags.cmake),
-which tests and benchmarks link; `run_tests.py` still has its own copy.
+once a gcc engine exposes the same `ad::` interface its drivers can move to
+`tests/common/` and run under both compilers unchanged. In CMake the profile is
+the `reflection_ad::flags` target in [cmake/reflect_flags.cmake](cmake/reflect_flags.cmake),
+which the library targets carry; `run_tests.py` still has its own copy.
 
 ## Test Runner
 
 `run_tests.py` selects `clang`/`gcc`/both, compiles every `.cpp` under `tests/`
-(respecting the `clang_only`/`gcc_only`/shared dirs), optionally runs the
+(respecting the `clang_only`/`gcc_only` dirs), optionally runs the
 binaries, and reports compile vs runtime failures. Everything is built at
 `-O3` (as CMake's Release build), so benchmark timings are meaningful;
 `--opt-level` changes that. A test may add flags via a `// TEST-FLAGS: ...`
@@ -72,7 +81,7 @@ Tests under `tests/known_gap/{clang,gcc}/` record a known bug or missing
 feature in that compiler's reflection fork: code it should accept but rejects.
 Only `ctest` runs them, for that compiler, against their `.fail.txt`, so a test
 fails once the gap is fixed (the file compiles); then move it into the normal
-test tree. `run_tests.py` skips them.
+test directories. `run_tests.py` skips them.
 
 The repo is **self-contained**: `--build-compilers` builds clang from its own
 `clang-p2996` submodule into `build/` — no externally pre-built compiler needed.
@@ -91,7 +100,7 @@ python3 run_tests.py --compiler clang --build-compilers
 python3 run_tests.py --compiler clang --run-executables
 
 # a single test; --verbose prints the exact compile commands
-python3 run_tests.py --compiler clang --tests 'ad_scalar_demo.cpp' --run-executables
+python3 run_tests.py --compiler clang --tests 'common/ad_scalar_demo.cpp' --run-executables
 
 # a single benchmark (ITERATIONS=... tunes the workload)
 ITERATIONS=1000000 python3 run_tests.py --compiler clang --benchmarks 'black_scholes_timing.cpp' --run-executables
@@ -117,7 +126,7 @@ uv run pre-commit run --all-files   # check and fix everything
 uv run pre-commit install           # optional: run the hooks on every commit
 ```
 
-The Python helper scripts' dependencies are in the `scripts` group, e.g. `uv run --group scripts tests/black_scholes_sympy_value_check.py`.
+The Python helper scripts' dependencies are in the `scripts` group, e.g. `uv run --group scripts tools/black_scholes_sympy_value_check.py`.
 
 ## How to Debug with VSCode
 
