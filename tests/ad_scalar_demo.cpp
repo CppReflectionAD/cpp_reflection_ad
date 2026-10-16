@@ -18,6 +18,7 @@
 #include "functions/2-trig.h"
 #include "functions/3-two_arg.h"
 #include "functions/4-shared_intemediate.h"
+#include "functions/7-comma.h"
 
 #include <cmath>
 
@@ -203,6 +204,15 @@ int main() {
     double const tder2 = ad::taylor_mode_ad<^^exp_neg, 0, 0>(x);
     EXPECT_NEAR_ABS(tder2, e, 1e-10);
   }
+
+#if defined(__clang__)
+  // Comma operator
+  {
+    double const x = 0.7, y = 1.9, p = x * y;
+    double const dx = ad::forward_derivative<^^assign_then_use, 0>(x, y);
+    EXPECT_NEAR_ABS(dx, y * std::sin(p) + p * std::cos(p) * y, 1e-8);
+  }
+#endif // __clang__
 
   // Derivatives are usable in constant expressions (poly is pure arithmetic).
   static_assert(ad::forward_derivative<^^poly, 0, double>(4.0) == 2 * 4.0 + 2);

@@ -109,6 +109,10 @@ enum class OpKind {
 // is a real node, so the sentinel must be a value no slot can take.
 inline constexpr std::size_t UNGUARDED = static_cast<std::size_t>(-1);
 
+// Environment slot of a local declared without an initializer (`double t;`),
+// until it is assigned. Reading it is an error.
+inline constexpr std::size_t UNASSIGNED = static_cast<std::size_t>(-2);
+
 // A call is a *primitive* (has a built-in VJP) iff its callee is registered
 // here; anything else is a user helper and gets inlined. The key is the callee
 // reflection, not its name, so a same-named function in another namespace -- or
@@ -474,8 +478,11 @@ consteval std::size_t lower(Ctx &c, info e) {
   if (m::is_variable_reference(e)) {
     const std::string_view name = m::identifier_of(m::declaration_of(e));
     for (std::size_t i = c.envDecl.size(); i-- > 0;)
-      if (m::identifier_of(c.envDecl[i]) == name)
+      if (m::identifier_of(c.envDecl[i]) == name) {
+        if (c.envSlot[i] == UNASSIGNED)
+          throw "reflection AD: local read before it is assigned";
         return c.envSlot[i];
+      }
 
     // External constexpr variables (e.g. std::numbers constants) are not in
     // the local environment; fold them to literal constants in the DAG.
@@ -502,6 +509,33 @@ consteval std::size_t lower(Ctx &c, info e) {
 
   if (m::is_binary_operator(e)) {
     auto ops = m::operands_of(e);
+    // Comma `a, b`. The returned value is `b`. `a` might have a side effect
+    // that affects `b` via another variable, so we lower it too.
+    if (m::expression_operator_of(e) == m::operators::op_comma) {
+      lower(c, ops[0]);
+      return lower(c, ops[1]);
+    }
+    // Assignment `v = expr` to a local or by-value parameter: bind v to expr's
+    // slot.
+    if (m::expression_operator_of(e) == m::operators::op_equals) {
+      info lhs = stripCasts(ops[0]);
+      if (!m::is_variable_reference(lhs))
+        throw "reflection AD: can only assign to a named local";
+      info v = m::declaration_of(lhs);
+      bool isLocal = false;
+      for (info d : c.envDecl)
+        isLocal = isLocal || m::identifier_of(d) == m::identifier_of(v);
+      if (!isLocal || m::is_reference_type(m::type_of(v)))
+        throw "reflection AD: can only assign to a by-value local or parameter";
+      if (c.curGuard != UNGUARDED)
+        throw "reflection AD: assignment inside a conditional branch or "
+              "short-circuit operand";
+      std::size_t slot = lower(c, ops[1]);
+      // Lookup is last-wins, so later reads of v see the new value
+      c.envDecl.push_back(v);
+      c.envSlot.push_back(slot);
+      return slot;
+    }
     OpKind op = binOp(m::expression_operator_of(e));
     std::size_t a = lower(c, ops[0]);
     // Short-circuit: lower the right operand under the guard saying the left
@@ -561,16 +595,19 @@ consteval std::size_t lower(Ctx &c, info e) {
 // Lower the statements of a straight-line body into `c`, resolving names
 // against the current environment; returns the slot of the (single) return
 // value. Shared by build_nodes (top-level function) and inline_call (inlined
-// callee). Anything outside that shape (control flow, assignment, a second
-// return, no return at all) is rejected: skipping it would silently build a DAG
-// that does not match the source, i.e. a wrong derivative with no diagnostic.
+// callee). Anything outside that shape (control flow, an assignment statement,
+// a second return, no return at all) is rejected: skipping it would silently
+// build a DAG that does not match the source, i.e. a wrong derivative with no
+// diagnostic.
 consteval std::size_t lower_body(Ctx &c, info body) {
   std::size_t root = 0;
   bool sawReturn = false;
   for (info s : m::statements_of(body)) {
     if (m::is_declaration_statement(s)) {
       info v = m::declared_variable_of(s);
-      std::size_t slot = lower(c, m::initializer_of(v));
+      info init = m::initializer_of(v);
+      std::size_t slot =
+          m::is_expression(init) ? lower(c, init) : UNASSIGNED; // `T v;`
       c.envDecl.push_back(v);
       c.envSlot.push_back(slot);
     } else if (m::is_return_statement(s)) {
@@ -581,7 +618,7 @@ consteval std::size_t lower_body(Ctx &c, info body) {
       sawReturn = true;
     } else {
       throw "reflection AD: unsupported statement; straight-line bodies only "
-            "(`T v = expr;` declarations and one `return expr;`)";
+            "(`T v = expr;` / `T v;` declarations and one `return expr;`)";
     }
   }
   if (!sawReturn)
