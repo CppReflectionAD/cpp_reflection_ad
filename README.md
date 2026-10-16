@@ -51,7 +51,9 @@ registered with CTest.
 The two forks expose different reflection APIs, so tests are compiler-specific
 for now. Each compiler has a **flag profile** (its reflection/stdlib flags), so
 once a gcc engine exposes the same `ad::` interface its drivers can move up to
-`tests/` and run under both compilers unchanged.
+`tests/` and run under both compilers unchanged. In CMake the profile is the
+`reflection_ad::flags` target in [cmake/reflect_flags.cmake](cmake/reflect_flags.cmake),
+which tests and benchmarks link; `run_tests.py` still has its own copy.
 
 ## Test Runner
 
