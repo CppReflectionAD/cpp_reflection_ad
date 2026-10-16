@@ -50,13 +50,19 @@ jobs:
           key: ${{ needs.toolchain.outputs.cache_key }}
           fail-on-cache-miss: true
 
-      # The same entry point developers use: it configures this build type's
-      # CMakePresets.json preset (clang-release, ...) with the cached compiler,
-      # builds, and runs ctest.
-      - name: Build and test
+      # The CMakePresets.json preset for this build type (clang-release, ...),
+      # with the compiler swapped for the cached one.
+      - name: Configure CMake
         run: |
-          python3 run_tests.py --compiler clang --build-type "${BUILD_TYPE,,}" \
-            --clang-executable /opt/toolchain-clang/bin/clang++
+          echo "PRESET=clang-${BUILD_TYPE,,}" >> "$GITHUB_ENV"
+          cmake --preset "clang-${BUILD_TYPE,,}" \
+            -DCMAKE_CXX_COMPILER=/opt/toolchain-clang/bin/clang++
+
+      - name: Build tests
+        run: cmake --build --preset "$PRESET"
+
+      - name: Test AD with CTest
+        run: ctest --preset "$PRESET"
 
   # The one check for the ruleset to require (#94 C4), so it names this
   # workflow's result rather than each matrix leg. always() makes it report
