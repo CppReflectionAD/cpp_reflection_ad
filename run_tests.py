@@ -33,7 +33,8 @@ CMAKE_BUILD_ROOT = BUILD_ROOT / "cmake"
 BUILD_TYPES = ("debug", "relwithdebinfo", "release")
 # compile_check (test_simple/test_simple_cmake.cmake) names these tests
 # reflection_ad.<path under tests/, with / as .>; every other test is named
-# after its file, up to the first '.'.
+# after its file, up to the first '.'. A known_gap/ file with a
+# `// TEST-PASSES-ON:` line is also an ordinary test on the other compiler.
 COMPILE_CHECK_DIRS = ("static_fail", "known_gap")
 
 # The clang reflection fork is built from the clang-p2996 submodule (override
@@ -1002,25 +1003,36 @@ def looks_like_path(pattern: str) -> bool:
     )
 
 
-def test_name_for(test_file: Path) -> str:
-    """The ctest name CMake gives a test file (see tests/CMakeLists.txt)."""
+def test_names_for(test_file: Path) -> tuple[str, ...]:
+    """The ctest names CMake may give a test file (see tests/CMakeLists.txt).
+
+    Each compiler has at most one of them: a known_gap/ file is a
+    compile_check test on its own compiler and, with a TEST-PASSES-ON line,
+    an ordinary test on the other.
+    """
     relative = test_file.relative_to(TESTS_DIR)
+    plain = test_file.name.split(".")[0]
     if relative.parts[0] in COMPILE_CHECK_DIRS:
-        return "reflection_ad." + relative.with_suffix("").as_posix().replace("/", ".")
-    return test_file.name.split(".")[0]
+        checked = "reflection_ad." + relative.with_suffix("").as_posix().replace(
+            "/", "."
+        )
+        return (checked, plain) if relative.parts[0] == "known_gap" else (checked,)
+    return (plain,)
 
 
-def requested_names(patterns: list[str], base_dir: Path, name_for) -> list[str]:
+def requested_names(
+    patterns: list[str], base_dir: Path, names_for
+) -> list[tuple[str, ...]]:
     """Turn --tests/--benchmarks values into ctest or target names.
 
     A value with a '/', a '.cpp' suffix or a glob character is a glob relative
     to base_dir (a leading 'tests/' or 'benchmarks/' is dropped); anything else
-    is already a name.
+    is already a name. Each entry holds the names one request may go by.
     """
-    names: list[str] = []
+    names: list[tuple[str, ...]] = []
     for pattern in patterns:
         if not looks_like_path(pattern):
-            names.append(pattern)
+            names.append((pattern,))
             continue
         pattern = pattern.removeprefix(f"{base_dir.name}/")
         matches = sorted(
@@ -1028,8 +1040,20 @@ def requested_names(patterns: list[str], base_dir: Path, name_for) -> list[str]:
         )
         if not matches:
             raise SystemExit(f"No .cpp file under {base_dir.name}/ matches {pattern!r}")
-        names.extend(name_for(path) for path in matches)
+        names.extend(names_for(path) for path in matches)
     return list(dict.fromkeys(names))
+
+
+def select(wanted: list[tuple[str, ...]], available) -> tuple[list[str], list[str]]:
+    """The available names among `wanted`, and the requests with none."""
+    found: list[str] = []
+    missing: list[str] = []
+    for names in wanted:
+        present = [name for name in names if name in available]
+        found += present
+        if not present:
+            missing.append(names[0])
+    return found, missing
 
 
 def preset_build_dir(preset: str, args: argparse.Namespace) -> Path:
@@ -1131,10 +1155,8 @@ def resolve_selection(
     # --benchmarks on its own skips the tests; with --tests too, both run.
     with_tests = args.tests is not None or args.benchmarks is None
     if with_tests and args.tests:
-        available = ctest_tests(build_dir)
-        wanted = requested_names(args.tests, TESTS_DIR, test_name_for)
-        tests = [name for name in wanted if name in available]
-        missing += [name for name in wanted if name not in available]
+        wanted = requested_names(args.tests, TESTS_DIR, test_names_for)
+        tests, missing = select(wanted, ctest_tests(build_dir))
     elif not with_tests:
         tests = []
 
@@ -1142,17 +1164,17 @@ def resolve_selection(
     if args.benchmarks is not None:
         if args.benchmarks:
             wanted = requested_names(
-                args.benchmarks, BENCHMARKS_DIR, lambda path: path.name.split(".")[0]
+                args.benchmarks, BENCHMARKS_DIR, lambda path: (path.name.split(".")[0],)
             )
         else:
             wanted = [
-                path.name.split(".")[0]
+                (path.name.split(".")[0],)
                 for path in sorted(BENCHMARKS_DIR.rglob("*.cpp"))
             ]
-        targets = build_targets(build_dir)
-        benchmarks = [name for name in wanted if name in targets]
+        benchmarks, absent = select(wanted, build_targets(build_dir))
+        # With no names, benchmarks this compiler can't build aren't missing.
         if args.benchmarks:
-            missing += [name for name in wanted if name not in targets]
+            missing += absent
     return Selection(tests=tests, benchmarks=benchmarks), missing
 
 

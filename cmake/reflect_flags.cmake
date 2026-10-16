@@ -8,6 +8,9 @@
 # run with no LD_LIBRARY_PATH. Targets get the profile by linking it:
 #
 #     target_link_libraries(<target> PRIVATE reflection_ad::flags)
+#
+# It also defines reflection_ad::warnings, the warning flags for tests and
+# benchmarks (see the end of this file).
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
@@ -141,3 +144,14 @@ target_link_options(reflection_ad_flags INTERFACE ${_reflect_link_flags})
 # The target is the one way to get the profile.
 unset(_reflect_flags)
 unset(_reflect_link_flags)
+
+# ---------------------------------------------------------------------------
+# Warnings. Tests and benchmarks link reflection_ad::warnings and set
+# COMPILE_WARNING_AS_ERROR, so a warning fails their build; configure with
+# `cmake --compile-no-warning-as-error` to see them as warnings instead.
+# compile_check's targets don't use it: they are expected to fail, and a
+# warning turned into an error would change their .fail.txt snapshot.
+# ---------------------------------------------------------------------------
+add_library(reflection_ad_warnings INTERFACE)
+add_library(reflection_ad::warnings ALIAS reflection_ad_warnings)
+target_compile_options(reflection_ad_warnings INTERFACE -Wall -Wextra)

@@ -85,6 +85,17 @@ same results. Build trees go in `build/cmake/<preset>`, shared with
 and `--clean` deletes them first. Arguments after `--` go to the CMake
 configure step.
 
+Tests under `tests/static_fail/` are expected **not** to compile (e.g. they
+trip a `static_assert`); they pass only when the compiler's errors match the
+`.fail.txt` baseline next to each test (see
+[test_simple/README.md](test_simple/README.md)).
+Tests under `tests/known_gap/{clang,gcc}/` record a known bug or missing
+feature in that compiler's reflection fork: code it should accept but rejects.
+They run on that compiler against their `.fail.txt`, so a test fails once the
+gap is fixed (the file compiles); then move it into the normal test
+directories. A `// TEST-PASSES-ON: clang` (or `gcc`) line makes such a test run
+as an ordinary test on that other compiler.
+
 The repo is **self-contained**: `--build-compilers` builds clang from its own
 `clang-p2996` submodule into `build/` — no externally pre-built compiler needed.
 It checks out the submodule, builds clang (host `clang` + `lld`), builds the
