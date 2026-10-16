@@ -58,7 +58,11 @@ echo "ok: ASan, symbolized"
 
 cat > ubsan.cpp <<'CPP'
 #include <climits>
-int main(int argc, char**) { return INT_MAX + argc > 0; }
+int main(int argc, char**) {
+  int x = INT_MAX;
+  x += argc;
+  return x > 0;
+}
 CPP
 "$P/bin/clang++" "${flags[@]}" -fsanitize=undefined ubsan.cpp -o ubsan "${link[@]}"
 ./ubsan 2> ubsan.log || true

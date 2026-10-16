@@ -32,11 +32,14 @@ CPP
 ./reflect || fail "reflect.cpp built against the prefix doesn't run"
 echo "ok: reflection and libstdc++"
 
+# A raw array: the fork's ASan doesn't see this read through std::vector's
+# storage (true unstripped too).
 cat > asan.cpp <<'CPP'
-#include <vector>
 int main(int argc, char**) {
-  std::vector<int> v(2);
-  return v.data()[argc + 1];
+  int* p = new int[2];
+  int r = p[argc + 1];
+  delete[] p;
+  return r;
 }
 CPP
 "$P/bin/g++" "${flags[@]}" -g -fsanitize=address,undefined asan.cpp -o asan "${link[@]}"
@@ -48,7 +51,11 @@ echo "ok: ASan"
 
 cat > ubsan.cpp <<'CPP'
 #include <climits>
-int main(int argc, char**) { return INT_MAX + argc > 0; }
+int main(int argc, char**) {
+  int x = INT_MAX;
+  x += argc;
+  return x > 0;
+}
 CPP
 "$P/bin/g++" "${flags[@]}" -fsanitize=undefined ubsan.cpp -o ubsan "${link[@]}"
 ./ubsan 2> ubsan.log || true
