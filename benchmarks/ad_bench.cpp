@@ -22,9 +22,9 @@
 // Build/run: `run_tests.py --run-executables --tests ad_bench.cpp` (built at
 // -O3).
 
-#include "autograd.h"
-#include "forward_derivative.h"
-#include "reverse_derivative.h"
+#include <ad/autograd.h>
+#include <ad/forward_derivative.h>
+#include <ad/reverse_derivative.h>
 
 #include <array>
 #include <chrono>

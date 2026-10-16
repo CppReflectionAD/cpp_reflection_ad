@@ -1,4 +1,4 @@
-#include "discontinuity_analysis.hpp"
+#include <ad/clang_only/discontinuity_analysis.hpp>
 #include <test_simple_include.hpp>
 
 #include <algorithm>

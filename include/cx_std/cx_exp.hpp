@@ -17,7 +17,7 @@
 // the result is +∞ or 0, as std::exp.
 //
 // Accuracy: within a few ulp of std::exp over the whole range (see
-// tests/cx_std/cx_std.t.cpp).
+// tests/common/cx_std.t.cpp).
 
 #ifndef CX_STD_CX_EXP_HPP
 #define CX_STD_CX_EXP_HPP

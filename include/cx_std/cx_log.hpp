@@ -12,7 +12,7 @@
 //
 // Special cases: NaN → NaN, x<0 → NaN, 0 → -∞, +∞ → +∞, 1 → 0.
 //
-// Accuracy: within a few ulp of std::log (see tests/cx_std/cx_std.t.cpp).
+// Accuracy: within a few ulp of std::log (see tests/common/cx_std.t.cpp).
 
 #ifndef CX_STD_CX_LOG_HPP
 #define CX_STD_CX_LOG_HPP

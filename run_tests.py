@@ -14,7 +14,9 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
+INCLUDE_DIR = ROOT / "include"
 TESTS_DIR = ROOT / "tests"
+FIXTURES_DIR = TESTS_DIR / "fixtures"
 BENCHMARKS_DIR = ROOT / "benchmarks"
 BUILD_ROOT = ROOT / "build"
 ARTIFACTS_DIR = BUILD_ROOT / "artifacts"
@@ -159,7 +161,7 @@ def parse_args() -> argparse.Namespace:
         "--tests",
         nargs="*",
         metavar="PATTERN",
-        help="Optional glob patterns relative to tests/, for example '*.cpp' or 'expr/*.cpp'.",
+        help="Optional glob patterns relative to tests/, for example 'common/*.cpp' or 'clang_only/*.t.cpp'.",
     )
     parser.add_argument(
         "--benchmarks",
@@ -1093,15 +1095,9 @@ def compile_and_maybe_run(
     output_path = compiler_artifacts_dir / output_name
     ensure_directory(output_path.parent)
 
-    # Benchmarks pull in the shared headers from tests/ (mirrors the include
-    # directories in benchmarks/CMakeLists.txt).
-    # Tests need access to test_simple/ for test_simple_include.hpp.
-    include_flags = ["-I", str(TESTS_DIR)] if base_dir == BENCHMARKS_DIR else []
-    if (
-        base_dir == BENCHMARKS_DIR
-        and CLANG_ONLY_DIR in test_file.relative_to(base_dir).parts
-    ):
-        include_flags.extend(["-I", str(TESTS_DIR / CLANG_ONLY_DIR)])
+    # Mirrors the include directories of the CMake targets: the libraries in
+    # include/, the shared test fixtures, and (for tests) test_simple/.
+    include_flags = ["-I", str(INCLUDE_DIR), "-I", str(FIXTURES_DIR)]
     if base_dir == TESTS_DIR:
         include_flags.extend(["-I", str(ROOT / "test_simple")])
 

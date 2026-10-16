@@ -27,11 +27,8 @@ function(compile_check group filelist)
         # Create the executable
         add_executable(${target_name} "${_source}")
         set_target_properties(${target_name} PROPERTIES EXCLUDE_FROM_ALL true EXCLUDE_FROM_DEFAULT_BUILD true)
-        target_link_libraries(${target_name} PRIVATE reflection_ad::flags)
-        target_include_directories(${target_name} PRIVATE
-            "${CMAKE_CURRENT_SOURCE_DIR}"
-            "${CMAKE_SOURCE_DIR}/test_simple"
-        )
+        target_link_libraries(${target_name} PRIVATE reflection_ad::ad)
+        target_include_directories(${target_name} PRIVATE "${CMAKE_SOURCE_DIR}/test_simple")
 
         # Keep directory structure for the .fail.txt file location
         set(expected_output_file "${CMAKE_CURRENT_SOURCE_DIR}/${source_path}.fail.txt")
@@ -80,11 +77,8 @@ function(run_check group filelist)
         string(REPLACE / "." target ${target})
         set(test_name "${group}.dynamic.${target}")
         add_executable(${test_name} "${_source}")
-        target_link_libraries(${test_name} PRIVATE reflection_ad::flags)
-        target_include_directories(${test_name} PRIVATE
-            "${CMAKE_CURRENT_SOURCE_DIR}"
-            "${CMAKE_SOURCE_DIR}/test_simple"
-        )
+        target_link_libraries(${test_name} PRIVATE reflection_ad::ad)
+        target_include_directories(${test_name} PRIVATE "${CMAKE_SOURCE_DIR}/test_simple")
         add_test(NAME ${test_name} COMMAND ${test_name})
     endforeach()
 endfunction()

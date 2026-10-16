@@ -1,7 +1,7 @@
 #include <test_simple_include.hpp>
 
-#include "autograd.h"
-#include "forward_derivative.h"
+#include <ad/autograd.h>
+#include <ad/forward_derivative.h>
 
 #include "mc_sim/black_scholes.hpp"
 
