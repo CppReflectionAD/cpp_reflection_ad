@@ -19,8 +19,10 @@ Black-Scholes Monte Carlo model (`mc_sim/`). Include them as
 ## Adding a test
 
 - Add a `.cpp` file to the right directory. There is nothing to register:
-  `CMakeLists.txt` and `run_tests.py` both find it. Re-run CMake to pick it up.
-  A `.cpp` anywhere else under `tests/` stops the configure.
+  `CMakeLists.txt` finds it (re-run CMake to pick it up), and so does
+  `run_tests.py`, except that it skips `known_gap/` and only checks that a
+  `static_fail/` test fails to compile; the `.fail.txt` comparison is `ctest`
+  only. A `.cpp` anywhere else under `tests/` stops the configure.
 - Include the engine by its path under `include/`, e.g.
   `#include <ad/autograd.h>`, and the checks from `test_simple_include.hpp`
   (`EXPECT_EQUAL`, `EXPECT_NEAR_REL`, ...).
