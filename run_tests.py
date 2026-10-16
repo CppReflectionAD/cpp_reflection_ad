@@ -28,8 +28,11 @@ GCC_ONLY_DIR = "gcc_only"
 # tests/CMakeLists.txt); this script only checks that compilation fails.
 STATIC_FAIL_DIR = "static_fail"
 # Tests under tests/known_gap/ need per-file flags and a .fail.txt comparison
-# that only CTest provides (see tests/CMakeLists.txt), so this script skips them.
+# that only CTest provides (see tests/CMakeLists.txt), so this script skips
+# them, except on a compiler named by a `// TEST-PASSES-ON: ...` line at the
+# top of the file: there it is an ordinary test, as in CMake.
 KNOWN_GAP_DIR = "known_gap"
+TEST_PASSES_ON_DIRECTIVE = "// TEST-PASSES-ON:"
 
 # The clang reflection fork is built from the clang-p2996 submodule (override
 # with --clang-source-dir / REFLECT_CLANG_SOURCE_DIR) into this repo's own
@@ -513,7 +516,7 @@ def is_test_applicable(test_file: Path, base_dir: Path, compiler_name: str) -> b
 
     top_level_dir = relative_path.parts[0]
     if top_level_dir == KNOWN_GAP_DIR:
-        return False
+        return compiler_name in parse_passes_on(test_file)
     if top_level_dir == CLANG_ONLY_DIR:
         return compiler_name == "clang"
     if top_level_dir == GCC_ONLY_DIR:
@@ -556,6 +559,28 @@ def discover_tests(
             f"and pattern(s): {requested}"
         )
     return tests
+
+
+def parse_passes_on(test_file: Path) -> list[str]:
+    """The compilers named by a known_gap test's `// TEST-PASSES-ON:` line.
+
+    The line lists, separated by spaces or commas, the compilers on which the
+    test is an ordinary test rather than a known gap. Returns [] if the line is
+    not in the first few lines of the file.
+    """
+    try:
+        with test_file.open("r", encoding="utf-8", errors="replace") as handle:
+            for _ in range(TEST_FLAGS_SCAN_LINES):
+                line = handle.readline()
+                if not line:
+                    break
+                stripped = line.strip()
+                if stripped.startswith(TEST_PASSES_ON_DIRECTIVE):
+                    rest = stripped[len(TEST_PASSES_ON_DIRECTIVE) :]
+                    return rest.replace(",", " ").split()
+    except OSError:
+        pass
+    return []
 
 
 def parse_test_flags(test_file: Path, compiler_name: str) -> list[str]:

@@ -87,7 +87,9 @@ Tests under `tests/known_gap/{clang,gcc}/` record a known bug or missing
 feature in that compiler's reflection fork: code it should accept but rejects.
 Only `ctest` runs them, for that compiler, against their `.fail.txt`, so a test
 fails once the gap is fixed (the file compiles); then move it into the normal
-test directories. `run_tests.py` skips them.
+test directories. `run_tests.py` skips them, except that a test with a
+`// TEST-PASSES-ON: clang` (or `gcc`) line runs as an ordinary test on that
+compiler, under both `ctest` and `run_tests.py`.
 
 The repo is **self-contained**: `--build-compilers` builds clang from its own
 `clang-p2996` submodule into `build/` — no externally pre-built compiler needed.

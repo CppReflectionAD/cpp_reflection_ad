@@ -12,15 +12,17 @@
 // logical_operator_reflection.cpp (which expects them to pass).
 //
 // Build:
-//   g++     -std=c++2c -freflection -fsyntax-only
-//   gcc_logical_operator_reflection.cpp
-//   clang++ -std=c++26 -freflection-latest -stdlib=libc++ -fsyntax-only
+//   g++     -std=c++2c -freflection -fsyntax-only -I ../fixtures
 //           gcc_logical_operator_reflection.cpp
+//   clang++ -std=c++26 -freflection-latest -stdlib=libc++ -fsyntax-only
+//           -I ../fixtures gcc_logical_operator_reflection.cpp
 //   (on macOS, also pass -isysroot "$(xcrun --show-sdk-path)" to clang)
 //
 // Expected: compiles cleanly on both compilers.
 
 #include <meta>
+
+#include "reflection/return_expr.hpp"
 
 namespace m = std::meta;
 
@@ -28,19 +30,6 @@ bool f_cmp(double x) { return x > 0.0; }
 bool f_or(double x) { return (x > 0.0) || (x > 1.0); }
 bool f_and(double x) { return (x > 0.0) && (x > 1.0); }
 bool f_not(double x) { return !(x > 0.0); }
-
-// The expression in a function's `return` statement, with implicit
-// conversions peeled off.
-consteval m::info return_expr(m::info fn) {
-  for (m::info s : m::statements_of(m::body_of(fn)))
-    if (m::is_return_statement(s)) {
-      m::info e = m::return_value_of(s);
-      while (m::is_cast(e))
-        e = m::operands_of(e).front();
-      return e;
-    }
-  throw "no return statement";
-}
 
 constexpr m::info CMP = return_expr(^^f_cmp);
 constexpr m::info OR = return_expr(^^f_or);
