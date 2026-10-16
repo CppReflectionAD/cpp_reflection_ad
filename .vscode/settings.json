@@ -2,6 +2,5 @@
   "cmake.useCMakePresets": "always",
   "cmake.ctest.debugLaunchTarget": "Debug CTest test (lldb)",
   "cmake.copyCompileCommands": "${workspaceFolder}/build/compile_commands.json",
-  "C_Cpp.default.compileCommands": "${workspaceFolder}/build/compile_commands.json",
-  "editor.formatOnSave": true
+  "C_Cpp.default.compileCommands": "${workspaceFolder}/build/compile_commands.json"
 }
