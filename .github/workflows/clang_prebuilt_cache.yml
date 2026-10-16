@@ -63,3 +63,22 @@ jobs:
 
       - name: Test AD with CTest
         run: ctest --preset "$PRESET"
+
+  # The one check for the ruleset to require (#94 C4), so it names this
+  # workflow's result rather than each matrix leg. always() makes it report
+  # even when the toolchain fails and the legs are skipped, or the run is
+  # cancelled: a skipped required check would count as passing.
+  summary:
+    name: Clang tests
+    needs: [toolchain, test]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check that every job succeeded
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "toolchain and test legs: $RESULTS"
+          for result in $RESULTS; do
+            [ "$result" = success ] || exit 1
+          done
