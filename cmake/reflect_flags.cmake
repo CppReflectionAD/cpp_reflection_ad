@@ -3,8 +3,9 @@
 #
 # Included from the top-level CMakeLists.txt. It sets _is_clang / _is_gcc and
 # defines the INTERFACE target reflection_ad::flags, which carries the language
-# standard, the reflection flags and, for clang, the fork's libc++ (compile and
-# link). Targets get the profile by linking it:
+# standard, the reflection flags and the fork's standard library: libc++ for
+# clang (compile and link), and an rpath to libstdc++ for GCC, so test binaries
+# run with no LD_LIBRARY_PATH. Targets get the profile by linking it:
 #
 #     target_link_libraries(<target> PRIVATE reflection_ad::flags)
 # ---------------------------------------------------------------------------
@@ -68,6 +69,22 @@ else() # GCC
     set(_reflect_flags
         -freflection
     )
+
+    # The fork's libstdc++ is newer than the system one, and the tests use
+    # symbols only it exports (GLIBCXX_3.4.35), so binaries must load the
+    # fork's copy, as run_tests.py arranges. The compiler says where its
+    # runtime libraries are; a bare name back means it has none of its own.
+    foreach(_lib libstdc++.so libgcc_s.so.1)
+        execute_process(COMMAND "${CMAKE_CXX_COMPILER}" -print-file-name=${_lib}
+            OUTPUT_VARIABLE _path OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+        if(IS_ABSOLUTE "${_path}")
+            file(REAL_PATH "${_path}" _path)
+            get_filename_component(_dir "${_path}" DIRECTORY)
+            if(NOT "-Wl,-rpath,${_dir}" IN_LIST _reflect_link_flags)
+                list(APPEND _reflect_link_flags "-Wl,-rpath,${_dir}")
+            endif()
+        endif()
+    endforeach()
 endif()
 
 add_library(reflection_ad_flags INTERFACE)
