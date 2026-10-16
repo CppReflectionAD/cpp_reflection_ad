@@ -155,22 +155,25 @@ debug configurations, and IntelliSense from `build/compile_commands.json`.
 1. Build the compiler(s) (see [Test Runner](#test-runner)); the presets look for
    them in `build/`.
 2. Install the recommended extensions (VS Code offers them when the folder
-   opens): `ms-vscode.cmake-tools` and `vadimcn.vscode-lldb` (CodeLLDB). For gdb
-   instead, install `ms-vscode.cpptools` too.
+   opens): `ms-vscode.cmake-tools` and `vadimcn.vscode-lldb` (CodeLLDB). For the
+   `(cppdbg)` configurations, install `ms-vscode.cpptools` too.
 3. In the CMake Tools side bar, pick a configure preset, e.g. `clang-p2996, Debug`
    (`clang-debug`).
 4. To debug a test:
    - **From the Test Explorer:** right-click a test, then **Debug Test**. This
      uses the `Debug CTest test (lldb)` configuration.
    - **From Run and Debug (F5):** pick the test as the CMake launch target, then
-     run `Debug launch target (lldb)` (or `(gdb)`).
+     run `Debug launch target (lldb)` (or `(cppdbg)`).
 
 The binaries carry an rpath to their compiler's runtime library, so they need
 no `LD_LIBRARY_PATH`; on the command line, `lldb build/cmake/clang-debug/tests/ad_scalar_demo`
 (or `gdb ...`) works as is.
 
-To use gdb for **Debug Test**, set `cmake.ctest.debugLaunchTarget` to
-`Debug CTest test (gdb)`. To keep personal edits like that to the shared
+The `(cppdbg)` configurations run gdb on Linux. On macOS, which has no gdb on
+arm64, they run cpptools' `lldb-mi` with Apple's LLDB. Use them for GCC builds on
+macOS: CodeLLDB's bundled lldb crashes showing a libstdc++ `std::unique_ptr` to a
+class type. To make **Debug Test** use them, set `cmake.ctest.debugLaunchTarget`
+to `Debug CTest test (cppdbg)`. To keep personal edits like that to the shared
 `.vscode/` files out of `git status`, run `tools/vscode-local-edits.sh`
 (`--undo` reverses it). The script's header says what to do when a pull changes
 one of those files.

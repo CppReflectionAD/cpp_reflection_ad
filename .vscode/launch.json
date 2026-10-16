@@ -19,13 +19,14 @@
       "cwd": "${cmake.testWorkingDirectory}"
     },
     {
-      "name": "Debug launch target (gdb)",
+      "name": "Debug launch target (cppdbg)",
       "type": "cppdbg",
       "request": "launch",
       "program": "${command:cmake.launchTargetPath}",
       "args": [],
       "cwd": "${command:cmake.getLaunchTargetDirectory}",
       "MIMode": "gdb",
+      "osx": { "MIMode": "lldb" },
       "setupCommands": [
         {
           "description": "Enable pretty-printing",
@@ -35,7 +36,7 @@
       ]
     },
     {
-      "name": "Debug CTest test (gdb)",
+      "name": "Debug CTest test (cppdbg)",
       "type": "cppdbg",
       "request": "launch",
       "presentation": { "hidden": true },
@@ -44,6 +45,7 @@
       "cwd": "${cmake.testWorkingDirectory}",
       "environment": "${cmake.testEnvironment}",
       "MIMode": "gdb",
+      "osx": { "MIMode": "lldb" },
       "setupCommands": [
         {
           "description": "Enable pretty-printing",
