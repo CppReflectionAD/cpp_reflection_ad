@@ -27,10 +27,7 @@ function(compile_check group filelist)
         # Create the executable
         add_executable(${target_name} "${_source}")
         set_target_properties(${target_name} PROPERTIES EXCLUDE_FROM_ALL true EXCLUDE_FROM_DEFAULT_BUILD true)
-        target_compile_options(${target_name} PRIVATE
-            -std=c++2c
-            ${_reflect_flags}
-        )
+        target_link_libraries(${target_name} PRIVATE reflection_ad::flags)
         target_include_directories(${target_name} PRIVATE
             "${CMAKE_CURRENT_SOURCE_DIR}"
             "${CMAKE_SOURCE_DIR}/test_simple"
@@ -83,10 +80,7 @@ function(run_check group filelist)
         string(REPLACE / "." target ${target})
         set(test_name "${group}.dynamic.${target}")
         add_executable(${test_name} "${_source}")
-        target_compile_options(${test_name} PRIVATE
-            -std=c++2c
-            ${_reflect_flags}
-        )
+        target_link_libraries(${test_name} PRIVATE reflection_ad::flags)
         target_include_directories(${test_name} PRIVATE
             "${CMAKE_CURRENT_SOURCE_DIR}"
             "${CMAKE_SOURCE_DIR}/test_simple"

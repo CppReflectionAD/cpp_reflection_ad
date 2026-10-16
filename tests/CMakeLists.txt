@@ -1,75 +1,13 @@
-# ---------------------------------------------------------------------------
-# Detect compiler family from the kit-selected CMAKE_CXX_COMPILER
-# ---------------------------------------------------------------------------
-if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    set(_is_clang TRUE)
-    set(_is_gcc   FALSE)
-elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-    set(_is_clang FALSE)
-    set(_is_gcc   TRUE)
-else()
-    message(FATAL_ERROR "Unsupported compiler: ${CMAKE_CXX_COMPILER_ID}. "
-                        "Select a clang-p2996 or gcc-reflect kit.")
-endif()
-
+# The flag profile (reflection_ad::flags) and _is_clang / _is_gcc come from
+# cmake/reflect_flags.cmake, included by the top-level CMakeLists.txt.
 include("${CMAKE_SOURCE_DIR}/test_simple/test_simple_cmake.cmake")
-
-# ---------------------------------------------------------------------------
-# Reflection compile flags
-# ---------------------------------------------------------------------------
-if(_is_clang)
-    # Derive the compiler root from the executable path (bin/../)
-    get_filename_component(_clang_bin "${CMAKE_CXX_COMPILER}" DIRECTORY)
-    get_filename_component(_clang_root "${_clang_bin}" DIRECTORY)
-
-    set(_reflect_flags
-        -freflection
-        -fparameter-reflection
-        -fexpansion-statements
-        -stdlib=libc++
-        -isystem "${_clang_root}/include/c++/v1"
-    )
-
-    # Link and load the fork's libc++ rather than the system one, as
-    # run_tests.py does.
-    set(_reflect_link_flags
-        -stdlib=libc++
-        "-L${_clang_root}/lib"
-        "-Wl,-rpath,${_clang_root}/lib"
-    )
-    # On Linux the runtimes build puts libc++ in a per-target subdirectory.
-    file(GLOB _clang_target_lib_dirs LIST_DIRECTORIES true
-        "${_clang_root}/lib/*linux*")
-    foreach(_dir IN LISTS _clang_target_lib_dirs)
-        if(IS_DIRECTORY "${_dir}")
-            list(APPEND _reflect_link_flags "-L${_dir}" "-Wl,-rpath,${_dir}")
-        endif()
-    endforeach()
-
-    if(APPLE)
-        execute_process(COMMAND xcrun --show-sdk-path
-            OUTPUT_VARIABLE _sdk OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
-        if(_sdk)
-            list(APPEND _reflect_flags -isysroot "${_sdk}")
-        endif()
-    endif()
-
-else() # GCC
-    set(_reflect_flags
-        -freflection
-    )
-endif()
 
 # ---------------------------------------------------------------------------
 # Helper: register one test executable
 # ---------------------------------------------------------------------------
 function(add_reflect_test name source)
     add_executable(${name} ${source})
-    target_compile_options(${name} PRIVATE
-        -std=c++2c
-        ${_reflect_flags}
-    )
-    target_link_options(${name} PRIVATE ${_reflect_link_flags})
+    target_link_libraries(${name} PRIVATE reflection_ad::flags)
     target_include_directories(${name} PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}"
         "${CMAKE_SOURCE_DIR}/test_simple"

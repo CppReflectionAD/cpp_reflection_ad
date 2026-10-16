@@ -409,7 +409,7 @@ def clang_cxxflags(
 ) -> tuple[str, ...]:
     """Reflection flag profile for the clang-p2996 fork.
 
-    Kept in step with _reflect_flags/_reflect_link_flags in tests/CMakeLists.txt:
+    Kept in step with reflection_ad::flags in cmake/reflect_flags.cmake:
     the reflection features, the libc++ stdlib, the -isystem for the installed
     <meta> header, and the library/rpath for libc++ (all rooted at the built
     compiler tree).
