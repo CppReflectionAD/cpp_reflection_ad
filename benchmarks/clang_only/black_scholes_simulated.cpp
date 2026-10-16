@@ -235,12 +235,10 @@ std::array<double, 2> monte_carlo_engine_smoothed_dirac(
       z = mcsim::CDF_inverse(unif(rng));
     }
 
-    double spot_before_last = spot0;
     double factors_except_last = 1.0;
     for (std::size_t step = 0; step + 1 < sim_per_path; ++step) {
       const double factor =
           evolve_black_scholes_normal(r, vol, dts[step], normals_prefix[step]);
-      spot_before_last *= factor;
       factors_except_last *= factor;
     }
 
@@ -342,7 +340,6 @@ int main(int argc, char **argv) {
   const TimePoint maturity = start + Days{367};
 
   const double spot0 = 100.0;
-  double strike = 100.0;
   const double rate = 0.03;
   const double vol = 0.20;
   std::size_t num_paths = 200000;
@@ -577,8 +574,9 @@ int main(int argc, char **argv) {
 
     // Full MC engine timing
     auto t_start = std::chrono::high_resolution_clock::now();
-    const auto [mc_pv, mc_delta, mc_correction] = monte_carlo_engine<PayoffFn>(
-        spot0, rate, vol, maturity_years, benchmark_paths, sim_per_path, seed);
+    [[maybe_unused]] const auto [mc_pv, mc_delta, mc_correction] =
+        monte_carlo_engine<PayoffFn>(spot0, rate, vol, maturity_years,
+                                     benchmark_paths, sim_per_path, seed);
     auto t_end = std::chrono::high_resolution_clock::now();
     auto t_total =
         std::chrono::duration_cast<std::chrono::milliseconds>(t_end - t_start)
@@ -702,11 +700,6 @@ int main(int argc, char **argv) {
           "Nonlinear Digital Call", num_paths);
 
   const double saved_width = g_smoothed_dirac_width;
-  const double cf_price = [:^^double_digital_closed_form<99.0, 101.0>:](
-      spot0, rate, vol, maturity_years);
-  const double cf_delta =
-      ad::forward_derivative<^^double_digital_closed_form<99.0, 101.0>, 0>(
-          spot0, rate, vol, maturity_years);
   const std::vector<std::size_t> path_counts = {
       100,     200,     500,     1000,     2000,    5000,
       10000,   20000,   50000,   100000,   200000,  500000,

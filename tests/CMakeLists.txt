@@ -8,7 +8,8 @@ include("${CMAKE_SOURCE_DIR}/test_simple/test_simple_cmake.cmake")
 # ---------------------------------------------------------------------------
 function(add_reflect_test name source)
     add_executable(${name} ${source})
-    target_link_libraries(${name} PRIVATE reflection_ad::ad)
+    target_link_libraries(${name} PRIVATE reflection_ad::ad reflection_ad::warnings)
+    set_target_properties(${name} PROPERTIES COMPILE_WARNING_AS_ERROR ON)
     target_include_directories(${name} PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
         "${CMAKE_SOURCE_DIR}/test_simple"

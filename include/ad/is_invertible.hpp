@@ -112,7 +112,7 @@ constexpr T apply_registered_inverse(T y) {
 }
 
 template <info Fn, typename T> constexpr T apply_registered_inverse(T) {
-  static_assert(Fn != Fn,
+  static_assert(false,
                 "No inverse pair registered for this function in this call");
   return T{};
 }
@@ -191,7 +191,7 @@ constexpr T apply_registered_inverse_wrt(T y, ExtraArgs... args) {
 
 template <info Fn, std::size_t ArgIndex, typename T, typename... ExtraArgs>
 constexpr T apply_registered_inverse_wrt(T, ExtraArgs...) {
-  static_assert(Fn != Fn,
+  static_assert(false,
                 "No partial inverse pair registered for this function/arg "
                 "index in this call");
   return T{};
