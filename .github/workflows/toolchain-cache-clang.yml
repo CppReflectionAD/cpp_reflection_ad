@@ -1,5 +1,6 @@
-# Restores the clang toolchain from cache, building it on a miss.
+# Makes sure the clang toolchain is in the cache, building it on a miss.
 # Called by clang_prebuilt_cache.yml so tests wait for the toolchain.
+# On a hit this job only looks the key up; the test jobs restore the prefix.
 # The cache key is the submodule commit plus a hash of the build script, so
 # edits to this file don't invalidate the cache. The build itself is in
 # .github/scripts/build-clang-toolchain.sh.
@@ -28,11 +29,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Init clang-p2996 submodule only
-        run: |
-          git submodule sync -- clang-p2996
-          git submodule update --init --depth 1 clang-p2996
-
+      # Reads the submodule commit from the superproject's tree, so the
+      # submodule doesn't need to be cloned on a hit.
       - name: Compute cache key
         id: key
         shell: bash
@@ -43,18 +41,26 @@ jobs:
           CACHE_KEY="clang-${{ runner.os }}-${{ runner.arch }}-${CLANG_SHA:0:12}-${BUILD_INPUT_HASH:0:12}"
           echo "cache_key=${CACHE_KEY}" >> "$GITHUB_OUTPUT"
 
-      - name: Restore clang toolchain from cache
+      - name: Check cache
         id: cache
-        uses: actions/cache@v6
+        uses: actions/cache/restore@v6
         with:
           path: /opt/toolchain-clang
           key: ${{ steps.key.outputs.cache_key }}
+          lookup-only: true
+
+      - name: Init clang-p2996 submodule only
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          git submodule sync -- clang-p2996
+          git submodule update --init --depth 1 clang-p2996
 
       - name: Build and install clang into clean prefix
         if: steps.cache.outputs.cache-hit != 'true'
         run: .github/scripts/build-clang-toolchain.sh clang-p2996 /opt/toolchain-clang
 
-      - name: Verify cached prefix
+      - name: Verify built prefix
+        if: steps.cache.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
           ls -lh /opt/toolchain-clang/bin/
@@ -62,3 +68,21 @@ jobs:
 
           ls -lh /opt/toolchain-clang/lib/clang/*/include/stddef.h
           /opt/toolchain-clang/bin/clang++ --version
+
+      - name: Save clang toolchain
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: /opt/toolchain-clang
+          key: ${{ steps.key.outputs.cache_key }}
+
+      # actions/cache/save only warns when a save fails. Without this check the
+      # job would stay green and every test job would then miss the cache.
+      - name: Confirm the toolchain was saved
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/restore@v6
+        with:
+          path: /opt/toolchain-clang
+          key: ${{ steps.key.outputs.cache_key }}
+          lookup-only: true
+          fail-on-cache-miss: true
