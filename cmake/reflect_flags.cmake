@@ -74,6 +74,8 @@ else() # GCC
     # symbols only it exports (GLIBCXX_3.4.35), so binaries must load the
     # fork's copy, as run_tests.py arranges. The compiler says where its
     # runtime libraries are; a bare name back means it has none of its own.
+    # On macOS the names don't match (.dylib) and nothing is added: the
+    # driver already rpaths its own lib directory there.
     foreach(_lib libstdc++.so libgcc_s.so.1)
         execute_process(COMMAND "${CMAKE_CXX_COMPILER}" -print-file-name=${_lib}
             OUTPUT_VARIABLE _path OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
@@ -89,16 +91,24 @@ endif()
 
 # ---------------------------------------------------------------------------
 # Check that the compiler supports reflection, so that a wrong compiler gives
-# one message here instead of a wall of errors in the first test. The result
-# is cached for this compiler and flag set.
+# one message here instead of a wall of errors in the first test. The probe
+# uses the forks' expression reflection (body_of, statements_of), not just
+# ^^, because stock GCC 16 has P2996 but not that. The result is cached for
+# this compiler and flag set.
 # ---------------------------------------------------------------------------
 set(_probe_key "${CMAKE_CXX_COMPILER};${_reflect_flags};${_reflect_link_flags}")
 if(NOT "${_probe_key}" STREQUAL "${REFLECTION_AD_PROBED}")
     try_compile(_reflection_ok
         SOURCE_FROM_CONTENT reflection_probe.cpp [=[
 #include <meta>
-constexpr std::meta::info r = ^^int;
-static_assert(r == ^^int);
+int f() { return 1; }
+consteval bool has_return(std::meta::info fn) {
+  for (std::meta::info s : std::meta::statements_of(std::meta::body_of(fn)))
+    if (std::meta::is_return_statement(s))
+      return true;
+  return false;
+}
+static_assert(has_return(^^f));
 int main() {}
 ]=]
         COMPILE_DEFINITIONS -std=c++2c ${_reflect_flags}
@@ -109,7 +119,7 @@ int main() {}
         list(JOIN _probe_errors "\n  " _probe_errors)
         message(FATAL_ERROR
             "${CMAKE_CXX_COMPILER} can't compile a minimal reflection program "
-            "(#include <meta>, ^^int) with this project's flags.\n"
+            "(<meta>'s body_of and statements_of) with this project's flags.\n"
             "This project needs the clang-p2996 or the GCC reflection fork. "
             "Build both with `python3 run_tests.py --build-compilers` (into "
             "build/clang-p2996/bin/clang++ and build/gcc-p2996/artifacts/bin/g++), "
