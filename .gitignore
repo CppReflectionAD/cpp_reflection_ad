@@ -1,6 +1,14 @@
 .project
 .cache
-.vscode
+# .vscode/ holds the shared IDE setup; anything else in it stays local.
+# tools/vscode-local-edits.sh keeps personal edits to the shared files out of
+# git status.
+.vscode/*
+!.vscode/settings.json
+!.vscode/launch.json
+!.vscode/extensions.json
+# Personal CMake presets (e.g. a compiler built outside build/).
+CMakeUserPresets.json
 build/
 **/.DS_Store
 # Python tooling (uv, pre-commit, ruff)

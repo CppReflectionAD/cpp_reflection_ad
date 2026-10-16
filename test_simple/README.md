@@ -41,7 +41,7 @@ Each `.fail.txt` file lives next to its `.cpp` file and contains the expected co
 Add a `.cpp` file under `tests/static_fail/`. There is nothing to register: [tests/CMakeLists.txt](../tests/CMakeLists.txt) globs `static_fail/*.cpp` and passes every match to `compile_check()`. Re-run CMake so the new file is picked up:
 
 ```bash
-cmake build/cmake
+cmake build/cmake/clang-debug
 ```
 
 ### 2. Create the First Baseline
@@ -56,7 +56,7 @@ This is the first time this test is being run. To create the baseline:
 
 Run the rebase command:
 ```bash
-cmake --build build/cmake --target rebase-reflection_ad.static_fail.inverse_of_non_invertible
+cmake --build build/cmake/clang-debug --target rebase-reflection_ad.static_fail.inverse_of_non_invertible
 ```
 
 This:
@@ -74,7 +74,7 @@ git add tests/static_fail/inverse_of_non_invertible.fail.txt
 ### 4. Run Tests
 
 ```bash
-ctest --test-dir build/cmake -R inverse_of_non_invertible --output-on-failure
+ctest --test-dir build/cmake/clang-debug -R inverse_of_non_invertible --output-on-failure
 ```
 
 Expected output:
@@ -105,11 +105,11 @@ Sections are kept in alphabetical order, separated by one blank line.
 ### Rebasing with a Specific Compiler
 
 ```bash
-# Switch to Clang CMake session
-cmake --build build/cmake --target rebase-reflection_ad.static_fail.inverse_of_non_invertible
+# Clang (clang-debug preset)
+cmake --build build/cmake/clang-debug --target rebase-reflection_ad.static_fail.inverse_of_non_invertible
 
-# Switch to GCC CMake session
-cmake --build build/cmake --target rebase-reflection_ad.static_fail.inverse_of_non_invertible
+# GCC (gcc-debug preset)
+cmake --build build/cmake/gcc-debug --target rebase-reflection_ad.static_fail.inverse_of_non_invertible
 ```
 
 Each rebase:
@@ -122,11 +122,11 @@ Each rebase:
 Tests automatically validate against the current compiler's section:
 
 ```bash
-# With Clang CMake session active
-ctest --test-dir build/cmake -R inverse_of_non_invertible
+# Clang (clang-debug preset)
+ctest --test-dir build/cmake/clang-debug -R inverse_of_non_invertible
 
-# With GCC CMake session active
-ctest --test-dir build/cmake -R inverse_of_non_invertible
+# GCC (gcc-debug preset)
+ctest --test-dir build/cmake/gcc-debug -R inverse_of_non_invertible
 ```
 
 ## Comparison Process
@@ -190,13 +190,13 @@ int main() {
 EOF
 
 # 2. Re-run CMake so the static_fail/*.cpp glob picks it up
-cmake build/cmake
+cmake build/cmake/clang-debug
 
 # 3. Create the baseline with the current compiler (e.g. Clang)
-cmake --build build/cmake --target rebase-reflection_ad.static_fail.inverse_and_inverse_wrt_of_non_invertible
+cmake --build build/cmake/clang-debug --target rebase-reflection_ad.static_fail.inverse_and_inverse_wrt_of_non_invertible
 
-# 4. Switch to the other compiler's CMake session (e.g. GCC) and add its section
-cmake --build build/cmake --target rebase-reflection_ad.static_fail.inverse_and_inverse_wrt_of_non_invertible
+# 4. Add the other compiler's section (e.g. GCC)
+cmake --build build/cmake/gcc-debug --target rebase-reflection_ad.static_fail.inverse_and_inverse_wrt_of_non_invertible
 
 # 5. Review and commit both files
 git diff tests/static_fail/inverse_and_inverse_wrt_of_non_invertible.fail.txt
@@ -204,7 +204,7 @@ git add tests/static_fail/inverse_and_inverse_wrt_of_non_invertible.cpp \
         tests/static_fail/inverse_and_inverse_wrt_of_non_invertible.fail.txt
 
 # 6. Run the test
-ctest --test-dir build/cmake -R inverse_and_inverse_wrt_of_non_invertible
+ctest --test-dir build/cmake/clang-debug -R inverse_and_inverse_wrt_of_non_invertible
 ```
 
 ### Update an Intentional Change
@@ -216,7 +216,7 @@ If you intentionally change code that affects error messages:
 # ... edit code ...
 
 # 2. Rebase with current compiler
-cmake --build build/cmake --target rebase-reflection_ad.static_fail.inverse_of_non_invertible
+cmake --build build/cmake/clang-debug --target rebase-reflection_ad.static_fail.inverse_of_non_invertible
 
 # 3. Review the diff
 git diff tests/static_fail/inverse_of_non_invertible.fail.txt
@@ -225,7 +225,7 @@ git diff tests/static_fail/inverse_of_non_invertible.fail.txt
 git add tests/static_fail/inverse_of_non_invertible.fail.txt
 
 # 5. Repeat for other compilers if needed
-cmake --build build/cmake --target rebase-reflection_ad.static_fail.inverse_of_non_invertible
+cmake --build build/cmake/gcc-debug --target rebase-reflection_ad.static_fail.inverse_of_non_invertible
 ```
 
 ## Debugging Test Failures
