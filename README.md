@@ -117,6 +117,25 @@ python3 run_tests.py --compiler clang --build-compilers --run-executables \
 
 Each demo prints its own `ALL CHECKS PASSED` / `ALL MATCH` on success.
 
+## Building with CMake presets
+
+`CMakePresets.json` has a configure, build and test preset per compiler and
+build type: `clang-debug`, `clang-relwithdebinfo`, `clang-release`, and the same
+for `gcc-`. Each one picks the compiler built in `build/` (`build/clang-p2996`,
+`build/gcc-p2996`), uses Ninja, writes `compile_commands.json`, and builds into
+`build/cmake/<preset>`.
+
+```bash
+cmake --preset clang-debug           # configure
+cmake --build --preset clang-debug   # build tests and benchmarks
+ctest --preset clang-debug           # run the tests
+```
+
+To use a compiler from somewhere else, override it on the configure line
+(`cmake --preset clang-debug -DCMAKE_CXX_COMPILER=/path/to/clang++`, as CI
+does) or in a personal, git-ignored `CMakeUserPresets.json` that inherits from
+these presets.
+
 ## Formatting and linting
 
 [pre-commit](https://pre-commit.com) checks formatting (clang-format 21 for C++, ruff for Python), lint and whitespace. CI runs the same hooks. Python tooling is managed by [uv](https://docs.astral.sh/uv/):
@@ -130,23 +149,37 @@ The Python helper scripts' dependencies are in the `scripts` group, e.g. `uv run
 
 ## How to Debug with VSCode
 
-1. Install these extensions (or verify they are already installed):
-    - `vadimcn.vscode-lldb`
-    - `ms-vscode.cmake-tools`
-2. Copy or adapt the files from `copy_to_.vscode` into your workspace `.vscode` folder.
-3. Build the compiler artifacts before selecting kits:
-    - `python3 run_tests.py --compiler clang --build-compilers`
-    - `python3 run_tests.py --compiler gcc --build-compilers`
-4. In VS Code CMake Tools, select one of these kits:
-    - `Clang reflection`
-    - `GCC reflection`
+The repo checks in a VS Code setup in `.vscode/`: CMake Tools in presets mode,
+debug configurations, and IntelliSense from `build/compile_commands.json`.
 
-You should now be able to build and debug the tests in VSCode.
+1. Build the compiler(s) (see [Test Runner](#test-runner)); the presets look for
+   them in `build/`.
+2. Install the recommended extensions (VS Code offers them when the folder
+   opens): `ms-vscode.cmake-tools` and `vadimcn.vscode-lldb` (CodeLLDB). For gdb
+   instead, install `ms-vscode.cpptools` too.
+3. In the CMake Tools side bar, pick a configure preset, e.g. `clang-p2996, Debug`
+   (`clang-debug`).
+4. To debug a test:
+   - **From the Test Explorer:** right-click a test, then **Debug Test**. This
+     uses the `Debug CTest test (lldb)` configuration.
+   - **From Run and Debug (F5):** pick the test as the CMake launch target, then
+     run `Debug launch target (lldb)` (or `(gdb)`).
+
+The binaries carry an rpath to their compiler's runtime library, so they need
+no `LD_LIBRARY_PATH`; on the command line, `lldb build/cmake/clang-debug/tests/ad_scalar_demo`
+(or `gdb ...`) works as is.
+
+To use gdb for **Debug Test**, set `cmake.ctest.debugLaunchTarget` to
+`Debug CTest test (gdb)`. To keep personal edits like that to the shared
+`.vscode/` files out of `git status`, run `tools/vscode-local-edits.sh`
+(`--undo` reverses it). The script's header says what to do when a pull changes
+one of those files.
 
 ## Timing Benchmarks
 
-To perform timing benchmarks, build with Release option and run a benchmark setting iterations, for example:
+To perform timing benchmarks, build a Release preset and run a benchmark setting iterations, for example:
 
 ```bash
-ITERATIONS=1000000 ./build/cmake/benchmarks/black_scholes_timing
+cmake --preset clang-release && cmake --build --preset clang-release
+ITERATIONS=1000000 ./build/cmake/clang-release/benchmarks/black_scholes_timing
 ```
