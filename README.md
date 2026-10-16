@@ -1,5 +1,11 @@
 # cpp_reflection_ad
 
+> [!WARNING]
+> **`.vscode/` is now tracked ([#124](https://github.com/CppReflectionAD/cpp_reflection_ad/pull/124)).** Back up your local `.vscode/settings.json`,
+> `launch.json` and `extensions.json` before you pull: git replaces ignored files
+> with tracked ones without asking. Afterwards, copy your changes back and run
+> `tools/vscode-local-edits.sh` so git leaves them alone. Details in [#125](https://github.com/CppReflectionAD/cpp_reflection_ad/issues/125).
+
 Proof of concept for automatic differentiation of C++ code using static reflection. Based on (and hoping to extend) the C++ reflection proposal P2996R13:
 https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2025/p2996r13.html
 
