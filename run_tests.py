@@ -472,8 +472,10 @@ def build_specs(args: argparse.Namespace) -> dict[str, CompilerSpec]:
             # The clang root doubles as its build tree (runtimes + <meta> land here).
             build_dir=clang_root,
             binary_dir=clang_root,
+            # absolute(), not resolve(): clang++ is a symlink to clang-<N>, and
+            # the name it's run by picks the driver mode (C++ or C).
             executable=(
-                Path(args.clang_executable).resolve()
+                Path(args.clang_executable).absolute()
                 if args.clang_executable
                 else clang_root / "bin" / "clang++"
             ),
