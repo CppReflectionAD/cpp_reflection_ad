@@ -68,26 +68,22 @@ for now. Each compiler has a **flag profile** (its reflection/stdlib flags), so
 once a gcc engine exposes the same `ad::` interface its drivers can move to
 `tests/common/` and run under both compilers unchanged. In CMake the profile is
 the `reflection_ad::flags` target in [cmake/reflect_flags.cmake](cmake/reflect_flags.cmake),
-which the library targets carry; `run_tests.py` still has its own copy.
+which the library targets carry, so every test and benchmark gets it from there.
 
 ## Test Runner
 
-`run_tests.py` selects `clang`/`gcc`/both, compiles every `.cpp` under `tests/`
-(respecting the `clang_only`/`gcc_only` dirs), optionally runs the
-binaries, and reports compile vs runtime failures. Everything is built at
-`-O3` (as CMake's Release build), so benchmark timings are meaningful;
-`--opt-level` changes that. A test may add flags via a `// TEST-FLAGS: ...`
-comment near its top; they come after `--opt-level`, so they can override it.
-Tests under `tests/static_fail/` are expected **not** to compile (e.g. they
-trip a `static_assert`); they pass only when compilation fails.
-`run_tests.py` only checks that they fail to compile; `ctest` also compares the
-errors with the `.fail.txt` baseline next to each test (see
-[test_simple/README.md](test_simple/README.md)).
-Tests under `tests/known_gap/{clang,gcc}/` record a known bug or missing
-feature in that compiler's reflection fork: code it should accept but rejects.
-Only `ctest` runs them, for that compiler, against their `.fail.txt`, so a test
-fails once the gap is fixed (the file compiles); then move it into the normal
-test directories. `run_tests.py` skips them.
+`run_tests.py` is the one command for building and testing, used the same way
+locally and in CI. It is a thin driver over the [CMake presets](#building-with-cmake-presets):
+for each selected compiler (`--compiler clang`, `gcc` or `both`, the default)
+and build type (`--build-type release`, the default, `debug`, `relwithdebinfo`,
+or `all` for each in turn) it configures the preset (`clang-release`, ...) with
+that compiler, builds, and runs `ctest`, then prints a summary. Everything else
+(the flags, which tests exist, the `.fail.txt` comparison for `static_fail/`
+and `known_gap/` tests) is defined in CMake, so `ctest` on its own gives the
+same results. Build trees go in `build/cmake/<preset>`, shared with
+`cmake --preset` and VS Code; `-B DIR` puts them in `DIR/<preset>` instead,
+and `--clean` deletes them first. Arguments after `--` go to the CMake
+configure step.
 
 The repo is **self-contained**: `--build-compilers` builds clang from its own
 `clang-p2996` submodule into `build/` — no externally pre-built compiler needed.
@@ -102,24 +98,36 @@ the fork's `<meta>` header. Host prerequisites: `git`, `cmake`, `ninja`, host
 # one-time: build clang + runtimes into build/clang-p2996 (slow — builds LLVM)
 python3 run_tests.py --compiler clang --build-compilers
 
-# run the tests (clang root defaults to build/clang-p2996)
-python3 run_tests.py --compiler clang --run-executables
+# build and run every test (Release; the clang root defaults to build/clang-p2996)
+python3 run_tests.py --compiler clang
 
-# a single test; --verbose prints the exact compile commands
-python3 run_tests.py --compiler clang --tests 'common/ad_scalar_demo.cpp' --run-executables
+# every build type, both compilers: what CI checks
+python3 run_tests.py --build-type all
 
-# a single benchmark (ITERATIONS=... tunes the workload)
-ITERATIONS=1000000 python3 run_tests.py --compiler clang --benchmarks 'black_scholes_timing.cpp' --run-executables
+# a single test, by ctest name or by path under tests/
+python3 run_tests.py --compiler clang --tests ad_scalar_demo
+python3 run_tests.py --compiler clang --tests 'common/ad_scalar_demo.cpp'
 
-# use a clang built elsewhere (or set CLANG_P2996_ROOT)
-python3 run_tests.py --compiler clang --clang-root /path/to/clang-p2996 --run-executables
+# build one test in Debug and start it under a debugger
+python3 run_tests.py --compiler clang --tests ad_scalar_demo --debugger lldb
+
+# build and run a benchmark (ITERATIONS=... tunes the workload)
+ITERATIONS=1000000 python3 run_tests.py --compiler clang --benchmarks black_scholes_timing --run-executables
+
+# use a clang built elsewhere (or set CLANG_P2996_ROOT), or any compiler binary
+python3 run_tests.py --compiler clang --clang-root /path/to/clang-p2996
+python3 run_tests.py --compiler gcc --gcc-executable /path/to/g++
 
 # build clang from another clang-p2996 checkout (or set REFLECT_CLANG_SOURCE_DIR),
 # into its own clang root so the default build/clang-p2996 is left untouched
-python3 run_tests.py --compiler clang --build-compilers --run-executables \
+python3 run_tests.py --compiler clang --build-compilers \
     --clang-source-dir ../clang-p2996 \
     --clang-root build/clang-other --clang-runtimes-dir build/libcxx-other
 ```
+
+A `clang_only/` test asked for by name under `--compiler both` runs on clang
+and is skipped, with a note, on GCC. `--verbose` shows the full build and
+test commands.
 
 Each demo prints its own `ALL CHECKS PASSED` / `ALL MATCH` on success.
 

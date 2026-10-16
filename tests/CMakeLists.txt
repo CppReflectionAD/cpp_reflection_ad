@@ -32,8 +32,8 @@ file(GLOB _known_gap_clang CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DI
     "${CMAKE_CURRENT_SOURCE_DIR}/known_gap/clang/*.cpp")
 file(GLOB _known_gap_gcc CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/known_gap/gcc/*.cpp")
-# run_tests.py compiles every .cpp under tests/, so a test anywhere else (e.g.
-# directly in tests/ or in fixtures/) would build there but not here.
+# Only the directories above are globbed, so a test anywhere else (e.g.
+# directly in tests/ or in fixtures/) would silently never build or run.
 file(GLOB_RECURSE _stray CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
 list(FILTER _stray EXCLUDE REGEX
