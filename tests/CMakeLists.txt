@@ -72,6 +72,7 @@ function(add_reflect_test name source)
     target_link_options(${name} PRIVATE ${_reflect_link_flags})
     target_include_directories(${name} PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}"
+        "${CMAKE_SOURCE_DIR}/include"
         "${CMAKE_SOURCE_DIR}/test_simple"
     )
     add_test(NAME ${name} COMMAND ${name})
