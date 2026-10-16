@@ -25,6 +25,9 @@ GCC_ONLY_DIR = "gcc_only"
 # the error output to the .fail.txt baseline (see compile_check in
 # tests/CMakeLists.txt); this script only checks that compilation fails.
 STATIC_FAIL_DIR = "static_fail"
+# Tests under tests/known_gap/ need per-file flags and a .fail.txt comparison
+# that only CTest provides (see tests/CMakeLists.txt), so this script skips them.
+KNOWN_GAP_DIR = "known_gap"
 
 # The clang reflection fork is built from the clang-p2996 submodule (override
 # with --clang-source-dir / REFLECT_CLANG_SOURCE_DIR) into this repo's own
@@ -37,9 +40,9 @@ DEFAULT_CLANG_SOURCE_DIR = os.environ.get(
     "REFLECT_CLANG_SOURCE_DIR", str(ROOT / "clang-p2996")
 )
 DEFAULT_CLANG_ROOT = os.environ.get("CLANG_P2996_ROOT", str(BUILD_ROOT / "clang-p2996"))
-# Standalone libc++/libc++abi/libunwind (runtimes) build tree. Built with the
-# freshly built clang; its headers/libs are emitted into the clang root via
-# LLVM_BINARY_DIR (see build_clang_runtimes).
+# Standalone libc++/libc++abi (plus libunwind off Darwin) runtimes build tree.
+# Built with the freshly built clang; its headers/libs are emitted into the
+# clang root via LLVM_BINARY_DIR (see build_clang_runtimes).
 DEFAULT_CLANG_RUNTIMES_DIR = str(BUILD_ROOT / "libcxx")
 DEFAULT_GCC_TOOLCHAIN = os.environ.get(
     "REFLECT_GCC_TOOLCHAIN",
@@ -198,7 +201,8 @@ def parse_args() -> argparse.Namespace:
         "--clang-runtimes-dir",
         default=DEFAULT_CLANG_RUNTIMES_DIR,
         help=(
-            "Build directory for the standalone libc++/libc++abi/libunwind runtimes. "
+            "Build directory for the standalone libc++/libc++abi runtimes "
+            "(plus libunwind except on macOS). "
             f"Default: {DEFAULT_CLANG_RUNTIMES_DIR}."
         ),
     )
@@ -413,9 +417,10 @@ def clang_cxxflags(
 ) -> tuple[str, ...]:
     """Reflection flag profile for the clang-p2996 fork.
 
-    Mirrors DEMO_FLAGS in the top-level Makefile: the reflection features, the
-    libc++ stdlib, the -isystem for the installed <meta> header, and the
-    library/rpath for libc++ (all rooted at the built compiler tree).
+    Kept in step with _reflect_flags/_reflect_link_flags in tests/CMakeLists.txt:
+    the reflection features, the libc++ stdlib, the -isystem for the installed
+    <meta> header, and the library/rpath for libc++ (all rooted at the built
+    compiler tree).
     """
     libcxx_inc = clang_root / "include" / "c++" / "v1"
     libcxx_lib = clang_root / "lib"
@@ -505,6 +510,8 @@ def is_test_applicable(test_file: Path, base_dir: Path, compiler_name: str) -> b
         return True
 
     top_level_dir = relative_path.parts[0]
+    if top_level_dir == KNOWN_GAP_DIR:
+        return False
     if top_level_dir == CLANG_ONLY_DIR:
         return compiler_name == "clang"
     if top_level_dir == GCC_ONLY_DIR:
@@ -667,53 +674,82 @@ def build_clang(spec: CompilerSpec, args: argparse.Namespace) -> None:
 
 
 def build_clang_runtimes(spec: CompilerSpec, args: argparse.Namespace) -> None:
-    """Build libc++/libc++abi/libunwind and install the <meta> header.
+    """Build libc++/libc++abi (plus libunwind off Darwin) and install <meta>.
 
     Uses the freshly built clang and points LLVM_BINARY_DIR at the clang root so
     the generated headers land in <root>/include/c++/v1 and libs in <root>/lib —
     exactly where the clang flag profile's -isystem/-L expect them.
+
+    On Darwin, libc++abi uses the system unwinder in libSystem, as Apple's own
+    libc++abi does, so no separate libunwind is built. libSystem re-exports
+    /usr/lib/system/libunwind.dylib, and ld resolves that re-export by leaf name
+    through -L, so any libunwind.dylib in <root>/lib is picked up instead and ld
+    warns that it "couldn't be matched with any parent library" on every link.
     """
     runtimes_dir = Path(args.clang_runtimes_dir).resolve()
     built_clang = spec.build_dir / "bin" / "clang"
     built_clangxx = spec.build_dir / "bin" / "clang++"
     ensure_directory(runtimes_dir)
 
-    if (runtimes_dir / "build.ninja").is_file():
+    c_flags = ""
+    cxx_flags = ""
+    if sys.platform != "darwin" and args.gcc_toolchain:
+        c_flags = f"--gcc-toolchain={args.gcc_toolchain}"
+        cxx_flags = c_flags
+    if sys.platform == "darwin":
+        runtimes = "libcxx;libcxxabi"
+        platform_options = ["-DLIBCXXABI_USE_LLVM_UNWINDER=OFF"]
+    else:
+        runtimes = "libcxx;libcxxabi;libunwind"
+        platform_options = []
+    configure = [
+        "cmake",
+        "-S",
+        str(spec.source_dir / "runtimes"),
+        "-B",
+        str(runtimes_dir),
+        "-G",
+        "Ninja",
+        f"-DCMAKE_C_COMPILER={built_clang}",
+        f"-DCMAKE_CXX_COMPILER={built_clangxx}",
+        f"-DCMAKE_C_FLAGS={c_flags}",
+        f"-DCMAKE_CXX_FLAGS={cxx_flags}",
+        "-DCMAKE_BUILD_TYPE=RelWithDebInfo",
+        f"-DLLVM_ENABLE_RUNTIMES={runtimes}",
+        *platform_options,
+        f"-DLLVM_BINARY_DIR={spec.build_dir}",
+        f"-DLLVM_CONFIG_PATH={spec.build_dir / 'bin' / 'llvm-config'}",
+    ]
+
+    # Re-run cmake whenever the configure command changes, not only on a fresh
+    # tree, so existing trees pick up new runtimes options.
+    stamp_file = runtimes_dir / ".run_tests_configure.json"
+    try:
+        configured = json.loads(stamp_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        configured = None
+    if (runtimes_dir / "build.ninja").is_file() and configured == configure:
         log(f"[runtimes] already configured ({runtimes_dir}); skipping cmake")
     else:
-        log("[runtimes] configuring libc++/libc++abi/libunwind (cmake)...")
-        c_flags = ""
-        cxx_flags = ""
-        if sys.platform != "darwin" and args.gcc_toolchain:
-            c_flags = f"--gcc-toolchain={args.gcc_toolchain}"
-            cxx_flags = c_flags
-        configure = [
-            "cmake",
-            "-S",
-            str(spec.source_dir / "runtimes"),
-            "-B",
-            str(runtimes_dir),
-            "-G",
-            "Ninja",
-            f"-DCMAKE_C_COMPILER={built_clang}",
-            f"-DCMAKE_CXX_COMPILER={built_clangxx}",
-            f"-DCMAKE_C_FLAGS={c_flags}",
-            f"-DCMAKE_CXX_FLAGS={cxx_flags}",
-            "-DCMAKE_BUILD_TYPE=RelWithDebInfo",
-            "-DLLVM_ENABLE_RUNTIMES=libcxx;libcxxabi;libunwind",
-            f"-DLLVM_BINARY_DIR={spec.build_dir}",
-            f"-DLLVM_CONFIG_PATH={spec.build_dir / 'bin' / 'llvm-config'}",
-        ]
+        log(f"[runtimes] configuring {runtimes.replace(';', '/')} (cmake)...")
         require_success(
             run_command_streamed(configure, cwd=ROOT, verbose=args.verbose),
             "runtimes configure",
         )
+        stamp_file.write_text(json.dumps(configure, indent=2) + "\n", encoding="utf-8")
 
     log(f"[runtimes] building libc++/libc++abi with ninja (-j{args.jobs})...")
     build = ["ninja", "-C", str(runtimes_dir), "-j", str(args.jobs), "cxx", "cxxabi"]
     require_success(
         run_command_streamed(build, cwd=ROOT, verbose=args.verbose), "runtimes build"
     )
+
+    if sys.platform == "darwin":
+        # Trees built before libunwind was dropped on Darwin still have it in
+        # <root>/lib. Nothing links it any more, but ld still finds it.
+        for stale in sorted((spec.build_dir / "lib").glob("libunwind*")):
+            log(f"[runtimes] removing stale {stale}")
+            stale.unlink()
 
     log("[runtimes] syncing <meta> header into libc++ include dir...")
     sync_meta_header(spec)

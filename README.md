@@ -35,14 +35,20 @@ trip a `static_assert`); they pass only when compilation fails.
 `run_tests.py` only checks that they fail to compile; `ctest` also compares the
 errors with the `.fail.txt` baseline next to each test (see
 [test_simple/README.md](test_simple/README.md)).
+Tests under `tests/known_gap/{clang,gcc}/` record a known bug or missing
+feature in that compiler's reflection fork: code it should accept but rejects.
+Only `ctest` runs them, for that compiler, against their `.fail.txt`, so a test
+fails once the gap is fixed (the file compiles); then move it into the normal
+test tree. `run_tests.py` skips them.
 
 The repo is **self-contained**: `--build-compilers` builds clang from its own
 `clang-p2996` submodule into `build/` — no externally pre-built compiler needed.
 It checks out the submodule, builds clang (host `clang` + `lld`), builds the
 Darwin `LTO` target as well on macOS so `libLTO.dylib` is present for the local
-toolchain driver, builds the `libc++`/`libc++abi`/`libunwind` runtimes with that
-clang, and syncs the fork's `<meta>` header. Host prerequisites: `git`, `cmake`,
-`ninja`, host `clang`/`clang++`, `ld.lld`.
+toolchain driver, builds the `libc++`/`libc++abi` runtimes (plus `libunwind`
+except on macOS, where the system unwinder is used) with that clang, and syncs
+the fork's `<meta>` header. Host prerequisites: `git`, `cmake`, `ninja`, host
+`clang`/`clang++`, `ld.lld`.
 
 ```bash
 # one-time: build clang + runtimes into build/clang-p2996 (slow — builds LLVM)

@@ -7,6 +7,11 @@ on:
     branches: ["main"]
   pull_request:
   workflow_dispatch:
+  # Nightly on main, off the hour to avoid GitHub's peak queueing. Restoring
+  # the toolchain resets the cache's 7-day eviction clock, or rebuilds it if
+  # it was evicted, and the run catches drift that no PR triggers.
+  schedule:
+    - cron: "17 3 * * *"
 
 permissions:
   contents: read
@@ -49,9 +54,7 @@ jobs:
         run: |
           cmake -S . -B "$BUILD_DIR" \
             -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
-            -DCMAKE_CXX_COMPILER=/opt/toolchain-clang/bin/clang++ \
-            -DCMAKE_CXX_FLAGS="-stdlib=libc++" \
-            -DCMAKE_EXE_LINKER_FLAGS="-stdlib=libc++ -L/opt/toolchain-clang/lib -Wl,-rpath,/opt/toolchain-clang/lib"
+            -DCMAKE_CXX_COMPILER=/opt/toolchain-clang/bin/clang++
 
       - name: Build tests
         run: cmake --build "$BUILD_DIR" --parallel
