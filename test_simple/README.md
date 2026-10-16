@@ -89,12 +89,12 @@ A single `.fail.txt` file contains expected errors for multiple compilers:
 
 ```
 === Clang ===
-tests/static_fail/../is_invertible.hpp:1019:7: error: static assertion failed due to requirement 'is_invertible<^^(...)>()': ad::inverse requires an explicit inverse plan; ...
+include/ad/is_invertible.hpp:1019:7: error: static assertion failed due to requirement 'is_invertible<^^(...)>()': ad::inverse requires an explicit inverse plan; ...
  1019 |       is_invertible<Fn, RegisteredPairs...>(),
       |       ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 === GCC ===
-tests/static_fail/../is_invertible.hpp:1019:44: error: static assertion failed: ad::inverse requires an explicit inverse plan; ...
+include/ad/is_invertible.hpp:1019:44: error: static assertion failed: ad::inverse requires an explicit inverse plan; ...
  1019 |       is_invertible<Fn, RegisteredPairs...>(),
       |       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~
   • 'ad::is_invertible<^^fn_square>()' evaluates to false

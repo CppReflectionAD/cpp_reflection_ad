@@ -1,4 +1,4 @@
-#include "../is_invertible.hpp"
+#include <ad/is_invertible.hpp>
 
 inline double fn_square(double x) { return x * x; }
 inline double fn_square_plus(double x, double y) { return x * x + y; }

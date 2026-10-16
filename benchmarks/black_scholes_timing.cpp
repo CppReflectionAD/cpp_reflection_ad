@@ -1,12 +1,12 @@
 // TEST-FLAGS-CLANG: -fconstexpr-steps=16000000
 // TEST-FLAGS-GCC: -fconstexpr-ops-limit=96000000
 
-#include "../tests/forward_derivative.h"
-#include "../tests/higher_order_taylor_ad.h"
-#include "../tests/recursive_higher_order_derivative.h"
-#include "../tests/reverse_derivative.h"
+#include <ad/forward_derivative.h>
+#include <ad/higher_order_taylor_ad.h>
+#include <ad/recursive_higher_order_derivative.h>
+#include <ad/reverse_derivative.h>
 
-#include "../tests/mc_sim/black_scholes.hpp"
+#include "mc_sim/black_scholes.hpp"
 
 #include <array>
 #include <chrono>

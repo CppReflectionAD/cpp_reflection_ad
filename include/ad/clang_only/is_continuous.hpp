@@ -31,12 +31,12 @@
 // one may jump, and is reported. abs/max/min are ops, not branches: kinked but
 // continuous.
 
-#include "../autograd.h" // for ad::Node, ad::OpKind, ad::build_nodes<>
-#include "../cx_std/cx_erfc.hpp"
-#include "../cx_std/cx_exp.hpp"
-#include "../cx_std/cx_log.hpp"
-#include "../cx_std/cx_sqrt.hpp"
-#include "../cx_std/cx_trig.hpp"
+#include <ad/autograd.h> // for ad::Node, ad::OpKind, ad::build_nodes<>
+#include <cx_std/cx_erfc.hpp>
+#include <cx_std/cx_exp.hpp>
+#include <cx_std/cx_log.hpp>
+#include <cx_std/cx_sqrt.hpp>
+#include <cx_std/cx_trig.hpp>
 
 #include <algorithm>
 #include <array>

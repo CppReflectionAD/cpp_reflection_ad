@@ -26,7 +26,7 @@
 // Special cases: NaN → NaN, ±∞ → NaN, sin(±0) = ±0.
 //
 // Accuracy: within a few ulp of std::sin / std::cos for every finite double
-// (see tests/cx_std/cx_std.t.cpp).
+// (see tests/common/cx_std.t.cpp).
 
 #ifndef CX_STD_CX_TRIG_HPP
 #define CX_STD_CX_TRIG_HPP

@@ -53,12 +53,12 @@
 //   * Overflow (exp(1000)) reports PlusInf rather than a finite value double
 //     cannot hold.
 
-#include "../autograd.h" // ad::Node, ad::OpKind, ad::build_nodes<>
-#include "../cx_std/cx_erfc.hpp"
-#include "../cx_std/cx_exp.hpp"
-#include "../cx_std/cx_log.hpp"
-#include "../cx_std/cx_sqrt.hpp"
-#include "../cx_std/cx_trig.hpp"
+#include <ad/autograd.h> // ad::Node, ad::OpKind, ad::build_nodes<>
+#include <cx_std/cx_erfc.hpp>
+#include <cx_std/cx_exp.hpp>
+#include <cx_std/cx_log.hpp>
+#include <cx_std/cx_sqrt.hpp>
+#include <cx_std/cx_trig.hpp>
 
 #include <array>
 #include <cstddef>

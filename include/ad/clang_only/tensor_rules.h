@@ -12,8 +12,8 @@
 #ifndef REFLECT_DEMO_TENSOR_RULES_H
 #define REFLECT_DEMO_TENSOR_RULES_H
 
-#include "../autograd.h"
 #include "tensor.h"
+#include <ad/autograd.h>
 
 template <> struct ad::primitive<^^nn::add> {
   static constexpr ad::OpKind op = ad::OpKind::Add;
