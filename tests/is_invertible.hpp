@@ -8,7 +8,6 @@
 // used: if no explicit inverse plan is found, is_invertible returns false.
 
 #include "autograd.h" // for ad::Node, ad::OpKind, ad::build_nodes<>
-#include "mc_sim/normal_distribution.hpp"
 
 #include <array>
 #include <cmath>
