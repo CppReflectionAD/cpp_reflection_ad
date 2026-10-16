@@ -1,4 +1,13 @@
 #!/usr/bin/env python3
+"""Build the reflection compilers, then build and test this repo through CMake.
+
+The test half is a thin driver over CMakePresets.json: for each selected
+compiler and build type it configures the matching preset (clang-release,
+gcc-debug, ...), builds, and runs ctest, so a local run and CI run the same
+commands. The flags, the test list and the expected failures all live in
+CMake. --build-compilers builds the compiler forks from their submodules
+first.
+"""
 
 from __future__ import annotations
 
@@ -6,41 +15,35 @@ import argparse
 import json
 import os
 import platform
+import re
 import shlex
 import shutil
 import subprocess
 import sys
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-INCLUDE_DIR = ROOT / "include"
 TESTS_DIR = ROOT / "tests"
-FIXTURES_DIR = TESTS_DIR / "fixtures"
 BENCHMARKS_DIR = ROOT / "benchmarks"
 BUILD_ROOT = ROOT / "build"
-ARTIFACTS_DIR = BUILD_ROOT / "artifacts"
-CLANG_ONLY_DIR = "clang_only"
-GCC_ONLY_DIR = "gcc_only"
-# Tests under tests/static_fail/ must be rejected by the compiler (e.g. by a
-# static_assert); they pass only when compilation fails. CTest also compares
-# the error output to the .fail.txt baseline (see compile_check in
-# tests/CMakeLists.txt); this script only checks that compilation fails.
-STATIC_FAIL_DIR = "static_fail"
-# Tests under tests/known_gap/ need per-file flags and a .fail.txt comparison
-# that only CTest provides (see tests/CMakeLists.txt), so this script skips
-# them, except on a compiler named by a `// TEST-PASSES-ON: ...` line at the
-# top of the file: there it is an ordinary test, as in CMake.
-KNOWN_GAP_DIR = "known_gap"
-TEST_PASSES_ON_DIRECTIVE = "// TEST-PASSES-ON:"
+# The presets' own binaryDir is build/cmake/<preset>; using the same place
+# means this script, `cmake --preset` and VS Code share build trees.
+CMAKE_BUILD_ROOT = BUILD_ROOT / "cmake"
+BUILD_TYPES = ("debug", "relwithdebinfo", "release")
+# compile_check (test_simple/test_simple_cmake.cmake) names these tests
+# reflection_ad.<path under tests/, with / as .>; every other test is named
+# after its file, up to the first '.'. A known_gap/ file with a
+# `// TEST-PASSES-ON:` line is also an ordinary test on the other compiler.
+COMPILE_CHECK_DIRS = ("static_fail", "known_gap")
 
 # The clang reflection fork is built from the clang-p2996 submodule (override
 # with --clang-source-dir / REFLECT_CLANG_SOURCE_DIR) into this repo's own
 # build/ tree, so the repo is self-contained (no dependency on any
 # externally pre-built compiler). The clang "root" is that build tree: it holds
-# bin/clang++, include/c++/v1/meta, and lib/libc++.so, and the clang flag
-# profile is derived from it. Override with --clang-root / CLANG_P2996_ROOT to
-# point at a compiler built elsewhere.
+# bin/clang++, include/c++/v1/meta, and lib/libc++.so, and CMake derives the
+# clang flag profile from the compiler's location in it. Override with
+# --clang-root / CLANG_P2996_ROOT to point at a compiler built elsewhere.
 DEFAULT_CLANG_SOURCE_DIR = os.environ.get(
     "REFLECT_CLANG_SOURCE_DIR", str(ROOT / "clang-p2996")
 )
@@ -78,14 +81,6 @@ else:
     DEFAULT_GCC_PATCHES_DIR = os.environ.get("REFLECT_GCC_PATCHES_DIR", "")
     DEFAULT_GCC_SYNC_FROM = os.environ.get("REFLECT_GCC_SYNC_FROM", "")
 
-# Per-test compile flags are declared inline via a `// TEST-FLAGS: ...` comment
-# in the first few lines of a test (e.g. a raised constexpr limit). Flags that
-# only one compiler understands go in a `// TEST-FLAGS-<COMPILER>: ...` variant
-# (e.g. `// TEST-FLAGS-CLANG:`), which is appended after the shared flags when
-# building with that compiler and ignored by every other one.
-TEST_FLAGS_DIRECTIVE = "// TEST-FLAGS:"
-TEST_FLAGS_SCAN_LINES = 10
-
 
 @dataclass(frozen=True)
 class CommandResult:
@@ -96,52 +91,47 @@ class CommandResult:
 
 
 @dataclass(frozen=True)
-class TestResult:
-    compiler: str
-    test_file: Path
-    compile_result: CommandResult
-    run_result: CommandResult | None
-    expect_compile_failure: bool = False
-
-    @property
-    def compile_ok(self) -> bool:
-        compiled = self.compile_result.returncode == 0
-        return compiled != self.expect_compile_failure
-
-    @property
-    def run_ok(self) -> bool:
-        return self.run_result is None or self.run_result.returncode == 0
-
-
-@dataclass(frozen=True)
 class CompilerSpec:
     name: str
     source_dir: Path
     build_dir: Path
     binary_dir: Path
     executable: Path
-    # Reflection flag profile for this compiler: everything the compiler needs
-    # beyond -std and the source/-o pair (reflection features, stdlib, include
-    # and library paths). This is what lets the same test compile under a
-    # different compiler by simply selecting a different profile.
-    cxxflags: tuple[str, ...] = ()
 
 
-def opt_level_flag(level: str) -> str:
-    """The -O flag for an --opt-level value: 3, O3 and -O3 all mean -O3."""
-    name = level.removeprefix("-").removeprefix("O")
-    if not (name.isdigit() or name in ("s", "z", "g", "fast")):
-        raise argparse.ArgumentTypeError(
-            f"{level!r} is not an optimization level (0, 2, s, O3, -Og, ...)"
-        )
-    return f"-O{name}"
+@dataclass(frozen=True)
+class Selection:
+    """What to build and run in one configured build tree."""
+
+    tests: list[str] | None  # ctest names; None runs every test
+    benchmarks: list[str]  # benchmark targets to build (and maybe run)
 
 
-def parse_args() -> argparse.Namespace:
+@dataclass
+class RunResult:
+    compiler: str
+    build_type: str
+    build_dir: Path
+    status: str = "passed"  # or the step that failed, or "skipped"
+    detail: str = ""
+    # Requested tests or benchmarks this compiler doesn't have.
+    missing: list[str] = field(default_factory=list)
+
+
+def parse_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
+    """Parse this script's options; everything after `--` goes to CMake."""
+    if "--" in argv:
+        split = argv.index("--")
+        argv, cmake_args = argv[:split], argv[split + 1 :]
+    else:
+        cmake_args = []
+
     parser = argparse.ArgumentParser(
         description=(
-            "Build reflection compilers and compile tests under tests/ "
-            "(or benchmarks under benchmarks/)."
+            "Build the reflection compilers, then configure, build and test "
+            "this repo with the CMake presets (one per compiler and build "
+            "type). Arguments after `--` are passed to the CMake configure "
+            "step, e.g. `-- -DCMAKE_VERBOSE_MAKEFILE=ON`."
         )
     )
     parser.add_argument(
@@ -151,37 +141,82 @@ def parse_args() -> argparse.Namespace:
         help="Compiler to use for the test run.",
     )
     parser.add_argument(
+        "--build-type",
+        choices=(*BUILD_TYPES, "all"),
+        help=(
+            "CMake build type, i.e. which preset (<compiler>-<build type>) to "
+            "use; 'all' runs each in turn. Default: release, or debug with "
+            "--debugger."
+        ),
+    )
+    parser.add_argument(
         "--build-compilers",
         action="store_true",
         help="Build the selected compiler submodules before running tests.",
     )
     parser.add_argument(
-        "--run-executables",
-        action="store_true",
-        help="Run successfully compiled test binaries and report runtime failures.",
-    )
-    parser.add_argument(
         "--tests",
         nargs="*",
-        metavar="PATTERN",
-        help="Optional glob patterns relative to tests/, for example 'common/*.cpp' or 'clang_only/*.t.cpp'.",
+        metavar="TEST",
+        help=(
+            "Tests to build and run, by ctest name ('ad_scalar_demo', "
+            "'reflection_ad.static_fail.inverse_of_non_invertible') or by glob "
+            "relative to tests/ ('common/ad_scalar_demo.cpp', 'clang_only/*'). "
+            "Default: all of them."
+        ),
     )
     parser.add_argument(
         "--benchmarks",
         nargs="*",
-        metavar="PATTERN",
-        help="Optional glob patterns relative to benchmarks/, for example '*.cpp' or 'expr/*.cpp'.",
+        metavar="BENCHMARK",
+        help=(
+            "Build only these benchmarks, by target name ('ad_bench') or by "
+            "glob relative to benchmarks/ ('*.cpp', 'clang_only/*.cpp'); no "
+            "names means all of them. On its own it skips the tests. Add "
+            "--run-executables to run them too."
+        ),
     )
     parser.add_argument(
-        "--std",
-        default="c++2c",
-        help="C++ language mode to pass to the selected compiler(s). Default: c++2c.",
+        "--run-executables",
+        action="store_true",
+        help=(
+            "Run the benchmarks selected with --benchmarks, in the build "
+            "directory (ITERATIONS=... tunes some). Tests always run, through "
+            "ctest."
+        ),
+    )
+    parser.add_argument(
+        "--build-only",
+        action="store_true",
+        help="Configure and build, but don't run ctest or any benchmark.",
+    )
+    parser.add_argument(
+        "--debugger",
+        choices=("gdb", "lldb"),
+        help=(
+            "Build the one test given with --tests and start it under this "
+            "debugger, instead of running ctest."
+        ),
+    )
+    parser.add_argument(
+        "-B",
+        "--build-dir",
+        metavar="DIR",
+        help=(
+            "Put each build tree in DIR/<preset> instead of build/cmake/<preset> "
+            "(the presets' own location, shared with `cmake --preset` and VS Code)."
+        ),
+    )
+    parser.add_argument(
+        "--clean",
+        action="store_true",
+        help="Delete each selected build tree before configuring it.",
     )
     parser.add_argument(
         "--jobs",
         type=int,
         default=os.cpu_count() or 1,
-        help="Parallel build jobs. Default: host CPU count.",
+        help="Parallel build and test jobs. Default: host CPU count.",
     )
     parser.add_argument(
         "--clang-source-dir",
@@ -197,8 +232,8 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_CLANG_ROOT,
         help=(
             "Root of the built clang-p2996 (holds bin/clang++, include/c++/v1/meta, "
-            "lib/libc++.so); doubles as the clang build tree. The clang reflection "
-            "flag profile is derived from this. "
+            "lib/libc++.so); doubles as the clang build tree. CMake derives the "
+            "clang flag profile from the compiler's place in it. "
             f"Default: {DEFAULT_CLANG_ROOT} (env CLANG_P2996_ROOT)."
         ),
     )
@@ -230,8 +265,8 @@ def parse_args() -> argparse.Namespace:
         "--gcc-toolchain",
         default=DEFAULT_GCC_TOOLCHAIN,
         help=(
-            "GCC toolchain clang uses for the C++ runtime/linker "
-            f"(--gcc-toolchain=...). Default: {DEFAULT_GCC_TOOLCHAIN}."
+            "GCC toolchain the clang runtimes build uses for the C++ "
+            f"runtime/linker (--gcc-toolchain=...). Default: {DEFAULT_GCC_TOOLCHAIN}."
         ),
     )
     parser.add_argument(
@@ -292,29 +327,39 @@ def parse_args() -> argparse.Namespace:
         help="Path to an existing g++ executable to use instead of the default build output.",
     )
     parser.add_argument(
-        "--opt-level",
-        default="-O3",
-        type=opt_level_flag,
-        help=(
-            "Optimization level for every test and benchmark build, matching "
-            "CMake's Release build: 0, 2, s, fast, ... (O2 and -O2 also work; "
-            "-O2 needs '=', as in --opt-level=-O2). A test's TEST-FLAGS and "
-            "--extra-cxxflag come later on the command line, so either can "
-            "override it. Default: -O3."
-        ),
-    )
-    parser.add_argument(
         "--extra-cxxflag",
         action="append",
         default=[],
-        help="Additional compiler flag. Repeat to pass multiple flags.",
+        help=(
+            "Additional compiler flag for this run (CMAKE_CXX_FLAGS). Repeat "
+            "to pass multiple flags."
+        ),
     )
+    # Options from when this script ran the compiler itself. They're still
+    # parsed so old command lines get a clear message rather than argparse's.
+    parser.add_argument("--opt-level", help=argparse.SUPPRESS)
+    parser.add_argument("--std", help=argparse.SUPPRESS)
     parser.add_argument(
         "--verbose",
         action="store_true",
-        help="Print commands before running them.",
+        help="Show the full build and test commands and output.",
     )
-    return parser.parse_args()
+    args = parser.parse_args(argv)
+
+    if args.opt_level is not None:
+        parser.error(
+            "--opt-level is gone: the build type sets the optimization level "
+            "(--build-type release is -O3, debug is -O0)."
+        )
+    if args.std is not None:
+        parser.error("--std is gone: CMake sets the language standard (c++2c).")
+    if args.build_type is None:
+        args.build_type = "debug" if args.debugger else "release"
+    if args.debugger and (args.compiler == "both" or args.build_type == "all"):
+        parser.error("--debugger needs one --compiler and one --build-type.")
+    if args.debugger and (not args.tests or len(args.tests) != 1):
+        parser.error("--debugger needs exactly one test, given with --tests.")
+    return args, cmake_args
 
 
 def detect_llvm_target() -> str:
@@ -390,18 +435,10 @@ def selected_compilers(args: argparse.Namespace) -> list[str]:
     return [args.compiler]
 
 
-def selected_sources(args: argparse.Namespace) -> list[tuple[Path, list[str] | None]]:
-    """Source directories to compile from, paired with their glob patterns.
-
-    Tests are the default; --benchmarks on its own switches to benchmarks/, and
-    passing both flags runs both directories.
-    """
-    sources: list[tuple[Path, list[str] | None]] = []
-    if args.tests is not None or args.benchmarks is None:
-        sources.append((TESTS_DIR, args.tests))
-    if args.benchmarks is not None:
-        sources.append((BENCHMARKS_DIR, args.benchmarks))
-    return sources
+def selected_build_types(args: argparse.Namespace) -> list[str]:
+    if args.build_type == "all":
+        return list(BUILD_TYPES)
+    return [args.build_type]
 
 
 def macos_sdk_path(verbose: bool) -> str:
@@ -415,62 +452,6 @@ def macos_sdk_path(verbose: bool) -> str:
     if not sdk_path:
         raise SystemExit("xcrun --show-sdk-path returned an empty SDK path")
     return sdk_path
-
-
-def clang_cxxflags(
-    clang_root: Path, gcc_toolchain: str, verbose: bool
-) -> tuple[str, ...]:
-    """Reflection flag profile for the clang-p2996 fork.
-
-    Kept in step with reflection_ad::flags in cmake/reflect_flags.cmake:
-    the reflection features, the libc++ stdlib, the -isystem for the installed
-    <meta> header, and the library/rpath for libc++ (all rooted at the built
-    compiler tree).
-    """
-    libcxx_inc = clang_root / "include" / "c++" / "v1"
-    libcxx_lib = clang_root / "lib"
-    flags: list[str] = [
-        "-freflection",
-        "-fparameter-reflection",
-        "-fexpansion-statements",
-        "-stdlib=libc++",
-        "-isystem",
-        str(libcxx_inc),
-        f"-L{libcxx_lib}",
-        f"-Wl,-rpath,{libcxx_lib}",
-    ]
-    for sub in libcxx_lib.glob("*linux*"):
-        if sub.is_dir():
-            flags.extend([f"-L{sub}", f"-Wl,-rpath,{sub}"])
-
-    if sys.platform == "darwin":
-        flags.extend(["-isysroot", macos_sdk_path(verbose)])
-    elif gcc_toolchain:
-        flags.append(f"--gcc-toolchain={gcc_toolchain}")
-
-    return tuple(flags)
-
-
-def gcc_cxxflags() -> tuple[str, ...]:
-    return ("-std=c++26", "-freflection")
-
-
-def gcc_runtime_cxxflags(executable: Path) -> tuple[str, ...]:
-    # The fork's libstdc++ is newer than the system one, and optimized builds
-    # reference symbols only it exports (GLIBCXX_3.4.35), so the test binaries
-    # must load it rather than the system copy -- as clang_cxxflags does for
-    # libc++. The compiler says where its own copy is, which holds however it
-    # was invoked (a symlink, a ccache wrapper); this needs the compiler built.
-    result = subprocess.run(
-        [str(executable), "-print-file-name=libstdc++.so"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    library = Path(result.stdout.strip())
-    if result.returncode != 0 or not library.is_absolute():
-        return ()  # not found: the system's copy is all there is
-    return (f"-Wl,-rpath,{library.resolve().parent}",)
 
 
 def build_specs(args: argparse.Namespace) -> dict[str, CompilerSpec]:
@@ -496,7 +477,6 @@ def build_specs(args: argparse.Namespace) -> dict[str, CompilerSpec]:
                 if args.clang_executable
                 else clang_root / "bin" / "clang++"
             ),
-            cxxflags=clang_cxxflags(clang_root, args.gcc_toolchain, args.verbose),
         ),
         "gcc": CompilerSpec(
             name="gcc",
@@ -504,112 +484,8 @@ def build_specs(args: argparse.Namespace) -> dict[str, CompilerSpec]:
             build_dir=gcc_build_dir,
             binary_dir=gcc_binary_dir,
             executable=gcc_executable,
-            cxxflags=gcc_cxxflags(),
         ),
     }
-
-
-def is_test_applicable(test_file: Path, base_dir: Path, compiler_name: str) -> bool:
-    relative_path = test_file.relative_to(base_dir)
-    if not relative_path.parts:
-        return True
-
-    top_level_dir = relative_path.parts[0]
-    if top_level_dir == KNOWN_GAP_DIR:
-        return compiler_name in parse_passes_on(test_file)
-    if top_level_dir == CLANG_ONLY_DIR:
-        return compiler_name == "clang"
-    if top_level_dir == GCC_ONLY_DIR:
-        return compiler_name == "gcc"
-    return True
-
-
-def discover_tests(
-    patterns: list[str] | None, base_dir: Path, compiler_name: str
-) -> list[Path]:
-    if not base_dir.is_dir():
-        raise SystemExit(f"Source directory not found: {base_dir}")
-
-    if not patterns:
-        candidates = sorted(base_dir.rglob("*.cpp"))
-    else:
-        seen: set[Path] = set()
-        candidates = []
-        for pattern in patterns:
-            for test_file in sorted(base_dir.glob(pattern)):
-                if (
-                    test_file.is_file()
-                    and test_file.suffix == ".cpp"
-                    and test_file not in seen
-                ):
-                    seen.add(test_file)
-                    candidates.append(test_file)
-
-    tests = [
-        test_file
-        for test_file in candidates
-        if test_file.is_file()
-        and is_test_applicable(test_file, base_dir, compiler_name)
-    ]
-
-    if not tests:
-        requested = ", ".join(patterns or ["*.cpp"])
-        raise SystemExit(
-            f"No files found under {base_dir.name}/ for compiler {compiler_name} "
-            f"and pattern(s): {requested}"
-        )
-    return tests
-
-
-def parse_passes_on(test_file: Path) -> list[str]:
-    """The compilers named by a known_gap test's `// TEST-PASSES-ON:` line.
-
-    The line lists, separated by spaces or commas, the compilers on which the
-    test is an ordinary test rather than a known gap. Returns [] if the line is
-    not in the first few lines of the file.
-    """
-    try:
-        with test_file.open("r", encoding="utf-8", errors="replace") as handle:
-            for _ in range(TEST_FLAGS_SCAN_LINES):
-                line = handle.readline()
-                if not line:
-                    break
-                stripped = line.strip()
-                if stripped.startswith(TEST_PASSES_ON_DIRECTIVE):
-                    rest = stripped[len(TEST_PASSES_ON_DIRECTIVE) :]
-                    return rest.replace(",", " ").split()
-    except OSError:
-        pass
-    return []
-
-
-def parse_test_flags(test_file: Path, compiler_name: str) -> list[str]:
-    """Read the inline `// TEST-FLAGS: ...` directives from the top of a test.
-
-    Lets a single test declare extra compile flags (e.g. `-O0` to override
-    --opt-level) without special-casing it in the harness. Flags from the shared directive
-    come first, followed by those from the `// TEST-FLAGS-<COMPILER>:` variant
-    for `compiler_name`, so a test can ask for something only one compiler
-    spells (e.g. clang's `-fconstexpr-steps`) without breaking the others.
-    Returns [] if neither directive is present.
-    """
-    specific_directive = f"{TEST_FLAGS_DIRECTIVE[:-1]}-{compiler_name.upper()}:"
-    shared: list[str] = []
-    specific: list[str] = []
-    try:
-        with test_file.open("r", encoding="utf-8", errors="replace") as handle:
-            for _ in range(TEST_FLAGS_SCAN_LINES):
-                line = handle.readline()
-                if not line:
-                    break
-                stripped = line.strip()
-                if stripped.startswith(specific_directive):
-                    specific = shlex.split(stripped[len(specific_directive) :])
-                elif stripped.startswith(TEST_FLAGS_DIRECTIVE):
-                    shared = shlex.split(stripped[len(TEST_FLAGS_DIRECTIVE) :])
-    except OSError:
-        pass
-    return shared + specific
 
 
 def ensure_submodule(source_dir: Path, args: argparse.Namespace) -> None:
@@ -1107,60 +983,6 @@ def validate_compiler_executable(spec: CompilerSpec) -> None:
     )
 
 
-def compile_and_maybe_run(
-    spec: CompilerSpec,
-    test_file: Path,
-    base_dir: Path,
-    args: argparse.Namespace,
-) -> TestResult:
-    compiler_artifacts_dir = ARTIFACTS_DIR / spec.name / base_dir.name
-    ensure_directory(compiler_artifacts_dir)
-
-    output_name = test_file.relative_to(base_dir).with_suffix("")
-    output_path = compiler_artifacts_dir / output_name
-    ensure_directory(output_path.parent)
-
-    # Mirrors the include directories of the CMake targets: the libraries in
-    # include/, the shared test fixtures, and (for tests) test_simple/.
-    include_flags = ["-I", str(INCLUDE_DIR), "-I", str(FIXTURES_DIR)]
-    if base_dir == TESTS_DIR:
-        include_flags.extend(["-I", str(ROOT / "test_simple")])
-
-    compile_command = [
-        str(spec.executable),
-        f"-std={args.std}",
-        args.opt_level,
-        *spec.cxxflags,
-        *include_flags,
-        *parse_test_flags(test_file, spec.name),
-        *args.extra_cxxflag,
-        str(test_file),
-        "-o",
-        str(output_path),
-    ]
-    relative_path = test_file.relative_to(ROOT)
-    expect_compile_failure = test_file.relative_to(base_dir).parts[0] == STATIC_FAIL_DIR
-    log(f"[{spec.name}] compiling {relative_path} ...")
-    compile_result = run_command(compile_command, cwd=ROOT, verbose=args.verbose)
-
-    run_result: CommandResult | None = None
-    if (
-        compile_result.returncode == 0
-        and args.run_executables
-        and not expect_compile_failure
-    ):
-        log(f"[{spec.name}] running {relative_path} ...")
-        run_result = run_command([str(output_path)], cwd=ROOT, verbose=args.verbose)
-
-    return TestResult(
-        compiler=spec.name,
-        test_file=test_file,
-        compile_result=compile_result,
-        run_result=run_result,
-        expect_compile_failure=expect_compile_failure,
-    )
-
-
 def render_command_failure(result: CommandResult) -> str:
     lines = [
         f"command: {shlex.join(result.command)}",
@@ -1175,98 +997,350 @@ def render_command_failure(result: CommandResult) -> str:
     return "\n".join(lines)
 
 
-def print_test_result(result: TestResult) -> None:
-    relative_path = result.test_file.relative_to(ROOT)
-    if not result.compile_ok:
-        if result.expect_compile_failure:
-            print(
-                f"[FAIL][{result.compiler}][compile] {relative_path} "
-                "(expected a compile error, but it compiled)"
-            )
-            return
-        print(f"[FAIL][{result.compiler}][compile] {relative_path}")
-        print(indent_block(render_command_failure(result.compile_result)))
+def looks_like_path(pattern: str) -> bool:
+    return (
+        "/" in pattern or pattern.endswith(".cpp") or any(c in pattern for c in "*?[")
+    )
+
+
+def test_names_for(test_file: Path) -> tuple[str, ...]:
+    """The ctest names CMake may give a test file (see tests/CMakeLists.txt).
+
+    Each compiler has at most one of them: a known_gap/ file is a
+    compile_check test on its own compiler and, with a TEST-PASSES-ON line,
+    an ordinary test on the other.
+    """
+    relative = test_file.relative_to(TESTS_DIR)
+    plain = test_file.name.split(".")[0]
+    if relative.parts[0] in COMPILE_CHECK_DIRS:
+        checked = "reflection_ad." + relative.with_suffix("").as_posix().replace(
+            "/", "."
+        )
+        return (checked, plain) if relative.parts[0] == "known_gap" else (checked,)
+    return (plain,)
+
+
+def requested_names(
+    patterns: list[str], base_dir: Path, names_for
+) -> list[tuple[str, ...]]:
+    """Turn --tests/--benchmarks values into ctest or target names.
+
+    A value with a '/', a '.cpp' suffix or a glob character is a glob relative
+    to base_dir (a leading 'tests/' or 'benchmarks/' is dropped); anything else
+    is already a name. Each entry holds the names one request may go by.
+    """
+    names: list[tuple[str, ...]] = []
+    for pattern in patterns:
+        if not looks_like_path(pattern):
+            names.append((pattern,))
+            continue
+        pattern = pattern.removeprefix(f"{base_dir.name}/")
+        matches = sorted(
+            path for path in base_dir.glob(pattern) if path.suffix == ".cpp"
+        )
+        if not matches:
+            raise SystemExit(f"No .cpp file under {base_dir.name}/ matches {pattern!r}")
+        names.extend(names_for(path) for path in matches)
+    return list(dict.fromkeys(names))
+
+
+def select(wanted: list[tuple[str, ...]], available) -> tuple[list[str], list[str]]:
+    """The available names among `wanted`, and the requests with none."""
+    found: list[str] = []
+    missing: list[str] = []
+    for names in wanted:
+        present = [name for name in names if name in available]
+        found += present
+        if not present:
+            missing.append(names[0])
+    return found, missing
+
+
+def preset_build_dir(preset: str, args: argparse.Namespace) -> Path:
+    root = Path(args.build_dir).resolve() if args.build_dir else CMAKE_BUILD_ROOT
+    return root / preset
+
+
+def clean_build_dir(build_dir: Path) -> None:
+    """Delete a build tree, refusing anything that isn't one of ours."""
+    if not build_dir.exists():
         return
-
-    if result.expect_compile_failure:
-        print(f"[PASS][{result.compiler}][compile-fail] {relative_path}")
-        return
-
-    if result.run_result is not None and not result.run_ok:
-        print(f"[FAIL][{result.compiler}][run] {relative_path}")
-        print(indent_block(render_command_failure(result.run_result)))
-        return
-
-    phase = "compile+run" if result.run_result is not None else "compile"
-    print(f"[PASS][{result.compiler}][{phase}] {relative_path}")
-
-    # A benchmark is run for its output (timings), so show it; tests only
-    # report pass/fail, and their output is already shown on failure.
-    if result.run_result is not None and result.test_file.is_relative_to(
-        BENCHMARKS_DIR
+    protected = [
+        ROOT,
+        BUILD_ROOT,
+        CMAKE_BUILD_ROOT,
+        Path(DEFAULT_CLANG_ROOT).resolve(),
+        Path(DEFAULT_GCC_BUILD_DIR).resolve(),
+        Path(DEFAULT_CLANG_RUNTIMES_DIR).resolve(),
+    ]
+    if (
+        any(build_dir == p or build_dir in p.parents for p in protected)
+        or not (build_dir / "CMakeCache.txt").is_file()
     ):
-        output = result.run_result.stdout.rstrip()
-        if output:
-            print(indent_block(output))
+        raise SystemExit(
+            f"--clean: refusing to delete {build_dir} (not a CMake build tree)"
+        )
+    log(f"removing {build_dir}")
+    shutil.rmtree(build_dir)
 
 
-def indent_block(text: str) -> str:
-    return "\n".join(f"  {line}" for line in text.splitlines())
+def cached_compiler(build_dir: Path) -> str | None:
+    try:
+        cache = (build_dir / "CMakeCache.txt").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    match = re.search(r"^CMAKE_CXX_COMPILER:[A-Z]+=(.*)$", cache, re.MULTILINE)
+    return match.group(1) if match else None
 
 
-def summarize(results: list[TestResult], ran_executables: bool) -> int:
-    overall_failures = 0
+def configure(
+    spec: CompilerSpec,
+    preset: str,
+    build_dir: Path,
+    args: argparse.Namespace,
+    cmake_args: list[str],
+) -> CommandResult:
+    command = [
+        "cmake",
+        "--preset",
+        preset,
+        "-B",
+        str(build_dir),
+        f"-DCMAKE_CXX_COMPILER={spec.executable}",
+        # Always set, so --extra-cxxflag lasts one run rather than staying in
+        # the tree's cache. A -DCMAKE_CXX_FLAGS after `--` still wins.
+        f"-DCMAKE_CXX_FLAGS={shlex.join(args.extra_cxxflag)}",
+    ]
+    previous = cached_compiler(build_dir)
+    if previous is not None and Path(previous) != spec.executable:
+        # CMake can't change the compiler of an existing tree.
+        log(f"[{preset}] compiler changed (was {previous}); reconfiguring from scratch")
+        command.append("--fresh")
+    command.extend(cmake_args)
+    return run_command_streamed(command, cwd=ROOT, verbose=args.verbose)
+
+
+def build_targets(build_dir: Path) -> set[str]:
+    """Every target the build tree can build (Ninja's `help` target)."""
+    result = run_command(
+        ["cmake", "--build", str(build_dir), "--target", "help"],
+        cwd=ROOT,
+        verbose=False,
+    )
+    require_success(result, "listing targets")
+    return set(re.findall(r"^([^\s:/][^\s:]*): ", result.stdout, re.MULTILINE))
+
+
+def ctest_tests(build_dir: Path) -> dict[str, dict]:
+    """ctest's own list of the tests in a build tree, by name."""
+    result = run_command(
+        ["ctest", "--test-dir", str(build_dir), "--show-only=json-v1"],
+        cwd=ROOT,
+        verbose=False,
+    )
+    require_success(result, "listing tests")
+    return {test["name"]: test for test in json.loads(result.stdout)["tests"]}
+
+
+def resolve_selection(
+    build_dir: Path, args: argparse.Namespace
+) -> tuple[Selection, list[str]]:
+    """Match --tests/--benchmarks against what this build tree has.
+
+    Returns the selection and the requested names this compiler doesn't have
+    (e.g. a clang_only test under GCC), which the caller reports.
+    """
+    missing: list[str] = []
+    tests: list[str] | None = None
+    # --benchmarks on its own skips the tests; with --tests too, both run.
+    with_tests = args.tests is not None or args.benchmarks is None
+    if with_tests and args.tests:
+        wanted = requested_names(args.tests, TESTS_DIR, test_names_for)
+        tests, missing = select(wanted, ctest_tests(build_dir))
+    elif not with_tests:
+        tests = []
+
+    benchmarks: list[str] = []
+    if args.benchmarks is not None:
+        if args.benchmarks:
+            wanted = requested_names(
+                args.benchmarks, BENCHMARKS_DIR, lambda path: (path.name.split(".")[0],)
+            )
+        else:
+            wanted = [
+                (path.name.split(".")[0],)
+                for path in sorted(BENCHMARKS_DIR.rglob("*.cpp"))
+            ]
+        benchmarks, absent = select(wanted, build_targets(build_dir))
+        # With no names, benchmarks this compiler can't build aren't missing.
+        if args.benchmarks:
+            missing += absent
+    return Selection(tests=tests, benchmarks=benchmarks), missing
+
+
+def build(
+    build_dir: Path, selection: Selection, args: argparse.Namespace
+) -> CommandResult:
+    command = ["cmake", "--build", str(build_dir), "--parallel", str(args.jobs)]
+    if args.verbose:
+        command.append("--verbose")
+    if selection.tests is not None:
+        # Only what was asked for. compile_check tests (static_fail/,
+        # known_gap/) aren't targets: their test compiles them.
+        targets = build_targets(build_dir)
+        wanted = [n for n in [*selection.tests, *selection.benchmarks] if n in targets]
+        if not wanted:
+            return CommandResult(command, 0, "", "")
+        command += ["--target", *wanted]
+    return run_command_streamed(command, cwd=ROOT, verbose=args.verbose)
+
+
+def run_ctest(
+    build_dir: Path, tests: list[str] | None, args: argparse.Namespace
+) -> CommandResult:
+    command = [
+        "ctest",
+        "--test-dir",
+        str(build_dir),
+        "--output-on-failure",
+        # Without this, a -R that matches nothing passes.
+        "--no-tests=error",
+        "--parallel",
+        str(args.jobs),
+    ]
+    if args.verbose:
+        command.append("--verbose")
+    if tests is not None:
+        command += ["-R", "^(" + "|".join(re.escape(name) for name in tests) + ")$"]
+    return run_command_streamed(command, cwd=ROOT, verbose=args.verbose)
+
+
+def run_benchmark(
+    build_dir: Path, name: str, args: argparse.Namespace
+) -> CommandResult:
+    # Run from the build tree: some benchmarks write CSV files to the
+    # working directory.
+    working_dir = build_dir / "benchmarks"
+    log(f"running benchmark {name} ...")
+    return run_command_streamed(
+        [str(working_dir / name)], cwd=working_dir, verbose=args.verbose
+    )
+
+
+def start_debugger(build_dir: Path, test: str, args: argparse.Namespace) -> int:
+    """Replace this process with the debugger, attached to one test binary."""
+    info = ctest_tests(build_dir).get(test, {})
+    command = info.get("command") or []
+    if not command or Path(command[0]).name != test:
+        raise SystemExit(
+            f"{test} isn't a test binary that can be debugged (static_fail/ and "
+            "known_gap/ tests only compile)."
+        )
+    properties = {p["name"]: p["value"] for p in info.get("properties", [])}
+    working_dir = properties.get("WORKING_DIRECTORY", str(build_dir))
+    if args.debugger == "gdb":
+        debugger = ["gdb", "--args", *command]
+    else:
+        debugger = ["lldb", "--", *command]
+    log(f"[{working_dir}] $ {shlex.join(debugger)}")
+    os.chdir(working_dir)
+    try:
+        os.execvp(debugger[0], debugger)
+    except OSError as error:
+        raise SystemExit(f"Can't start {debugger[0]}: {error}") from None
+    return 1  # not reached
+
+
+def run_preset(
+    spec: CompilerSpec,
+    build_type: str,
+    args: argparse.Namespace,
+    cmake_args: list[str],
+) -> RunResult:
+    preset = f"{spec.name}-{build_type}"
+    build_dir = preset_build_dir(preset, args)
+    result = RunResult(spec.name, build_type, build_dir)
+    if args.clean:
+        clean_build_dir(build_dir)
+
+    log(f"[{preset}] configuring {build_dir} with {spec.executable}")
+    if configure(spec, preset, build_dir, args, cmake_args).returncode != 0:
+        result.status = "configure failed"
+        return result
+
+    selection, missing = resolve_selection(build_dir, args)
+    result.missing = missing
+    for name in missing:
+        log(
+            f"[{preset}] no test or benchmark named {name} with {spec.name}; skipping it"
+        )
+    if (selection.tests == [] and not selection.benchmarks) and missing:
+        result.status = "skipped"
+        result.detail = "nothing selected for this compiler"
+        return result
+
+    log(f"[{preset}] building")
+    if build(build_dir, selection, args).returncode != 0:
+        result.status = "build failed"
+        return result
+
+    if args.debugger:
+        start_debugger(build_dir, (selection.tests or [""])[0], args)
+
+    if args.build_only:
+        return result
+    if selection.tests != []:
+        log(f"[{preset}] testing")
+        if run_ctest(build_dir, selection.tests, args).returncode != 0:
+            result.status = "tests failed"
+    if args.run_executables:
+        failed = [
+            name
+            for name in selection.benchmarks
+            if run_benchmark(build_dir, name, args).returncode != 0
+        ]
+        if failed:
+            result.status = "benchmarks failed"
+            result.detail = ", ".join(failed)
+    return result
+
+
+def summarize(results: list[RunResult]) -> int:
     print()
     print("Summary")
     print("-------")
-    for compiler_name in sorted({result.compiler for result in results}):
-        compiler_results = [
-            result for result in results if result.compiler == compiler_name
-        ]
-        compile_failures = sum(not result.compile_ok for result in compiler_results)
-        run_failures = sum(
-            result.compile_ok and not result.run_ok for result in compiler_results
-        )
-        passes = sum(result.compile_ok and result.run_ok for result in compiler_results)
-        overall_failures += compile_failures + run_failures
-        summary = (
-            f"{compiler_name}: {passes} passed, {compile_failures} compile failures"
-        )
-        if ran_executables:
-            summary += f", {run_failures} runtime failures"
-        print(summary)
-    return overall_failures
+    for result in results:
+        line = f"{result.compiler}-{result.build_type}: {result.status}"
+        if result.detail:
+            line += f" ({result.detail})"
+        print(line)
+    failures = [r for r in results if r.status not in ("passed", "skipped")]
+    # A name no compiler has is a typo, not a test for another compiler.
+    configured = [r for r in results if r.status != "configure failed"]
+    unknown = (
+        set.intersection(*(set(r.missing) for r in configured)) if configured else set()
+    )
+    for name in sorted(unknown):
+        print(f"No test or benchmark named {name} for any selected compiler.")
+    return len(failures) + len(unknown)
 
 
 def main() -> int:
-    args = parse_args()
+    args, cmake_args = parse_args(sys.argv[1:])
     specs = build_specs(args)
 
     if args.build_compilers:
         log(f"building compiler(s): {', '.join(selected_compilers(args))}")
         build_selected_compilers(specs, args)
 
-    results: list[TestResult] = []
+    results: list[RunResult] = []
     for compiler_name in selected_compilers(args):
         spec = specs[compiler_name]
         validate_compiler_executable(spec)
-        if compiler_name == "gcc":
-            spec = replace(
-                spec, cxxflags=spec.cxxflags + gcc_runtime_cxxflags(spec.executable)
-            )
-        for base_dir, patterns in selected_sources(args):
-            tests = discover_tests(patterns, base_dir, compiler_name)
-            log(
-                f"[{spec.name}] compiling {len(tests)} file(s) from "
-                f"{base_dir.name}/ with {spec.executable}"
-            )
-            for test_file in tests:
-                result = compile_and_maybe_run(spec, test_file, base_dir, args)
-                results.append(result)
-                print_test_result(result)
+        for build_type in selected_build_types(args):
+            results.append(run_preset(spec, build_type, args, cmake_args))
 
-    failures = summarize(results, ran_executables=args.run_executables)
-    return 1 if failures else 0
+    return 1 if summarize(results) else 0
 
 
 if __name__ == "__main__":

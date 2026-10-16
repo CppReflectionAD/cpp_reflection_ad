@@ -44,8 +44,7 @@ if(_is_clang)
         -isystem "${_clang_root}/include/c++/v1"
     )
 
-    # Link and load the fork's libc++ rather than the system one, as
-    # run_tests.py does.
+    # Link and load the fork's libc++ rather than the system one.
     set(_reflect_link_flags
         -stdlib=libc++
         "-L${_clang_root}/lib"
@@ -75,8 +74,8 @@ else() # GCC
 
     # The fork's libstdc++ is newer than the system one, and the tests use
     # symbols only it exports (GLIBCXX_3.4.35), so binaries must load the
-    # fork's copy, as run_tests.py arranges. The compiler says where its
-    # runtime libraries are; a bare name back means it has none of its own.
+    # fork's copy. The compiler says where its runtime libraries are; a bare
+    # name back means it has none of its own.
     # On macOS the names don't match (.dylib) and nothing is added: the
     # driver already rpaths its own lib directory there.
     foreach(_lib libstdc++.so libgcc_s.so.1)

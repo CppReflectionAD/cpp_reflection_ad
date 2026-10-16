@@ -66,6 +66,3 @@ jobs:
 
       - name: Test AD with CTest
         run: ctest --test-dir "$BUILD_DIR" --output-on-failure
-
-      - name: Test AD with run_tests.py
-        run: python3 run_tests.py --compiler gcc --gcc-executable /opt/gcc/bin/g++ --run-executables

@@ -20,11 +20,10 @@ reflected function bodies (`reflection/`). Include them as
 ## Adding a test
 
 - Add a `.cpp` file to the right directory. There is nothing to register:
-  `CMakeLists.txt` finds it (re-run CMake to pick it up), and so does
-  `run_tests.py`, except that it skips `known_gap/` (but see
-  `TEST-PASSES-ON` below) and only checks that a
-  `static_fail/` test fails to compile; the `.fail.txt` comparison is `ctest`
-  only. A `.cpp` anywhere else under `tests/` stops the configure.
+  `CMakeLists.txt` finds it (re-run CMake, or `run_tests.py`, to pick it up).
+  A `.cpp` anywhere else under `tests/` stops the configure.
+- Run just that test with `python3 run_tests.py --tests <name>` (add
+  `--debugger lldb` or `gdb` to start it under a debugger).
 - Include the engine by its path under `include/`, e.g.
   `#include <ad/autograd.h>`, and the checks from `test_simple_include.hpp`
   (`EXPECT_EQUAL`, `EXPECT_NEAR_REL`, ...).
