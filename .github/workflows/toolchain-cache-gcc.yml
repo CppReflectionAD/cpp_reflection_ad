@@ -1,9 +1,10 @@
 # Makes sure the GCC toolchain is in the cache, building it on a miss.
 # Called by gcc_prebuilt_cache.yml so tests wait for the toolchain.
 # On a hit this job only looks the key up; the test jobs restore the prefix.
-# The cache key is the submodule commit plus a hash of the build script, so
-# edits to this file don't invalidate the cache. The build itself is in
-# .github/scripts/build-gcc-toolchain.sh.
+# The cache key is the submodule commit plus a hash of the build script and
+# the recipe it runs, the one `run_tests.py --build-compilers` uses, so edits to
+# this file don't invalidate the cache. The build itself is in
+# .github/scripts/build-gcc-toolchain.sh and tools/toolchain/gcc.py.
 name: Build GCC Toolchain (Cache)
 
 on:
@@ -37,7 +38,8 @@ jobs:
         run: |
           set -euo pipefail
           GCC_MIRROR_SHA="$(git rev-parse HEAD:gcc-mirror)"
-          BUILD_INPUT_HASH="$(sha256sum .github/scripts/build-gcc-toolchain.sh | cut -d' ' -f1)"
+          BUILD_INPUT_HASH="$(cat .github/scripts/build-gcc-toolchain.sh \
+            tools/toolchain/common.py tools/toolchain/gcc.py | sha256sum | cut -d' ' -f1)"
           CACHE_KEY="gcc-${{ runner.os }}-${{ runner.arch }}-${GCC_MIRROR_SHA:0:12}-${BUILD_INPUT_HASH:0:12}"
           echo "cache_key=${CACHE_KEY}" >> "$GITHUB_OUTPUT"
 
@@ -62,8 +64,10 @@ jobs:
       - name: Verify built prefix
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
+          set -euo pipefail
           ls -lh /opt/toolchain-gcc/bin/
           /opt/toolchain-gcc/bin/g++ --version
+          .github/scripts/check-gcc-toolchain.sh /opt/toolchain-gcc
 
       - name: Save gcc toolchain
         if: steps.cache.outputs.cache-hit != 'true'
