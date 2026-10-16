@@ -1,0 +1,7 @@
+=== GCC ===
+tests/known_gap/gcc/nontrivial_destructor_reflection.cpp:54:25: error: static assertion failed: no return statement after a local with a destructor
+   54 | static_assert(has_return(^^local_then_return),
+      |               ~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~~
+tests/known_gap/gcc/nontrivial_destructor_reflection.cpp:56:29: error: static assertion failed: `return make(x);` is not a return of a function call
+   56 | static_assert(returns_a_call(^^return_call),
+      |               ~~~~~~~~~~~~~~^~~~~~~~~~~~~~~
