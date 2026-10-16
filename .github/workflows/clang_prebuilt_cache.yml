@@ -7,6 +7,11 @@ on:
     branches: ["main"]
   pull_request:
   workflow_dispatch:
+  # Nightly on main, off the hour to avoid GitHub's peak queueing. Restoring
+  # the toolchain resets the cache's 7-day eviction clock, or rebuilds it if
+  # it was evicted, and the run catches drift that no PR triggers.
+  schedule:
+    - cron: "17 3 * * *"
 
 permissions:
   contents: read
