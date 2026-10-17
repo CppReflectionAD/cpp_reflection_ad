@@ -55,6 +55,8 @@ a fork of iains' Darwin port), with `gcc-mirror`'s reflection commits replayed
 onto its pin first (see `--gcc-sync-*` in `run_tests.py --help`). The fork's
 `p4395` branch is that pin with the same commits already applied, as of
 `gcc-mirror` commit `812075e0`, and will replace the replay.
+If the `gcc-mirror` pin has moved past that commit, `p4395` lacks the newer
+commits; use the replay until the branch is updated.
 
 Clones made before the submodule moved to the fork still fetch it from iains.
 Update them once, after pulling:
@@ -304,3 +306,12 @@ new pin there; record it with
 `git update-index --cacheinfo 160000,<commit>,gcc-darwin-reflect`. Its GCC
 base must match `gcc-mirror`'s, so the two pins move together (see the comment
 in `.gitmodules`).
+
+Its URL is our fork of iains' repository, which has only the branches someone
+pushed to it. So first push the new snapshot's branch from iains to the fork,
+or `git submodule update` fails with "not our ref":
+
+```bash
+git -C gcc-darwin-reflect fetch https://github.com/iains/gcc-darwin-arm64.git <branch>
+git -C gcc-darwin-reflect push origin FETCH_HEAD:refs/heads/<branch>
+```
