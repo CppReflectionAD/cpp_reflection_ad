@@ -53,6 +53,11 @@ DEFAULT_GCC_TOOLCHAIN = os.environ.get(
 TOOL_TARGETS = ("clang-tidy", "llvm-cov", "llvm-profdata", "llvm-symbolizer")
 # The install components of the LLVM build that make up the CI prefix.
 INSTALL_COMPONENTS = ("clang", "clang-resource-headers", *TOOL_TARGETS)
+# LLVM's fix for the sanitizers hanging at startup on macOS 26 (llvm-project
+# 2e7d07a, #182943), which clang-p2996 predates. Applied on Darwin only.
+DARWIN_COMPILER_RT_PATCH = (
+    Path(__file__).parent / "patches" / "compiler-rt-dyld-header.patch"
+)
 
 
 def detect_llvm_target() -> str:
@@ -173,6 +178,27 @@ def configure_when_changed(
     stamp_file.write_text(json.dumps(configure, indent=2) + "\n", encoding="utf-8")
 
 
+def apply_source_patch(source_dir: Path, patch: Path, args: argparse.Namespace) -> None:
+    """Apply patch to the source tree, unless it's already there.
+
+    The patch stays applied, so ninja doesn't rebuild what it touches, and the
+    submodule shows as modified. Once the submodule has the change itself, the
+    reverse check passes and this does nothing.
+    """
+    applied = run_command(
+        ["git", "apply", "--reverse", "--check", str(patch)],
+        cwd=source_dir,
+        verbose=args.verbose,
+    )
+    if applied.returncode == 0:
+        return
+    log(f"[patch] applying {patch.name} to {source_dir}")
+    require_success(
+        run_command(["git", "apply", str(patch)], cwd=source_dir, verbose=args.verbose),
+        f"apply {patch.name}",
+    )
+
+
 def build_clang_runtimes(spec: CompilerSpec, args: argparse.Namespace) -> None:
     """Build libc++/libc++abi (plus libunwind off Darwin) and install <meta>.
 
@@ -262,6 +288,7 @@ def build_compiler_rt(spec: CompilerSpec, args: argparse.Namespace) -> None:
 
     c_flags = runtimes_c_flags(args)
     if sys.platform == "darwin":
+        apply_source_patch(spec.source_dir, DARWIN_COMPILER_RT_PATCH, args)
         # macOS only, not the other Apple platforms' slices.
         platform_options = [
             "-DCOMPILER_RT_ENABLE_IOS=OFF",
