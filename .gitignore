@@ -16,3 +16,6 @@ build/
 __pycache__/
 *.py[cod]
 .ruff_cache/
+# Open Source harnesses
+.aider*
+opencode.json
