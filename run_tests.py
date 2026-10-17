@@ -6,7 +6,7 @@ compiler and build type it configures the matching preset (clang-release,
 gcc-debug, ...), builds, and runs ctest, so a local run and CI run the same
 commands. The flags, the test list and the expected failures all live in
 CMake. --build-compilers builds the compiler forks from their submodules
-first.
+first, with the recipes in tools/toolchain/ that CI's toolchain cache uses too.
 """
 
 from __future__ import annotations
@@ -14,14 +14,27 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import platform
 import re
 import shlex
 import shutil
-import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from tools.toolchain import clang as clang_recipe
+from tools.toolchain import gcc as gcc_recipe
+from tools.toolchain.clang import DEFAULT_GCC_TOOLCHAIN
+from tools.toolchain.common import (
+    CommandResult,
+    CompilerSpec,
+    ensure_directory,
+    ensure_submodule,
+    log,
+    render_command_failure,
+    require_success,
+    run_command,
+    run_command_streamed,
+)
 
 ROOT = Path(__file__).resolve().parent
 TESTS_DIR = ROOT / "tests"
@@ -50,16 +63,9 @@ DEFAULT_CLANG_SOURCE_DIR = os.environ.get(
 DEFAULT_CLANG_ROOT = os.environ.get("CLANG_P2996_ROOT", str(BUILD_ROOT / "clang-p2996"))
 # Standalone libc++/libc++abi (plus libunwind off Darwin) runtimes build tree.
 # Built with the freshly built clang; its headers/libs are emitted into the
-# clang root via LLVM_BINARY_DIR (see build_clang_runtimes).
+# clang root via LLVM_BINARY_DIR (see tools/toolchain/clang.py), and
+# compiler-rt is built next to it, in <runtimes dir>-compiler-rt.
 DEFAULT_CLANG_RUNTIMES_DIR = str(BUILD_ROOT / "libcxx")
-DEFAULT_GCC_TOOLCHAIN = os.environ.get(
-    "REFLECT_GCC_TOOLCHAIN",
-    (
-        "/opt/rh/gcc-toolset-13/root/usr"
-        if os.path.exists("/opt/rh/gcc-toolset-13/root/usr")
-        else "/usr"
-    ),
-)
 DEFAULT_GCC_BUILD_DIR = os.environ.get(
     "REFLECT_GCC_BUILD_DIR", str(BUILD_ROOT / "gcc-p2996")
 )
@@ -80,23 +86,6 @@ else:
     )
     DEFAULT_GCC_PATCHES_DIR = os.environ.get("REFLECT_GCC_PATCHES_DIR", "")
     DEFAULT_GCC_SYNC_FROM = os.environ.get("REFLECT_GCC_SYNC_FROM", "")
-
-
-@dataclass(frozen=True)
-class CommandResult:
-    command: list[str]
-    returncode: int
-    stdout: str
-    stderr: str
-
-
-@dataclass(frozen=True)
-class CompilerSpec:
-    name: str
-    source_dir: Path
-    build_dir: Path
-    binary_dir: Path
-    executable: Path
 
 
 @dataclass(frozen=True)
@@ -242,7 +231,8 @@ def parse_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
         default=DEFAULT_CLANG_RUNTIMES_DIR,
         help=(
             "Build directory for the standalone libc++/libc++abi runtimes "
-            "(plus libunwind except on macOS). "
+            "(plus libunwind except on macOS); compiler-rt's is next to it, "
+            "with -compiler-rt appended. "
             f"Default: {DEFAULT_CLANG_RUNTIMES_DIR}."
         ),
     )
@@ -371,73 +361,6 @@ def parse_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
     return args, cmake_args
 
 
-def detect_llvm_target() -> str:
-    """Auto-detect LLVM target based on current machine architecture.
-
-    Maps platform.machine() to LLVM target names:
-    - ARM64/aarch64 -> AArch64
-    - x86_64 -> X86
-    """
-    machine = platform.machine().lower()
-    if machine in ("arm64", "aarch64"):
-        return "AArch64"
-    elif machine in ("x86_64", "amd64"):
-        return "X86"
-    else:
-        # Default to all targets if architecture is unknown
-        return "all"
-
-
-def log(message: str) -> None:
-    """Print a progress banner (flushed immediately) for long-running steps."""
-    print(f"==> {message}", flush=True)
-
-
-def run_command(command: list[str], cwd: Path | None, verbose: bool) -> CommandResult:
-    if verbose:
-        location = str(cwd) if cwd is not None else str(ROOT)
-        print(f"[{location}] $ {shlex.join(command)}")
-    completed = subprocess.run(
-        command,
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-    )
-    return CommandResult(
-        command=command,
-        returncode=completed.returncode,
-        stdout=completed.stdout,
-        stderr=completed.stderr,
-    )
-
-
-def run_command_streamed(
-    command: list[str], cwd: Path | None, verbose: bool
-) -> CommandResult:
-    """Run a command with its stdout/stderr inherited (live) rather than captured.
-
-    Used for the long build steps (submodule checkout, cmake, ninja) so the user
-    sees progress as it happens. Output isn't captured, so on failure we rely on
-    what was already printed.
-    """
-    location = str(cwd) if cwd is not None else str(ROOT)
-    if verbose:
-        print(f"[{location}] $ {shlex.join(command)}", flush=True)
-    else:
-        print(f"    $ {shlex.join(command)}", flush=True)
-    completed = subprocess.run(command, cwd=cwd)
-    return CommandResult(
-        command=command,
-        returncode=completed.returncode,
-        stdout="",
-        stderr="",
-    )
-
-
-def ensure_directory(path: Path) -> None:
-    path.mkdir(parents=True, exist_ok=True)
-
-
 def selected_compilers(args: argparse.Namespace) -> list[str]:
     if args.compiler == "both":
         return ["clang", "gcc"]
@@ -448,19 +371,6 @@ def selected_build_types(args: argparse.Namespace) -> list[str]:
     if args.build_type == "all":
         return list(BUILD_TYPES)
     return [args.build_type]
-
-
-def macos_sdk_path(verbose: bool) -> str:
-    """Resolve the active macOS SDK path via xcrun."""
-    result = run_command(["xcrun", "--show-sdk-path"], cwd=ROOT, verbose=verbose)
-    if result.returncode != 0:
-        details = render_command_failure(result)
-        raise SystemExit(f"Failed to resolve macOS SDK path\n\n{details}")
-
-    sdk_path = result.stdout.strip()
-    if not sdk_path:
-        raise SystemExit("xcrun --show-sdk-path returned an empty SDK path")
-    return sdk_path
 
 
 def build_specs(args: argparse.Namespace) -> dict[str, CompilerSpec]:
@@ -481,8 +391,10 @@ def build_specs(args: argparse.Namespace) -> dict[str, CompilerSpec]:
             # The clang root doubles as its build tree (runtimes + <meta> land here).
             build_dir=clang_root,
             binary_dir=clang_root,
+            # absolute(), not resolve(): clang++ is a symlink to clang-<N>, and
+            # the name it's run by picks the driver mode (C++ or C).
             executable=(
-                Path(args.clang_executable).resolve()
+                Path(args.clang_executable).absolute()
                 if args.clang_executable
                 else clang_root / "bin" / "clang++"
             ),
@@ -495,236 +407,6 @@ def build_specs(args: argparse.Namespace) -> dict[str, CompilerSpec]:
             executable=gcc_executable,
         ),
     }
-
-
-def ensure_submodule(source_dir: Path, args: argparse.Namespace) -> None:
-    """Check out a submodule on demand so the repo builds from a bare clone.
-
-    A fresh clone leaves clang-p2996/gcc-mirror as empty submodule dirs; the
-    build needs their sources. Idempotent: a no-op once populated.
-    """
-    if source_dir.is_dir() and (
-        (source_dir / ".git").exists() or any(source_dir.iterdir())
-    ):
-        return
-
-    # Compare full paths, not names: a --clang-source-dir/--gcc-source-dir
-    # checkout elsewhere may share a submodule's name but is not that submodule.
-    if source_dir not in {
-        ROOT / "clang-p2996",
-        ROOT / "gcc-mirror",
-        ROOT / "gcc-darwin-reflect",
-    }:
-        raise SystemExit(
-            "Compiler source directory is missing or empty: "
-            f"{source_dir}\n"
-            "This path is not a known submodule, so it is not auto-initialized. "
-            "Clone/populate it first, or pass --clang-source-dir/--gcc-source-dir "
-            "to an existing tree."
-        )
-
-    ensure_directory(source_dir)
-    log(f"[{source_dir.name}] checking out submodule (large clone, be patient)...")
-    result = run_command_streamed(
-        ["git", "submodule", "update", "--init", "--progress", str(source_dir.name)],
-        cwd=ROOT,
-        verbose=args.verbose,
-    )
-    require_success(result, f"submodule checkout ({source_dir.name})")
-
-
-def build_clang(spec: CompilerSpec, args: argparse.Namespace) -> None:
-    """Build the clang-p2996 fork and its libc++ runtimes into the clang root.
-
-    Faithful port of the reference recipe: build clang with a host clang + lld
-    (keeps link memory low), then build libc++/libc++abi as a standalone
-    runtimes project with the freshly built clang, emitting headers/libs into
-    the clang root, and finally sync the fork's <meta> header into place.
-    """
-    log("[clang] building the clang-p2996 fork + libc++ (this can take a long time)")
-    ensure_submodule(spec.source_dir, args)
-    ensure_directory(spec.build_dir)
-
-    # Configure clang (idempotent; skip if already configured).
-    if (spec.build_dir / "build.ninja").is_file():
-        log(f"[clang] already configured ({spec.build_dir}); skipping cmake")
-    else:
-        log("[clang] configuring clang (cmake)...")
-        configure = [
-            "cmake",
-            "-S",
-            str(spec.source_dir / "llvm"),
-            "-B",
-            str(spec.build_dir),
-            "-G",
-            "Ninja",
-            "-DLLVM_ENABLE_PROJECTS=clang;clang-tools-extra",
-            "-DCMAKE_BUILD_TYPE=RelWithDebInfo",
-            f"-DCMAKE_C_COMPILER={args.host_cc}",
-            f"-DCMAKE_CXX_COMPILER={args.host_cxx}",
-            f"-DPython3_EXECUTABLE={args.python_executable}",
-            f"-DLLVM_TARGETS_TO_BUILD={detect_llvm_target()}",
-            f"-DLLVM_PARALLEL_COMPILE_JOBS={args.jobs}",
-            # Linking clang is memory-hungry; serialize link steps.
-            "-DLLVM_PARALLEL_LINK_JOBS=1",
-        ]
-        require_success(
-            run_command_streamed(configure, cwd=ROOT, verbose=args.verbose),
-            "clang configure",
-        )
-
-    # The `clang` target also produces the clang++/clang-cl symlinks; there is
-    # no separate `clang++` ninja target. On Darwin, build the standalone LTO
-    # target as well so the driver can find libLTO.dylib next to the toolchain.
-    clang_targets = ["clang"]
-    if sys.platform == "darwin":
-        clang_targets.append("LTO")
-    log(f"[clang] building {' + '.join(clang_targets)} with ninja (-j{args.jobs})...")
-    build = ["ninja", "-C", str(spec.build_dir), "-j", str(args.jobs), *clang_targets]
-    require_success(
-        run_command_streamed(build, cwd=ROOT, verbose=args.verbose), "clang build"
-    )
-
-    build_clang_runtimes(spec, args)
-    log(f"[clang] done -> {spec.executable}")
-
-
-def build_clang_runtimes(spec: CompilerSpec, args: argparse.Namespace) -> None:
-    """Build libc++/libc++abi (plus libunwind off Darwin) and install <meta>.
-
-    Uses the freshly built clang and points LLVM_BINARY_DIR at the clang root so
-    the generated headers land in <root>/include/c++/v1 and libs in <root>/lib —
-    exactly where the clang flag profile's -isystem/-L expect them.
-
-    On Darwin, libc++abi uses the system unwinder in libSystem, as Apple's own
-    libc++abi does, so no separate libunwind is built. libSystem re-exports
-    /usr/lib/system/libunwind.dylib, and ld resolves that re-export by leaf name
-    through -L, so any libunwind.dylib in <root>/lib is picked up instead and ld
-    warns that it "couldn't be matched with any parent library" on every link.
-    """
-    runtimes_dir = Path(args.clang_runtimes_dir).resolve()
-    built_clang = spec.build_dir / "bin" / "clang"
-    built_clangxx = spec.build_dir / "bin" / "clang++"
-    ensure_directory(runtimes_dir)
-
-    c_flags = ""
-    cxx_flags = ""
-    if sys.platform != "darwin" and args.gcc_toolchain:
-        c_flags = f"--gcc-toolchain={args.gcc_toolchain}"
-        cxx_flags = c_flags
-    if sys.platform == "darwin":
-        runtimes = "libcxx;libcxxabi"
-        platform_options = ["-DLIBCXXABI_USE_LLVM_UNWINDER=OFF"]
-    else:
-        runtimes = "libcxx;libcxxabi;libunwind"
-        platform_options = []
-    configure = [
-        "cmake",
-        "-S",
-        str(spec.source_dir / "runtimes"),
-        "-B",
-        str(runtimes_dir),
-        "-G",
-        "Ninja",
-        f"-DCMAKE_C_COMPILER={built_clang}",
-        f"-DCMAKE_CXX_COMPILER={built_clangxx}",
-        f"-DCMAKE_C_FLAGS={c_flags}",
-        f"-DCMAKE_CXX_FLAGS={cxx_flags}",
-        "-DCMAKE_BUILD_TYPE=RelWithDebInfo",
-        f"-DLLVM_ENABLE_RUNTIMES={runtimes}",
-        *platform_options,
-        f"-DLLVM_BINARY_DIR={spec.build_dir}",
-        f"-DLLVM_CONFIG_PATH={spec.build_dir / 'bin' / 'llvm-config'}",
-    ]
-
-    # Re-run cmake whenever the configure command changes, not only on a fresh
-    # tree, so existing trees pick up new runtimes options.
-    stamp_file = runtimes_dir / ".run_tests_configure.json"
-    try:
-        configured = json.loads(stamp_file.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        configured = None
-    if (runtimes_dir / "build.ninja").is_file() and configured == configure:
-        log(f"[runtimes] already configured ({runtimes_dir}); skipping cmake")
-    else:
-        log(f"[runtimes] configuring {runtimes.replace(';', '/')} (cmake)...")
-        require_success(
-            run_command_streamed(configure, cwd=ROOT, verbose=args.verbose),
-            "runtimes configure",
-        )
-        stamp_file.write_text(json.dumps(configure, indent=2) + "\n", encoding="utf-8")
-
-    log(f"[runtimes] building libc++/libc++abi with ninja (-j{args.jobs})...")
-    build = ["ninja", "-C", str(runtimes_dir), "-j", str(args.jobs), "cxx", "cxxabi"]
-    require_success(
-        run_command_streamed(build, cwd=ROOT, verbose=args.verbose), "runtimes build"
-    )
-
-    if sys.platform == "darwin":
-        # Trees built before libunwind was dropped on Darwin still have it in
-        # <root>/lib. Nothing links it any more, but ld still finds it.
-        for stale in sorted((spec.build_dir / "lib").glob("libunwind*")):
-            log(f"[runtimes] removing stale {stale}")
-            stale.unlink()
-
-    log("[runtimes] syncing <meta> header into libc++ include dir...")
-    sync_meta_header(spec)
-
-
-def sync_meta_header(spec: CompilerSpec) -> None:
-    """Copy the fork's <meta> header into the installed libc++ include dir.
-
-    The fork ships libcxx/include/meta but doesn't wire it into the runtimes
-    header install, so it's copied in explicitly (also lets header-only edits
-    take effect without a full runtimes rebuild).
-    """
-    meta_src = spec.source_dir / "libcxx" / "include" / "meta"
-    meta_dest = spec.build_dir / "include" / "c++" / "v1" / "meta"
-    if not meta_src.is_file():
-        raise SystemExit(f"<meta> header not found in fork: {meta_src}")
-    ensure_directory(meta_dest.parent)
-    shutil.copyfile(meta_src, meta_dest)
-
-
-def build_gcc(spec: CompilerSpec, args: argparse.Namespace) -> None:
-    log(f"[gcc] building from {spec.source_dir} (this can take a long time)")
-    maybe_sync_gcc_sources_for_macos(spec, args)
-    ensure_submodule(spec.source_dir, args)
-    ensure_directory(spec.build_dir)
-
-    deps = ["contrib/download_prerequisites"]
-    deps_result = run_command(deps, cwd=spec.source_dir, verbose=args.verbose)
-    require_success(deps_result, "gcc download_prerequisites")
-
-    log("[gcc] configuring gcc...")
-    configure = [
-        str(spec.source_dir / "configure"),
-        "--disable-bootstrap",
-        "--disable-multilib",
-        "--disable-nls",
-        "--enable-languages=c,c++",
-        f"--prefix={spec.binary_dir}",
-    ]
-    if sys.platform == "darwin":
-        configure.append(f"--with-sysroot={macos_sdk_path(args.verbose)}")
-    configure_result = run_command_streamed(
-        configure, cwd=spec.build_dir, verbose=args.verbose
-    )
-    require_success(configure_result, "gcc configure")
-
-    log(f"[gcc] building with make (-j{args.jobs})...")
-    build = ["make", "-j", str(args.jobs)]
-    build_result = run_command_streamed(build, cwd=spec.build_dir, verbose=args.verbose)
-    require_success(build_result, "gcc build")
-
-    log("[gcc] installing...")
-    install = ["make", "install"]
-    install_result = run_command_streamed(
-        install, cwd=spec.build_dir, verbose=args.verbose
-    )
-    require_success(install_result, "gcc install")
-
-    log(f"[gcc] done -> {spec.executable}")
 
 
 def gcc_sync_missing_checkout_message(path: Path, role: str, override: str) -> str:
@@ -774,7 +456,7 @@ def maybe_sync_gcc_sources_for_macos(
     # A fresh clone leaves both GCC submodules empty; check them out here.
     for path in (sync_from, sync_to):
         if path in {ROOT / "gcc-mirror", ROOT / "gcc-darwin-reflect"}:
-            ensure_submodule(path, args)
+            ensure_submodule(path, args.verbose)
 
     if not (sync_from / ".git").exists():
         raise SystemExit(
@@ -1154,16 +836,10 @@ def build_selected_compilers(
     for compiler_name in selected_compilers(args):
         spec = specs[compiler_name]
         if compiler_name == "clang":
-            build_clang(spec, args)
+            clang_recipe.build_clang(spec, args)
         else:
-            build_gcc(spec, args)
-
-
-def require_success(result: CommandResult, label: str) -> None:
-    if result.returncode == 0:
-        return
-    details = render_command_failure(result)
-    raise SystemExit(f"{label} failed\n\n{details}")
+            maybe_sync_gcc_sources_for_macos(spec, args)
+            gcc_recipe.build_gcc(spec, args)
 
 
 def validate_compiler_executable(spec: CompilerSpec) -> None:
@@ -1174,20 +850,6 @@ def validate_compiler_executable(spec: CompilerSpec) -> None:
         f"Build it from the submodule with --build-compilers --compiler {spec.name}, "
         "or point --clang-root at an existing build."
     )
-
-
-def render_command_failure(result: CommandResult) -> str:
-    lines = [
-        f"command: {shlex.join(result.command)}",
-        f"exit code: {result.returncode}",
-    ]
-    if result.stdout.strip():
-        lines.append("stdout:")
-        lines.append(result.stdout.rstrip())
-    if result.stderr.strip():
-        lines.append("stderr:")
-        lines.append(result.stderr.rstrip())
-    return "\n".join(lines)
 
 
 def looks_like_path(pattern: str) -> bool:

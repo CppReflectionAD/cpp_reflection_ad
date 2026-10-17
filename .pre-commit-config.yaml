@@ -10,9 +10,10 @@ repos:
     rev: v6.0.0
     hooks:
       # static_fail/*.fail.txt are compiler-output snapshots; leave them as
-      # the rebase target writes them.
+      # the rebase target writes them. In a .patch, a blank context line is a
+      # single space, which this hook would strip.
       - id: trailing-whitespace
-        exclude: \.fail\.txt$
+        exclude: \.(fail\.txt|patch)$
       - id: end-of-file-fixer
         exclude: \.fail\.txt$
       - id: check-yaml
