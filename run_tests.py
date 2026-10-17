@@ -493,7 +493,11 @@ def ensure_submodule(source_dir: Path, args: argparse.Namespace) -> None:
 
     # Compare full paths, not names: a --clang-source-dir/--gcc-source-dir
     # checkout elsewhere may share a submodule's name but is not that submodule.
-    if source_dir not in {ROOT / "clang-p2996", ROOT / "gcc-mirror"}:
+    if source_dir not in {
+        ROOT / "clang-p2996",
+        ROOT / "gcc-mirror",
+        ROOT / "gcc-darwin-reflect",
+    }:
         raise SystemExit(
             "Compiler source directory is missing or empty: "
             f"{source_dir}\n"
@@ -706,6 +710,25 @@ def build_gcc(spec: CompilerSpec, args: argparse.Namespace) -> None:
     log(f"[gcc] done -> {spec.executable}")
 
 
+def gcc_sync_missing_checkout_message(path: Path, role: str, override: str) -> str:
+    """Explain a missing gcc sync checkout and how to fix it."""
+    lines = [f"gcc sync (macOS): {path} is not a git checkout.", f"It is {role}."]
+    if path.parent == ROOT and path.name in {"gcc-mirror", "gcc-darwin-reflect"}:
+        lines += [
+            "This is a submodule that has not been checked out yet "
+            "(normal after a plain 'git clone'). Fix with:",
+            f"  git submodule update --init {path.name}",
+            "Or check out both GCC trees at once:",
+            "  git submodule update --init gcc-mirror gcc-darwin-reflect",
+        ]
+    else:
+        lines.append(f"Point {override} at an existing git checkout.")
+    lines.append(
+        "To build without applying the reflection commits, pass --no-gcc-sync."
+    )
+    return "\n".join(lines)
+
+
 def maybe_sync_gcc_sources_for_macos(
     spec: CompilerSpec, args: argparse.Namespace
 ) -> None:
@@ -730,12 +753,20 @@ def maybe_sync_gcc_sources_for_macos(
         return
 
     if not (sync_from / ".git").exists():
-        raise SystemExit(f"gcc sync source is not a git repo: {sync_from}")
+        raise SystemExit(
+            gcc_sync_missing_checkout_message(
+                sync_from,
+                role="the source of the reflection commits",
+                override="--gcc-sync-from (or REFLECT_GCC_SYNC_FROM)",
+            )
+        )
     if not (sync_to / ".git").exists():
         raise SystemExit(
-            "gcc sync target is not a git repo: "
-            f"{sync_to}\n"
-            "Clone the darwin fork first, or point --gcc-source-dir at a git checkout."
+            gcc_sync_missing_checkout_message(
+                sync_to,
+                role="the darwin GCC tree that gets built",
+                override="--gcc-source-dir (or REFLECT_GCC_SOURCE_DIR)",
+            )
         )
 
     # Guard against retry loops: if a previous `git am` stopped on conflicts,
