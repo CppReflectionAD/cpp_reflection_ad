@@ -51,8 +51,12 @@ DEFAULT_GCC_TOOLCHAIN = os.environ.get(
 # llvm-profdata (T3), and llvm-symbolizer, which the sanitizers (T1) use to
 # print stack traces.
 TOOL_TARGETS = ("clang-tidy", "llvm-cov", "llvm-profdata", "llvm-symbolizer")
-# The install components of the LLVM build that make up the CI prefix.
-INSTALL_COMPONENTS = ("clang", "clang-resource-headers", *TOOL_TARGETS)
+# The install components of the LLVM build that make up the CI prefix. On
+# Darwin the driver passes ld the libLTO.dylib next to it, which ld warns about
+# on every link if it's missing.
+INSTALL_COMPONENTS = ("clang", "clang-resource-headers", *TOOL_TARGETS) + (
+    ("LTO",) if sys.platform == "darwin" else ()
+)
 # LLVM's fix for the sanitizers hanging at startup on macOS 26 (llvm-project
 # 2e7d07a, #182943), which clang-p2996 predates. Applied on Darwin only.
 DARWIN_COMPILER_RT_PATCH = (
