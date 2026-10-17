@@ -49,9 +49,9 @@ or refuses.
 - **The results can differ from the function's own `<cmath>` in the last few
   bits.** exp/log/erfc/sin/cos come from `cx_std` in every entry point (sqrt is
   exact), so the consteval and `_rt` entry points agree exactly with each other
-  instead. That holds under this repo's flags (no `-march`/`-mfma`): with FMA
-  enabled, clang's default `-ffp-contract=on` could fuse `cx_std`'s
-  multiply-adds at run time, and `_rt` could then differ by an ulp.
+  instead. That holds with FMA enabled too: `cx_std` turns FMA contraction off
+  in its own code (`include/cx_std/cx_fp_contract.hpp`), and the tests also
+  run with FMA on, through the `clang-x86-64-v3` preset.
 - **GCC cannot build this header** (it has no `?:` reflection), so its tests
   are clang-only, and there are no `tests/static_fail` cases for its compile
   errors: `static_fail` also runs on GCC, where they would pass for the wrong

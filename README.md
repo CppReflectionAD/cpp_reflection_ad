@@ -174,6 +174,11 @@ UBSan (`-DREFLECTION_AD_SANITIZE=ON`); a sanitizer report fails the test. On
 GCC, six UBSan checks are left off, because their instrumentation changes what
 reflection sees (`tests/known_gap/gcc/ubsan_reflection_repro.cpp`).
 
+`clang-x86-64-v3` and `gcc-x86-64-v3` are Release builds with
+`-march=x86-64-v3`, for x86-64 hosts only. That turns on FMA, which arm64 always
+has, so CI on x86-64 also sees floating-point contraction bugs that otherwise
+showed up only on arm64 Macs ([#95](https://github.com/CppReflectionAD/cpp_reflection_ad/pull/95)).
+
 ```bash
 cmake --preset clang-debug           # configure
 cmake --build --preset clang-debug   # build tests and benchmarks
