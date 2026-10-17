@@ -115,7 +115,11 @@ def ensure_submodule(source_dir: Path, verbose: bool) -> None:
 
     # Compare full paths, not names: a --clang-source-dir/--gcc-source-dir
     # checkout elsewhere may share a submodule's name but is not that submodule.
-    if source_dir not in {ROOT / "clang-p2996", ROOT / "gcc-mirror"}:
+    if source_dir not in {
+        ROOT / "clang-p2996",
+        ROOT / "gcc-mirror",
+        ROOT / "gcc-darwin-reflect",
+    }:
         raise SystemExit(
             "Compiler source directory is missing or empty: "
             f"{source_dir}\n"

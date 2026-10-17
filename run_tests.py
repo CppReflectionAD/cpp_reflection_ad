@@ -28,6 +28,7 @@ from tools.toolchain.common import (
     CommandResult,
     CompilerSpec,
     ensure_directory,
+    ensure_submodule,
     log,
     render_command_failure,
     require_success,
@@ -290,18 +291,20 @@ def parse_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
         ),
     )
     parser.add_argument(
-        "--gcc-sync-base-ref",
-        default="master",
-        help=(
-            "Base ref in --gcc-sync-from used to compute the patch stack "
-            "(merge-base against --gcc-sync-ref). Default: master."
-        ),
-    )
-    parser.add_argument(
         "--gcc-sync-ref",
         default="HEAD",
         help="Ref in --gcc-sync-from that contains reflection commits. Default: HEAD.",
     )
+    parser.add_argument(
+        "--gcc-sync-pin",
+        help=(
+            "On macOS, the darwin commit the reflection commits are replayed onto. "
+            "Default: the gcc-darwin-reflect submodule pin. Required when "
+            "--gcc-source-dir is a standalone clone rather than the submodule."
+        ),
+    )
+    # Superseded by the darwin pin; still accepted so old command lines work.
+    parser.add_argument("--gcc-sync-base-ref", help=argparse.SUPPRESS)
     parser.add_argument(
         "--no-gcc-sync",
         action="store_true",
@@ -342,6 +345,13 @@ def parse_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
         )
     if args.std is not None:
         parser.error("--std is gone: CMake sets the language standard (c++2c).")
+    if args.gcc_sync_base_ref is not None:
+        print(
+            "warning: --gcc-sync-base-ref is ignored and will be removed; the "
+            "macOS GCC sync now starts from the gcc-darwin-reflect pin "
+            "(see --gcc-sync-pin).",
+            file=sys.stderr,
+        )
     if args.build_type is None:
         args.build_type = "debug" if args.debugger else "release"
     if args.debugger and (args.compiler == "both" or args.build_type == "all"):
@@ -399,14 +409,37 @@ def build_specs(args: argparse.Namespace) -> dict[str, CompilerSpec]:
     }
 
 
+def gcc_sync_missing_checkout_message(path: Path, role: str, override: str) -> str:
+    """Explain a missing gcc sync checkout and how to fix it."""
+    lines = [f"gcc sync (macOS): {path} is not a git checkout.", f"It is {role}."]
+    if path.parent == ROOT and path.name in {"gcc-mirror", "gcc-darwin-reflect"}:
+        lines += [
+            "This is a submodule that has not been checked out yet "
+            "(normal after a plain 'git clone'). Fix with:",
+            f"  git submodule update --init {path.name}",
+            "Or check out both GCC trees at once:",
+            "  git submodule update --init gcc-mirror gcc-darwin-reflect",
+        ]
+    else:
+        lines.append(f"Point {override} at an existing git checkout.")
+    lines.append(
+        "To build without applying the reflection commits, pass --no-gcc-sync."
+    )
+    return "\n".join(lines)
+
+
 def maybe_sync_gcc_sources_for_macos(
     spec: CompilerSpec, args: argparse.Namespace
 ) -> None:
     """On macOS, apply new reflection commits from gcc-mirror to darwin GCC.
 
-    This keeps the Linux/default source of truth (gcc-mirror) and the macOS
-    darwin build tree aligned by replaying only new commits since the previous
-    sync state. Non-macOS runs are unaffected.
+    The patch stack is every non-merge commit in gcc-mirror that is not
+    reachable from the darwin pin (see gcc_sync_target_pin). If the darwin tree
+    is exactly where the previous successful sync left it, only newer commits
+    are applied; otherwise the tree is reset to its pin and the whole stack is
+    replayed, and put back where it was if that fails. The sync state lives in
+    the darwin repo's git dir, so all build directories share it.
+    Non-macOS runs are unaffected.
     """
     if sys.platform != "darwin" or args.no_gcc_sync:
         return
@@ -420,24 +453,31 @@ def maybe_sync_gcc_sources_for_macos(
     if sync_from == sync_to:
         return
 
+    # A fresh clone leaves both GCC submodules empty; check them out here.
+    for path in (sync_from, sync_to):
+        if path in {ROOT / "gcc-mirror", ROOT / "gcc-darwin-reflect"}:
+            ensure_submodule(path, args.verbose)
+
     if not (sync_from / ".git").exists():
-        raise SystemExit(f"gcc sync source is not a git repo: {sync_from}")
+        raise SystemExit(
+            gcc_sync_missing_checkout_message(
+                sync_from,
+                role="the source of the reflection commits",
+                override="--gcc-sync-from (or REFLECT_GCC_SYNC_FROM)",
+            )
+        )
     if not (sync_to / ".git").exists():
         raise SystemExit(
-            "gcc sync target is not a git repo: "
-            f"{sync_to}\n"
-            "Clone the darwin fork first, or point --gcc-source-dir at a git checkout."
+            gcc_sync_missing_checkout_message(
+                sync_to,
+                role="the darwin GCC tree that gets built",
+                override="--gcc-source-dir (or REFLECT_GCC_SOURCE_DIR)",
+            )
         )
 
     # Guard against retry loops: if a previous `git am` stopped on conflicts,
     # attempting a new `git am` will fail immediately with rebase-apply present.
-    am_state_path = require_git_output(
-        sync_to, ["git", "rev-parse", "--git-path", "rebase-apply"], args.verbose
-    )
-    am_state_dir = Path(am_state_path)
-    if not am_state_dir.is_absolute():
-        am_state_dir = sync_to / am_state_dir
-    if am_state_dir.exists():
+    if git_dir_path(sync_to, "rebase-apply", args.verbose).exists():
         raise SystemExit(
             "gcc sync cannot start: an earlier 'git am' session is still in progress in "
             f"{sync_to}.\n"
@@ -468,43 +508,249 @@ def maybe_sync_gcc_sources_for_macos(
         if args.gcc_patches_dir
         else (BUILD_ROOT / "gcc-sync-patches").resolve()
     )
-    state_file = spec.build_dir / ".gcc_sync_state.json"
+    # Shared by every build directory: it describes the darwin source tree.
+    state_file = git_dir_path(sync_to, "gcc-sync-state.json", args.verbose)
 
     source_head = require_git_output(
         sync_from, ["git", "rev-parse", args.gcc_sync_ref], args.verbose
     )
-    base_commit = require_git_output(
-        sync_from,
-        ["git", "merge-base", args.gcc_sync_ref, args.gcc_sync_base_ref],
-        args.verbose,
+    target_pin = gcc_sync_target_pin(sync_to, args)
+    target_head = require_git_output(
+        sync_to, ["git", "rev-parse", "HEAD"], args.verbose
     )
 
-    start_commit = base_commit
-    if state_file.is_file():
-        try:
-            state = json.loads(state_file.read_text(encoding="utf-8"))
-            previous = state.get("last_synced_source_commit", "")
-            if previous:
-                ancestor_check = run_command(
-                    ["git", "merge-base", "--is-ancestor", previous, source_head],
-                    cwd=sync_from,
-                    verbose=args.verbose,
-                )
-                if ancestor_check.returncode == 0:
-                    start_commit = previous
-        except (OSError, json.JSONDecodeError):
-            pass
-
-    pending = require_git_output(
-        sync_from,
-        ["git", "rev-list", "--count", f"{start_commit}..{source_head}"],
-        args.verbose,
+    # Fall back to the per-build-dir file written before the state moved into
+    # the darwin repo, so existing checkouts don't pay for a full replay.
+    state = read_gcc_sync_state(state_file) or read_gcc_sync_state(
+        spec.build_dir / ".gcc_sync_state.json"
     )
-    if pending == "0":
-        log("[gcc-sync] no new gcc-mirror commits to apply for macOS")
+    previous = state.get("last_synced_source_commit", "")
+    tree_unchanged = (
+        bool(previous)
+        and state.get("target_pin") == target_pin
+        and state.get("target_head") == target_head
+    )
+    if tree_unchanged and previous == source_head:
+        log("[gcc-sync] darwin GCC tree already up to date with gcc-mirror")
         return
 
-    log(f"[gcc-sync] exporting {pending} commit(s) from {sync_from}...")
+    fetch_gcc_sync_source(sync_from, sync_to, source_head, args)
+
+    start_commit = ""
+    if tree_unchanged:
+        ancestor_check = run_command(
+            ["git", "merge-base", "--is-ancestor", previous, source_head],
+            cwd=sync_to,
+            verbose=args.verbose,
+        )
+        if ancestor_check.returncode == 0:
+            start_commit = previous
+    full_replay = not start_commit
+    if full_replay:
+        start_commit = target_pin
+
+    pending = require_git_output(
+        sync_to,
+        [
+            "git",
+            "rev-list",
+            "--count",
+            "--no-merges",
+            f"{start_commit}..{source_head}",
+        ],
+        args.verbose,
+    )
+    # Checked before touching the tree, so a refusal leaves it as it was.
+    if pending != "0":
+        check_gcc_sync_merges(sync_to, start_commit, source_head, args)
+
+    if full_replay and target_head != target_pin:
+        log(
+            f"[gcc-sync] resetting {sync_to} to its pin {target_pin[:12]} "
+            f"(was {target_head[:12]}) and replaying the full patch stack"
+        )
+        reset_result = run_command(
+            ["git", "checkout", "--detach", target_pin],
+            cwd=sync_to,
+            verbose=args.verbose,
+        )
+        require_success(reset_result, f"gcc sync: checkout pin in {sync_to}")
+
+    if pending != "0":
+        try:
+            apply_gcc_sync_patches(
+                sync_to, patches_dir, start_commit, source_head, pending, args
+            )
+        except SystemExit as exc:
+            # A failed incremental sync is already back at target_head (git am
+            # --abort); a failed full replay is at the bare pin, so put back the
+            # previous synced head rather than leave a tree without reflection.
+            if not full_replay or target_head == target_pin:
+                raise
+            restore = run_command(
+                ["git", "checkout", "--detach", target_head],
+                cwd=sync_to,
+                verbose=args.verbose,
+            )
+            if restore.returncode == 0:
+                note = (
+                    f"The darwin tree was put back at {target_head[:12]}, "
+                    "where it was before this run."
+                )
+            else:
+                note = (
+                    f"Putting the darwin tree back at {target_head} also failed. "
+                    f"Run 'git checkout --detach {target_head}' in {sync_to}.\n\n"
+                    + render_command_failure(restore)
+                )
+            raise SystemExit(f"{exc.code}\n\n{note}") from None
+
+    state_file.write_text(
+        json.dumps(
+            {
+                "last_synced_source_commit": source_head,
+                "target_pin": target_pin,
+                "target_head": require_git_output(
+                    sync_to, ["git", "rev-parse", "HEAD"], args.verbose
+                ),
+                "sync_from": str(sync_from),
+                "sync_to": str(sync_to),
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def git_dir_path(repo: Path, name: str, verbose: bool) -> Path:
+    """Resolve `git rev-parse --git-path <name>` for repo to an absolute path."""
+    path = Path(
+        require_git_output(repo, ["git", "rev-parse", "--git-path", name], verbose)
+    )
+    return path if path.is_absolute() else repo / path
+
+
+def read_gcc_sync_state(path: Path) -> dict[str, str]:
+    """Read a sync state file; a missing or malformed file counts as no state."""
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return state if isinstance(state, dict) else {}
+
+
+def gcc_sync_target_pin(sync_to: Path, args: argparse.Namespace) -> str:
+    """The darwin commit the reflection commits are replayed onto.
+
+    --gcc-sync-pin wins. Otherwise it is the gitlink in the superproject's
+    index (not HEAD), so a pin bumped with `git update-index --cacheinfo`
+    takes effect before it is committed.
+    """
+    if args.gcc_sync_pin:
+        return require_git_output(
+            sync_to,
+            ["git", "rev-parse", "--verify", f"{args.gcc_sync_pin}^{{commit}}"],
+            args.verbose,
+        )
+    superproject = run_command(
+        ["git", "rev-parse", "--show-superproject-working-tree"],
+        cwd=sync_to,
+        verbose=args.verbose,
+    )
+    if superproject.returncode != 0 or not superproject.stdout.strip():
+        raise SystemExit(
+            f"gcc sync target is a standalone clone, not a submodule: {sync_to}\n"
+            "The sync replays the reflection commits onto a fixed darwin commit, "
+            "which for the submodule is its pin. For a standalone clone, give that "
+            "commit with --gcc-sync-pin <sha> (normally the pin recorded in this "
+            "repo: 'git rev-parse :gcc-darwin-reflect'), or pass --no-gcc-sync to "
+            "skip the sync."
+        )
+    superproject_root = Path(superproject.stdout.strip()).resolve()
+    target_rel = sync_to.relative_to(superproject_root).as_posix()
+    return require_git_output(
+        superproject_root, ["git", "rev-parse", f":{target_rel}"], args.verbose
+    )
+
+
+GCC_SYNC_SOURCE_REF = "refs/gcc-sync/source"
+
+
+def fetch_gcc_sync_source(
+    sync_from: Path, sync_to: Path, source_head: str, args: argparse.Namespace
+) -> None:
+    """Fetch source_head into sync_to under GCC_SYNC_SOURCE_REF.
+
+    The ref keeps the gcc-mirror commits reachable, so gc can't prune them.
+    Protocol v2 lets the fetch name any reachable commit, not only branch tips.
+    """
+    fetch_result = run_command(
+        [
+            "git",
+            "-c",
+            "protocol.version=2",
+            "fetch",
+            "--no-tags",
+            str(sync_from),
+            f"+{source_head}:{GCC_SYNC_SOURCE_REF}",
+        ],
+        cwd=sync_to,
+        verbose=args.verbose,
+    )
+    require_success(fetch_result, f"gcc sync: fetch from {sync_from}")
+
+
+def check_gcc_sync_merges(
+    sync_to: Path, start_commit: str, source_head: str, args: argparse.Namespace
+) -> None:
+    """Refuse to sync if a merge in the range has changes of its own.
+
+    format-patch skips merge commits, so a manual conflict resolution (or any
+    other edit made in a merge) would be silently lost. `git show
+    --remerge-diff` is empty for a merge that git would redo identically.
+    """
+    merges = run_command(
+        ["git", "rev-list", "--merges", f"{start_commit}..{source_head}"],
+        cwd=sync_to,
+        verbose=args.verbose,
+    )
+    require_success(merges, "gcc sync: list merges")
+    resolved = []
+    for merge in merges.stdout.split():
+        remerge = run_command(
+            ["git", "show", "--remerge-diff", "--format=", merge],
+            cwd=sync_to,
+            verbose=args.verbose,
+        )
+        require_success(remerge, f"gcc sync: remerge-diff of {merge[:12]}")
+        if remerge.stdout.strip():
+            resolved.append(merge)
+    if resolved:
+        raise SystemExit(
+            "gcc sync cannot replay gcc-mirror: these merge commits contain "
+            "manual conflict resolutions, which a patch replay would drop:\n"
+            + "\n".join(f"  {merge}" for merge in resolved)
+            + f"\nInspect them with 'git show --remerge-diff <sha>' in {sync_to}. "
+            "The darwin tree was not changed. Pass --no-gcc-sync to skip the sync."
+        )
+
+
+def apply_gcc_sync_patches(
+    sync_to: Path,
+    patches_dir: Path,
+    start_commit: str,
+    source_head: str,
+    pending: str,
+    args: argparse.Namespace,
+) -> None:
+    """Export start_commit..source_head from sync_to's object store and git-am it.
+
+    Conflicts are not auto-resolved: taking either side of a file wholesale
+    loses the other side's edits. On failure the session is aborted, which
+    returns HEAD to where `git am` started.
+    """
+    log(f"[gcc-sync] exporting {pending} commit(s) from {sync_to}...")
     shutil.rmtree(patches_dir, ignore_errors=True)
     ensure_directory(patches_dir)
     export_result = run_command_streamed(
@@ -515,7 +761,7 @@ def maybe_sync_gcc_sources_for_macos(
             str(patches_dir),
             f"{start_commit}..{source_head}",
         ],
-        cwd=sync_from,
+        cwd=sync_to,
         verbose=args.verbose,
     )
     require_success(export_result, "gcc sync: format-patch")
@@ -528,46 +774,47 @@ def maybe_sync_gcc_sources_for_macos(
         )
 
     log(f"[gcc-sync] applying {len(patch_files)} patch(es) to {sync_to}...")
+    # Author dates as committer dates: replaying the same stack on the same pin
+    # then yields the same commits, so a repeat replay changes no SHAs.
     apply_result = run_command_streamed(
-        ["git", "am", "--3way", *[str(path) for path in patch_files]],
+        [
+            "git",
+            "am",
+            "--3way",
+            "--committer-date-is-author-date",
+            *[str(path) for path in patch_files],
+        ],
         cwd=sync_to,
         verbose=args.verbose,
     )
-    if apply_result.returncode != 0:
-        auto_resolved = try_auto_resolve_git_am_conflicts(sync_to, args.verbose)
-        if auto_resolved:
-            log("[gcc-sync] auto-resolved patch conflicts and completed git am")
-        else:
-            abort_result = run_command(
-                ["git", "am", "--abort"], cwd=sync_to, verbose=args.verbose
-            )
-            if abort_result.returncode != 0:
-                abort_details = render_command_failure(abort_result)
-                raise SystemExit(
-                    "gcc sync failed while applying patches, and automatic rollback also "
-                    f"failed in {sync_to}.\n\n{abort_details}"
-                )
-            raise SystemExit(
-                "gcc sync failed while applying patches, and the in-progress 'git am' "
-                "session was rolled back automatically to keep the tree clean.\n"
-                f"Target: {sync_to}\n"
-                f"Exported patch stack: {patches_dir}\n"
-                "Fix the source/target divergence, then retry. Use --no-gcc-sync to skip "
-                "this step for a build."
-            )
+    if apply_result.returncode == 0:
+        return
 
-    ensure_directory(state_file.parent)
-    state_file.write_text(
-        json.dumps(
-            {
-                "last_synced_source_commit": source_head,
-                "sync_from": str(sync_from),
-                "sync_to": str(sync_to),
-            },
-            indent=2,
+    unmerged = run_command(
+        ["git", "diff", "--name-only", "--diff-filter=U"],
+        cwd=sync_to,
+        verbose=args.verbose,
+    )
+    conflicted = unmerged.stdout.split() if unmerged.returncode == 0 else []
+    abort_result = run_command(
+        ["git", "am", "--abort"], cwd=sync_to, verbose=args.verbose
+    )
+    if abort_result.returncode != 0:
+        abort_details = render_command_failure(abort_result)
+        raise SystemExit(
+            "gcc sync failed while applying patches, and automatic rollback also "
+            f"failed in {sync_to}.\n\n{abort_details}"
         )
-        + "\n",
-        encoding="utf-8",
+    conflict_lines = "".join(f"  {path}\n" for path in conflicted)
+    raise SystemExit(
+        "gcc sync failed: a gcc-mirror patch does not apply cleanly to the darwin "
+        "tree (see the 'Patch failed at' line above), so the 'git am' session "
+        "was rolled back.\n"
+        f"Target: {sync_to}\n"
+        + (f"Conflicting files:\n{conflict_lines}" if conflicted else "")
+        + f"Exported patch stack: {patches_dir}\n"
+        "Fix the source/target divergence, then retry. Use --no-gcc-sync to skip "
+        "this step for a build."
     )
 
 
@@ -581,63 +828,6 @@ def require_git_output(repo: Path, command: list[str], verbose: bool) -> str:
             f"git command returned empty output in {repo}: {shlex.join(command)}"
         )
     return value
-
-
-def try_auto_resolve_git_am_conflicts(repo: Path, verbose: bool) -> bool:
-    """Attempt to finish an in-progress git am by auto-resolving merge conflicts.
-
-    Strategy: for each conflict stop, take the incoming patch side ("theirs")
-    for unmerged paths, stage, and continue. If the sequence completes, return
-    True; otherwise return False so caller can roll back.
-    """
-    max_rounds = 200
-    for _ in range(max_rounds):
-        am_state = run_command(
-            ["git", "rev-parse", "--git-path", "rebase-apply"],
-            cwd=repo,
-            verbose=verbose,
-        )
-        if am_state.returncode != 0:
-            return False
-        am_state_path = am_state.stdout.strip()
-        if not am_state_path:
-            return False
-        state_dir = Path(am_state_path)
-        if not state_dir.is_absolute():
-            state_dir = repo / state_dir
-        if not state_dir.exists():
-            return True
-
-        unmerged = run_command(
-            ["git", "diff", "--name-only", "--diff-filter=U"],
-            cwd=repo,
-            verbose=verbose,
-        )
-        if unmerged.returncode != 0:
-            return False
-        files = [line.strip() for line in unmerged.stdout.splitlines() if line.strip()]
-        if not files:
-            return False
-
-        checkout_theirs = run_command(
-            ["git", "checkout", "--theirs", "--", *files],
-            cwd=repo,
-            verbose=verbose,
-        )
-        if checkout_theirs.returncode != 0:
-            return False
-
-        add_result = run_command(
-            ["git", "add", "--", *files], cwd=repo, verbose=verbose
-        )
-        if add_result.returncode != 0:
-            return False
-
-        cont = run_command(["git", "am", "--continue"], cwd=repo, verbose=verbose)
-        if cont.returncode == 0:
-            continue
-
-    return False
 
 
 def build_selected_compilers(
