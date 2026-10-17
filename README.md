@@ -40,6 +40,20 @@ To use it:
 If you use Boost, pick Boost 1.84 or older from the Libraries menu for now;
 newer Boost versions are not yet packaged for this compiler.
 
+### The gcc fork
+
+The gcc fork
+([yesmanchyk/gcc-mirror, branch `autograd-capable`](https://github.com/yesmanchyk/gcc-mirror/tree/autograd-capable))
+is also on Compiler Explorer, as **x86-64 gcc (expr-reflect)**. It is in the
+x86-64 gcc list (type `expr-reflect` in the compiler picker to find it) and is
+rebuilt nightly from the tip of the `autograd-capable` branch. Its default
+options are `-std=c++26 -freflection`.
+
+[This example](https://godbolt.org/z/8hroz6cnx) reflects the body of a small function and rebuilds its
+return expression as text at compile time. The same source compiles and runs
+unchanged on both expr-reflect compilers, and fails on gcc trunk and on
+"x86-64 clang (reflection - C++26)", which have no `body_of` or `operands_of`.
+
 ## Layout
 
 The libraries are header-only, under `include/`:
