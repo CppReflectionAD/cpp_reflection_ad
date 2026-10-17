@@ -218,8 +218,12 @@ def build_clang_runtimes(spec: CompilerSpec, args: argparse.Namespace) -> None:
     ]
     configure_when_changed(configure, runtimes_dir, "runtimes", args)
 
-    log(f"[runtimes] building libc++/libc++abi with ninja (-j{args.jobs})...")
-    build = ["ninja", "-C", str(runtimes_dir), "-j", str(args.jobs), "cxx", "cxxabi"]
+    # The default target, not just cxx and cxxabi: `cmake --install` also
+    # copies libunwind and libc++experimental.
+    log(
+        f"[runtimes] building {runtimes.replace(';', '/')} with ninja (-j{args.jobs})..."
+    )
+    build = ["ninja", "-C", str(runtimes_dir), "-j", str(args.jobs)]
     require_success(
         run_command_streamed(build, cwd=ROOT, verbose=args.verbose), "runtimes build"
     )
