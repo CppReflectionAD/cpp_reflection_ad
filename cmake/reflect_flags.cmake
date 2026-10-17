@@ -187,8 +187,8 @@ int main(int argc, char**) { return std::vector<int>(argc).size() == 0; }
                 "build and link a program with ${_sanitize_flags_text}.\n"
                 "For clang, the toolchain needs compiler-rt: rebuild it with "
                 "`python3 run_tests.py --build-compilers --compiler clang`. "
-                "The GCC fork needs libsanitizer, which may not exist for your "
-                "target (e.g. the darwin fork).\n"
+                "For GCC, the toolchain needs libsanitizer (libasan, libubsan), "
+                "which the fork builds by default on Linux and macOS.\n"
                 "Compiler errors:\n  ${_sanitize_errors}")
         endif()
         set(REFLECTION_AD_SANITIZE_PROBED "${_sanitize_probe_key}" CACHE INTERNAL
