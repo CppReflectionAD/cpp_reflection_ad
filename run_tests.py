@@ -139,6 +139,15 @@ def parse_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
         ),
     )
     parser.add_argument(
+        "--sanitize",
+        action="store_true",
+        help=(
+            "Build and test with AddressSanitizer and UBSan, i.e. the "
+            "<compiler>-sanitize preset (a Debug build). Clang needs a "
+            "toolchain with compiler-rt (--build-compilers builds one)."
+        ),
+    )
+    parser.add_argument(
         "--build-compilers",
         action="store_true",
         help="Build the selected compiler submodules before running tests.",
@@ -352,8 +361,10 @@ def parse_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
             "(see --gcc-sync-pin).",
             file=sys.stderr,
         )
+    if args.sanitize and args.build_type not in (None, "debug"):
+        parser.error("--sanitize is a Debug build; drop --build-type.")
     if args.build_type is None:
-        args.build_type = "debug" if args.debugger else "release"
+        args.build_type = "debug" if args.debugger or args.sanitize else "release"
     if args.debugger and (args.compiler == "both" or args.build_type == "all"):
         parser.error("--debugger needs one --compiler and one --build-type.")
     if args.debugger and (not args.tests or len(args.tests) != 1):
@@ -368,6 +379,9 @@ def selected_compilers(args: argparse.Namespace) -> list[str]:
 
 
 def selected_build_types(args: argparse.Namespace) -> list[str]:
+    """The preset suffixes to run: build types, or the sanitizer preset."""
+    if args.sanitize:
+        return ["sanitize"]
     if args.build_type == "all":
         return list(BUILD_TYPES)
     return [args.build_type]

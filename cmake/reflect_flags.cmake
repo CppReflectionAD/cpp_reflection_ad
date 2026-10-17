@@ -141,6 +141,66 @@ target_compile_options(reflection_ad_flags INTERFACE
 )
 target_link_options(reflection_ad_flags INTERFACE ${_reflect_link_flags})
 
+# ---------------------------------------------------------------------------
+# Sanitizers (opt-in): AddressSanitizer and UndefinedBehaviorSanitizer for
+# every target, via the profile above. The *-sanitize presets turn this on.
+# A UBSan report aborts the test, so ctest sees it as a failure.
+# ---------------------------------------------------------------------------
+option(REFLECTION_AD_SANITIZE
+    "Build tests and benchmarks with AddressSanitizer and UBSan" OFF)
+if(REFLECTION_AD_SANITIZE)
+    set(_sanitize_flags
+        -fsanitize=address,undefined
+        -fno-sanitize-recover=all
+        -fno-omit-frame-pointer
+    )
+    if(_is_gcc)
+        # GCC's UBSan instrumentation leaks into the expression trees that
+        # std::meta sees (tests/known_gap/gcc/ubsan_reflection_repro.cpp), and
+        # each of these checks on its own breaks some tests' static_asserts.
+        # Drop this once that known gap is fixed.
+        list(APPEND _sanitize_flags
+            -fno-sanitize=shift,integer-divide-by-zero,signed-integer-overflow,null,alignment,vptr)
+    endif()
+    set(_sanitize_link_flags -fsanitize=address,undefined)
+
+    # Check that the runtimes are there, so a toolchain without them fails
+    # here rather than at the first link (or, worse, builds without them).
+    set(_sanitize_probe_key
+        "${_probe_key};${_sanitize_flags};${_sanitize_link_flags}")
+    if(NOT "${_sanitize_probe_key}" STREQUAL "${REFLECTION_AD_SANITIZE_PROBED}")
+        try_compile(_sanitize_ok
+            SOURCE_FROM_CONTENT sanitize_probe.cpp [=[
+#include <vector>
+int main(int argc, char**) { return std::vector<int>(argc).size() == 0; }
+]=]
+            COMPILE_DEFINITIONS -std=c++2c ${_reflect_flags} ${_sanitize_flags}
+            LINK_OPTIONS ${_reflect_link_flags} ${_sanitize_link_flags}
+            OUTPUT_VARIABLE _sanitize_output)
+        if(NOT _sanitize_ok)
+            string(REGEX MATCHALL "[^\n]*(error|cannot find)[^\n]*"
+                _sanitize_errors "${_sanitize_output}")
+            list(JOIN _sanitize_errors "\n  " _sanitize_errors)
+            list(JOIN _sanitize_flags " " _sanitize_flags_text)
+            message(FATAL_ERROR
+                "REFLECTION_AD_SANITIZE is ON, but ${CMAKE_CXX_COMPILER} can't "
+                "build and link a program with ${_sanitize_flags_text}.\n"
+                "For clang, the toolchain needs compiler-rt: rebuild it with "
+                "`python3 run_tests.py --build-compilers --compiler clang`. "
+                "For GCC, the toolchain needs libsanitizer (libasan, libubsan), "
+                "which the fork builds by default on Linux and macOS.\n"
+                "Compiler errors:\n  ${_sanitize_errors}")
+        endif()
+        set(REFLECTION_AD_SANITIZE_PROBED "${_sanitize_probe_key}" CACHE INTERNAL
+            "Compiler and flags that passed the sanitizer probe")
+    endif()
+
+    target_compile_options(reflection_ad_flags INTERFACE ${_sanitize_flags})
+    target_link_options(reflection_ad_flags INTERFACE ${_sanitize_link_flags})
+    unset(_sanitize_flags)
+    unset(_sanitize_link_flags)
+endif()
+
 # The target is the one way to get the profile.
 unset(_reflect_flags)
 unset(_reflect_link_flags)
