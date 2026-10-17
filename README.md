@@ -40,6 +40,20 @@ To use it:
 If you use Boost, pick Boost 1.84 or older from the Libraries menu for now;
 newer Boost versions are not yet packaged for this compiler.
 
+### The gcc fork
+
+The gcc fork
+([yesmanchyk/gcc-mirror, branch `autograd-capable`](https://github.com/yesmanchyk/gcc-mirror/tree/autograd-capable))
+is also on Compiler Explorer, as **x86-64 gcc (expr-reflect)**. It is in the
+x86-64 gcc list (type `expr-reflect` in the compiler picker to find it) and is
+rebuilt nightly from the tip of the `autograd-capable` branch. Its default
+options are `-std=c++26 -freflection`.
+
+[This example](https://godbolt.org/z/8hroz6cnx) reflects the body of a small function and rebuilds its
+return expression as text at compile time. The same source compiles and runs
+unchanged on both expr-reflect compilers, and fails on gcc trunk and on
+"x86-64 clang (reflection - C++26)", which have no `body_of` or `operands_of`.
+
 ## Layout
 
 The libraries are header-only, under `include/`:
@@ -72,9 +86,10 @@ which the library targets carry, so every test and benchmark gets it from there.
 
 ## Test Runner
 
-`run_tests.py` is the one command for building and testing, used the same way
-locally and in CI. It is a thin driver over the [CMake presets](#building-with-cmake-presets):
-for each selected compiler (`--compiler clang`, `gcc` or `both`, the default)
+`run_tests.py` is the one command for building and testing locally. It is a
+thin driver over the [CMake presets](#building-with-cmake-presets); CI calls
+the presets directly.
+For each selected compiler (`--compiler clang`, `gcc` or `both`, the default)
 and build type (`--build-type release`, the default, `debug`, `relwithdebinfo`,
 or `all` for each in turn) it configures the preset (`clang-release`, ...) with
 that compiler, builds, and runs `ctest`, then prints a summary. Everything else
@@ -122,7 +137,7 @@ python3 run_tests.py --compiler clang --build-compilers
 # build and run every test (Release; the clang root defaults to build/clang-p2996)
 python3 run_tests.py --compiler clang
 
-# every build type, both compilers: what CI checks
+# every build type, both compilers: the same presets CI runs
 python3 run_tests.py --build-type all
 
 # a single test, by ctest name or by path under tests/
