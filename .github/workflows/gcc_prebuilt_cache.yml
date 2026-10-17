@@ -64,6 +64,37 @@ jobs:
       - name: Test AD with CTest
         run: ctest --preset "$PRESET"
 
+  # ASan and UBSan (#94 T1), through the gcc-sanitize preset. It isn't in
+  # the summary job's needs, so it isn't a required check yet; #94 C8 makes it
+  # one once it has proved stable.
+  sanitize:
+    name: sanitize (ASan+UBSan)
+    needs: toolchain
+    # Pinned to match toolchain-cache-gcc.yml, like the test legs.
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Restore gcc toolchain from cache
+        uses: actions/cache/restore@v6
+        with:
+          path: /opt/toolchain-gcc
+          key: ${{ needs.toolchain.outputs.cache_key }}
+          fail-on-cache-miss: true
+
+      - name: Configure CMake
+        run: |
+          cmake --preset gcc-sanitize \
+            -DCMAKE_CXX_COMPILER=/opt/toolchain-gcc/bin/g++
+
+      - name: Build tests
+        run: cmake --build --preset gcc-sanitize
+
+      - name: Test AD with CTest
+        run: ctest --preset gcc-sanitize
+
   # The one check for the ruleset to require (#94 C4), so it names this
   # workflow's result rather than each matrix leg. always() makes it report
   # even when the toolchain fails and the legs are skipped, or the run is

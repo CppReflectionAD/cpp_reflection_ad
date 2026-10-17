@@ -137,6 +137,10 @@ python3 run_tests.py --compiler clang --tests 'common/ad_scalar_demo.cpp'
 # build one test in Debug and start it under a debugger
 python3 run_tests.py --compiler clang --tests ad_scalar_demo --debugger lldb
 
+# every test under AddressSanitizer and UBSan (a Debug build, the
+# <compiler>-sanitize preset); clang needs compiler-rt, which --build-compilers builds
+python3 run_tests.py --sanitize
+
 # build and run a benchmark (ITERATIONS=... tunes the workload)
 ITERATIONS=1000000 python3 run_tests.py --compiler clang --benchmarks black_scholes_timing --run-executables
 
@@ -164,6 +168,11 @@ build type: `clang-debug`, `clang-relwithdebinfo`, `clang-release`, and the same
 for `gcc-`. Each one picks the compiler built in `build/` (`build/clang-p2996`,
 `build/gcc-p2996`), uses Ninja, writes `compile_commands.json`, and builds into
 `build/cmake/<preset>`.
+
+`clang-sanitize` and `gcc-sanitize` are Debug builds with AddressSanitizer and
+UBSan (`-DREFLECTION_AD_SANITIZE=ON`); a sanitizer report fails the test. On
+GCC, six UBSan checks are left off, because their instrumentation changes what
+reflection sees (`tests/known_gap/gcc/ubsan_reflection_repro.cpp`).
 
 ```bash
 cmake --preset clang-debug           # configure
