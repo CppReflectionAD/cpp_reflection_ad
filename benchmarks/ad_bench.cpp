@@ -19,12 +19,12 @@
 // identical ones aren't merged, warm up, and take the min over trials. Every AD
 // result is checked against hand-written before timing.
 //
-// Build/run: `run_tests.py --run-executables --tests ad_bench.cpp` (built at
-// -O3).
+// Build/run: `run_tests.py --benchmarks ad_bench --run-executables` (a
+// Release build, -O3).
 
-#include "autograd.h"
-#include "forward_derivative.h"
-#include "reverse_derivative.h"
+#include <ad/autograd.h>
+#include <ad/forward_derivative.h>
+#include <ad/reverse_derivative.h>
 
 #include <array>
 #include <chrono>

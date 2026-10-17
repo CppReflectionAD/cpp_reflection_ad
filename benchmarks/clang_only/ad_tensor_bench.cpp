@@ -10,12 +10,13 @@
 // written is smaller than for scalars (matmuls dominate), but the *absolute*
 // time saved per call is larger.
 //
-// Build/run: `run_tests.py --run-executables --tests
-// clang_only/ad_tensor_bench.cpp` (built at -O3).
+// Build/run: `run_tests.py --compiler clang --benchmarks ad_tensor_bench
+// --run-executables` (a Release build, -O3).
 
-#include "autograd_tensor.h"
-#include "tensor.h"
-#include "tensor_rules.h"
+#include <ad/clang_only/autograd_tensor.h>
+#include <ad/clang_only/tensor.h>
+#include <ad/clang_only/tensor_rules.h>
+
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -29,7 +30,7 @@ template <class T> static inline void do_not_optimize(T &v) {
   asm volatile("" : "+r,m"(v) : : "memory");
 }
 
-using nn::Tensor;
+using toy_tensor::Tensor;
 using Grad4 = std::array<Tensor, 4>;
 
 // reduce g to shape (r,c) — reverse of broadcasting, by target shape
@@ -76,18 +77,20 @@ static Var push1(TOp op, const Var &A, Tensor res, Tensor sa) {
   return {std::move(res), id};
 }
 static Var matmul(const Var &A, const Var &B) {
-  return push(TOp::Matmul, A, B, nn::matmul(A.v, B.v), A.v, B.v);
+  return push(TOp::Matmul, A, B, toy_tensor::matmul(A.v, B.v), A.v, B.v);
 }
 static Var add(const Var &A, const Var &B) {
-  return push(TOp::Add, A, B, nn::add(A.v, B.v), {}, {});
+  return push(TOp::Add, A, B, toy_tensor::add(A.v, B.v), {}, {});
 }
 static Var mul(const Var &A, const Var &B) {
-  return push(TOp::Mul, A, B, nn::mul(A.v, B.v), A.v, B.v);
+  return push(TOp::Mul, A, B, toy_tensor::mul(A.v, B.v), A.v, B.v);
 }
 static Var relu(const Var &A) {
-  return push1(TOp::Relu, A, nn::relu(A.v), A.v);
+  return push1(TOp::Relu, A, toy_tensor::relu(A.v), A.v);
 }
-static Var sum(const Var &A) { return push1(TOp::Sum, A, nn::sum(A.v), A.v); }
+static Var sum(const Var &A) {
+  return push1(TOp::Sum, A, toy_tensor::sum(A.v), A.v);
+}
 
 NOINLINE Grad4 grad(const Tensor &x, const Tensor &W1, const Tensor &b1,
                     const Tensor &W2, const Tensor &b2) {
@@ -101,13 +104,13 @@ NOINLINE Grad4 grad(const Tensor &x, const Tensor &W1, const Tensor &b1,
   std::vector<char> seen(tape.size(), 0);
   auto acc = [&](int i, Tensor g) {
     if (seen[i])
-      adj[i] = nn::add(adj[i], g);
+      adj[i] = toy_tensor::add(adj[i], g);
     else {
       adj[i] = std::move(g);
       seen[i] = 1;
     }
   };
-  adj[L.id] = nn::ones_like(L.v);
+  adj[L.id] = toy_tensor::ones_like(L.v);
   seen[L.id] = 1;
   for (int i = (int)tape.size() - 1; i >= 0; --i) {
     if (!seen[i])
@@ -116,22 +119,22 @@ NOINLINE Grad4 grad(const Tensor &x, const Tensor &W1, const Tensor &b1,
     Tensor g = adj[i];
     switch (e.op) {
     case TOp::Matmul:
-      acc(e.a, nn::matmul(g, nn::transpose(e.sb)));
-      acc(e.b, nn::matmul(nn::transpose(e.sa), g));
+      acc(e.a, toy_tensor::matmul(g, toy_tensor::transpose(e.sb)));
+      acc(e.b, toy_tensor::matmul(toy_tensor::transpose(e.sa), g));
       break;
     case TOp::Add:
       acc(e.a, unbroadcast_to(g, e.ar, e.ac));
       acc(e.b, unbroadcast_to(g, e.br, e.bc));
       break;
     case TOp::Mul:
-      acc(e.a, unbroadcast_to(nn::mul(g, e.sb), e.ar, e.ac));
-      acc(e.b, unbroadcast_to(nn::mul(g, e.sa), e.br, e.bc));
+      acc(e.a, unbroadcast_to(toy_tensor::mul(g, e.sb), e.ar, e.ac));
+      acc(e.b, unbroadcast_to(toy_tensor::mul(g, e.sa), e.br, e.bc));
       break;
     case TOp::Relu:
-      acc(e.a, nn::mul(g, nn::d_relu(e.sa)));
+      acc(e.a, toy_tensor::mul(g, toy_tensor::d_relu(e.sa)));
       break;
     case TOp::Sum:
-      acc(e.a, nn::mul(nn::ones_like(e.sa), g));
+      acc(e.a, toy_tensor::mul(toy_tensor::ones_like(e.sa), g));
       break;
     case TOp::Leaf:
       break;
@@ -146,7 +149,7 @@ NOINLINE Grad4 grad(const Tensor &x, const Tensor &W1, const Tensor &b1,
 // ---------------------------------------------------------------------------
 NOINLINE Grad4 grad_hand(const Tensor &x, const Tensor &W1, const Tensor &b1,
                          const Tensor &W2, const Tensor &b2) {
-  using namespace nn;
+  using namespace toy_tensor;
   Tensor z1 = matmul(x, W1), a1 = add(z1, b1), h = relu(a1);
   Tensor z2 = matmul(h, W2), o = add(z2, b2);
   Tensor d_o = mul(o, Tensor(2.0)); // d/do sum(o*o) = 2o
@@ -162,7 +165,8 @@ NOINLINE Grad4 grad_hand(const Tensor &x, const Tensor &W1, const Tensor &b1,
 // Baseline 3: reflection reverse-mode.
 NOINLINE Grad4 grad_reflect(const Tensor &x, const Tensor &W1, const Tensor &b1,
                             const Tensor &W2, const Tensor &b2) {
-  return ad::gradient_wrt<^^nn::loss, Tensor, 1, 2, 3, 4>(x, W1, b1, W2, b2);
+  return ad::gradient_wrt<^^toy_tensor::loss, Tensor, 1, 2, 3, 4>(x, W1, b1, W2,
+                                                                  b2);
 }
 
 // ---------------------------------------------------------------------------

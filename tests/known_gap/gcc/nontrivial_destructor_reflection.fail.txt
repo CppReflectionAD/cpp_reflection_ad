@@ -1,0 +1,9 @@
+=== GCC ===
+tests/known_gap/gcc/nontrivial_destructor_reflection.cpp:70:25: error: non-constant condition for static assertion
+   70 | static_assert(has_return(^^d_local_then_return));
+      |               ~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~
+tests/known_gap/gcc/nontrivial_destructor_reflection.cpp:70:25: error: uncaught exception '(const char*)"no return statement"'
+tests/known_gap/gcc/nontrivial_destructor_reflection.cpp:71:34: error: non-constant condition for static assertion
+   71 | static_assert(m::is_function_call(return_expr(^^d_return_call)),
+      |               ~~~~~~~~~~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+tests/known_gap/gcc/nontrivial_destructor_reflection.cpp:71:34: error: uncaught exception '(const char*)"no return statement"'

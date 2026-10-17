@@ -4,8 +4,9 @@
 # appear in `ctest` runs or the tests/ discovery glob.
 # ---------------------------------------------------------------------------
 
-# The flag profile (reflection_ad::flags) and _is_clang / _is_gcc come from
-# cmake/reflect_flags.cmake, included by the top-level CMakeLists.txt.
+# The engine (reflection_ad::ad, which carries the flag profile) is defined in
+# the top-level CMakeLists.txt; _is_clang / _is_gcc come from
+# cmake/reflect_flags.cmake.
 
 # High-order Taylor derivatives build a large DAG at compile time, past the
 # default constant-evaluation budget.
@@ -24,13 +25,13 @@ endif()
 function(add_reflect_benchmark name source)
     add_executable(${name} ${source})
     target_link_libraries(${name} PRIVATE
-        reflection_ad::flags
+        reflection_ad::ad
+        reflection_ad::warnings
         reflection_ad_benchmark_flags
     )
-    target_include_directories(${name} PRIVATE
-        "${CMAKE_CURRENT_SOURCE_DIR}"
-        "${CMAKE_SOURCE_DIR}/tests"
-    )
+    set_target_properties(${name} PROPERTIES COMPILE_WARNING_AS_ERROR ON)
+    # The Black-Scholes model (mc_sim/) is shared with the tests.
+    target_include_directories(${name} PRIVATE "${CMAKE_SOURCE_DIR}/tests/fixtures")
     # Intentionally no add_test() — benchmarks are run manually.
 endfunction()
 
@@ -49,7 +50,5 @@ if(_is_clang)
     foreach(_src IN LISTS _clang_only_benchmarks)
         get_filename_component(_name "${_src}" NAME_WE)
         add_reflect_benchmark(${_name} "${_src}")
-        # clang-only engine headers (tensor.h, autograd_tensor.h, ...)
-        target_include_directories(${_name} PRIVATE "${CMAKE_SOURCE_DIR}/tests/clang_only")
     endforeach()
 endif()

@@ -1,0 +1,112 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 25,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/cmake/${presetName}",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "clang",
+      "hidden": true,
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "${sourceDir}/build/clang-p2996/bin/clang++"
+      }
+    },
+    {
+      "name": "gcc",
+      "hidden": true,
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "${sourceDir}/build/gcc-p2996/artifacts/bin/g++"
+      }
+    },
+    {
+      "name": "debug",
+      "hidden": true,
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "relwithdebinfo",
+      "hidden": true,
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      }
+    },
+    {
+      "name": "release",
+      "hidden": true,
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "clang-debug",
+      "displayName": "clang-p2996, Debug",
+      "inherits": ["clang", "debug"]
+    },
+    {
+      "name": "clang-relwithdebinfo",
+      "displayName": "clang-p2996, RelWithDebInfo",
+      "inherits": ["clang", "relwithdebinfo"]
+    },
+    {
+      "name": "clang-release",
+      "displayName": "clang-p2996, Release",
+      "inherits": ["clang", "release"]
+    },
+    {
+      "name": "gcc-debug",
+      "displayName": "GCC reflection, Debug",
+      "inherits": ["gcc", "debug"]
+    },
+    {
+      "name": "gcc-relwithdebinfo",
+      "displayName": "GCC reflection, RelWithDebInfo",
+      "inherits": ["gcc", "relwithdebinfo"]
+    },
+    {
+      "name": "gcc-release",
+      "displayName": "GCC reflection, Release",
+      "inherits": ["gcc", "release"]
+    }
+  ],
+  "buildPresets": [
+    { "name": "clang-debug", "configurePreset": "clang-debug" },
+    { "name": "clang-relwithdebinfo", "configurePreset": "clang-relwithdebinfo" },
+    { "name": "clang-release", "configurePreset": "clang-release" },
+    { "name": "gcc-debug", "configurePreset": "gcc-debug" },
+    { "name": "gcc-relwithdebinfo", "configurePreset": "gcc-relwithdebinfo" },
+    { "name": "gcc-release", "configurePreset": "gcc-release" }
+  ],
+  "testPresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      }
+    },
+    { "name": "clang-debug", "inherits": "base", "configurePreset": "clang-debug" },
+    { "name": "clang-relwithdebinfo", "inherits": "base", "configurePreset": "clang-relwithdebinfo" },
+    { "name": "clang-release", "inherits": "base", "configurePreset": "clang-release" },
+    { "name": "gcc-debug", "inherits": "base", "configurePreset": "gcc-debug" },
+    { "name": "gcc-relwithdebinfo", "inherits": "base", "configurePreset": "gcc-relwithdebinfo" },
+    { "name": "gcc-release", "inherits": "base", "configurePreset": "gcc-release" }
+  ]
+}
