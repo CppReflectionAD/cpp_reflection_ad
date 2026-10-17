@@ -8,8 +8,10 @@
 	branch = autograd-capable
 [submodule "gcc-darwin-reflect"]
 	path = gcc-darwin-reflect
-	url = https://github.com/iains/gcc-darwin-arm64.git
+	url = https://github.com/CppReflectionAD/gcc-darwin-arm64.git
 	branch = master-wip-apple-si-on-r17-4662-g386d81e74305e7
+	# A fork of iains/gcc-darwin-arm64; see "Building the compilers" and
+	# "Bumping a compiler pin" in CONTRIBUTING.md.
 	# The pin must be an upstream iains snapshot commit whose GCC base matches
 	# gcc-mirror's upstream merge-base. run_tests.py applies the reflection
 	# commits on top of it locally (git am), so ignore=all keeps those local-only
