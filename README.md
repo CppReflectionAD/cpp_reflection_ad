@@ -117,8 +117,18 @@ It checks out the submodule, builds clang (host `clang` + `lld`), builds the
 Darwin `LTO` target as well on macOS so `libLTO.dylib` is present for the local
 toolchain driver, builds the `libc++`/`libc++abi` runtimes (plus `libunwind`
 except on macOS, where the system unwinder is used) with that clang, and syncs
-the fork's `<meta>` header. Host prerequisites: `git`, `cmake`, `ninja`, host
+the fork's `<meta>` header. It also builds what the sanitizer, coverage and
+static-analysis checks need: compiler-rt's ASan, UBSan and profile runtimes,
+`clang-tidy`, `llvm-cov`, `llvm-profdata` and `llvm-symbolizer`. On macOS it
+first applies LLVM's fix for the sanitizers hanging at startup on macOS 26
+(`tools/toolchain/patches/`) to the submodule, which then shows as modified in
+`git status`. Host prerequisites: `git`, `cmake`, `ninja`, host
 `clang`/`clang++`, `ld.lld`.
+
+The recipes live in `tools/toolchain/`, and CI's toolchain cache runs the same
+ones (`.github/scripts/build-*-toolchain.sh`), so a local build matches CI's.
+CI builds clang itself as Release rather than RelWithDebInfo and strips the
+result.
 
 ```bash
 # one-time: build clang + runtimes into build/clang-p2996 (slow — builds LLVM)
