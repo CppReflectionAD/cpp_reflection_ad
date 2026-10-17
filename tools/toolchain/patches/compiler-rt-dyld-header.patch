@@ -1,0 +1,67 @@
+From 2e7d07a33725a82ecfc514e27f047ece3ff13d4c Mon Sep 17 00:00:00 2001
+From: Andrew Haberlandt <ahaberlandt@apple.com>
+Date: Tue, 24 Feb 2026 08:29:36 -0800
+Subject: [PATCH] [sanitizer_common] [Darwin] Adopt _dyld_get_dyld_header
+ (#182943)
+
+---
+ .../lib/sanitizer_common/sanitizer_procmaps_mac.cpp       | 8 ++++++--
+ compiler-rt/lib/sanitizer_common/weak_symbols.txt         | 1 +
+ compiler-rt/lib/tsan/go/buildgo.sh                        | 2 +-
+ 3 files changed, 8 insertions(+), 3 deletions(-)
+
+diff --git a/compiler-rt/lib/sanitizer_common/sanitizer_procmaps_mac.cpp b/compiler-rt/lib/sanitizer_common/sanitizer_procmaps_mac.cpp
+index 979729f15aa16e..93d3929033a86b 100644
+--- a/compiler-rt/lib/sanitizer_common/sanitizer_procmaps_mac.cpp
++++ b/compiler-rt/lib/sanitizer_common/sanitizer_procmaps_mac.cpp
+@@ -176,7 +176,7 @@ void MemoryMappingLayout::Reset() {
+ // The dyld load address should be unchanged throughout process execution,
+ // and it is expensive to compute once many libraries have been loaded,
+ // so cache it here and do not reset.
+-static mach_header *dyld_hdr = 0;
++static const mach_header* dyld_hdr = 0;
+ static const char kDyldPath[] = "/usr/lib/dyld";
+ static const int kDyldImageIdx = -1;
+ 
+@@ -244,14 +244,18 @@ extern intptr_t _dyld_get_image_slide(const struct mach_header* mh);
+ extern int dyld_shared_cache_iterate_text(
+     const uuid_t cacheUuid,
+     void (^callback)(const dyld_shared_cache_dylib_text_info *info));
++SANITIZER_WEAK_IMPORT const struct mach_header* _dyld_get_dyld_header(void);
+ }  // extern "C"
+ 
+-static mach_header *GetDyldImageHeaderViaSharedCache() {
++static const mach_header* GetDyldImageHeaderViaSharedCache() {
+   uuid_t uuid;
+   bool hasCache = _dyld_get_shared_cache_uuid(uuid);
+   if (!hasCache)
+     return nullptr;
+ 
++  if (&_dyld_get_dyld_header != nullptr)
++    return _dyld_get_dyld_header();
++
+   size_t cacheLength;
+   __block uptr cacheStart = (uptr)_dyld_get_shared_cache_range(&cacheLength);
+   CHECK(cacheStart && cacheLength);
+diff --git a/compiler-rt/lib/sanitizer_common/weak_symbols.txt b/compiler-rt/lib/sanitizer_common/weak_symbols.txt
+index 77e7b5d9f702e2..600ab8a7c649c8 100644
+--- a/compiler-rt/lib/sanitizer_common/weak_symbols.txt
++++ b/compiler-rt/lib/sanitizer_common/weak_symbols.txt
+@@ -10,3 +10,4 @@ ___sanitizer_symbolize_demangle
+ ___sanitizer_symbolize_flush
+ ___sanitizer_symbolize_set_demangle
+ ___sanitizer_symbolize_set_inline_frames
++__dyld_get_dyld_header
+diff --git a/compiler-rt/lib/tsan/go/buildgo.sh b/compiler-rt/lib/tsan/go/buildgo.sh
+index d9e56402ad48ff..1340071819fcb4 100755
+--- a/compiler-rt/lib/tsan/go/buildgo.sh
++++ b/compiler-rt/lib/tsan/go/buildgo.sh
+@@ -165,7 +165,7 @@ elif [ "$GOOS" = "netbsd" ]; then
+ 	"
+ elif [ "$GOOS" = "darwin" ]; then
+ 	OSCFLAGS="-fPIC -Wno-unused-const-variable -Wno-unknown-warning-option -mmacosx-version-min=10.7"
+-	OSLDFLAGS="-lpthread -fPIC -fpie -mmacosx-version-min=10.7"
++	OSLDFLAGS="-lpthread -fPIC -fpie -mmacosx-version-min=10.7 -Wl,-U,__dyld_get_dyld_header"
+ 	SRCS="
+ 		$SRCS
+ 		../rtl/tsan_platform_mac.cpp
