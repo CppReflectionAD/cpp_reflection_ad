@@ -61,6 +61,14 @@
       }
     },
     {
+      "name": "x86-64-v3",
+      "hidden": true,
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CXX_FLAGS": "-march=x86-64-v3"
+      }
+    },
+    {
       "name": "clang-debug",
       "displayName": "clang-p2996, Debug",
       "inherits": ["clang", "debug"]
@@ -81,6 +89,11 @@
       "inherits": ["clang", "sanitize"]
     },
     {
+      "name": "clang-x86-64-v3",
+      "displayName": "clang-p2996, Release, x86-64-v3 (FMA; x86-64 hosts only)",
+      "inherits": ["clang", "x86-64-v3"]
+    },
+    {
       "name": "gcc-debug",
       "displayName": "GCC reflection, Debug",
       "inherits": ["gcc", "debug"]
@@ -99,6 +112,11 @@
       "name": "gcc-sanitize",
       "displayName": "GCC reflection, Debug, ASan+UBSan",
       "inherits": ["gcc", "sanitize"]
+    },
+    {
+      "name": "gcc-x86-64-v3",
+      "displayName": "GCC reflection, Release, x86-64-v3 (FMA; x86-64 hosts only)",
+      "inherits": ["gcc", "x86-64-v3"]
     }
   ],
   "buildPresets": [
@@ -106,10 +124,12 @@
     { "name": "clang-relwithdebinfo", "configurePreset": "clang-relwithdebinfo" },
     { "name": "clang-release", "configurePreset": "clang-release" },
     { "name": "clang-sanitize", "configurePreset": "clang-sanitize" },
+    { "name": "clang-x86-64-v3", "configurePreset": "clang-x86-64-v3" },
     { "name": "gcc-debug", "configurePreset": "gcc-debug" },
     { "name": "gcc-relwithdebinfo", "configurePreset": "gcc-relwithdebinfo" },
     { "name": "gcc-release", "configurePreset": "gcc-release" },
-    { "name": "gcc-sanitize", "configurePreset": "gcc-sanitize" }
+    { "name": "gcc-sanitize", "configurePreset": "gcc-sanitize" },
+    { "name": "gcc-x86-64-v3", "configurePreset": "gcc-x86-64-v3" }
   ],
   "testPresets": [
     {
@@ -134,9 +154,11 @@
     { "name": "clang-relwithdebinfo", "inherits": "base", "configurePreset": "clang-relwithdebinfo" },
     { "name": "clang-release", "inherits": "base", "configurePreset": "clang-release" },
     { "name": "clang-sanitize", "inherits": "sanitize", "configurePreset": "clang-sanitize" },
+    { "name": "clang-x86-64-v3", "inherits": "base", "configurePreset": "clang-x86-64-v3" },
     { "name": "gcc-debug", "inherits": "base", "configurePreset": "gcc-debug" },
     { "name": "gcc-relwithdebinfo", "inherits": "base", "configurePreset": "gcc-relwithdebinfo" },
     { "name": "gcc-release", "inherits": "base", "configurePreset": "gcc-release" },
-    { "name": "gcc-sanitize", "inherits": "sanitize", "configurePreset": "gcc-sanitize" }
+    { "name": "gcc-sanitize", "inherits": "sanitize", "configurePreset": "gcc-sanitize" },
+    { "name": "gcc-x86-64-v3", "inherits": "base", "configurePreset": "gcc-x86-64-v3" }
   ]
 }
