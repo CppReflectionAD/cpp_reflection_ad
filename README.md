@@ -168,17 +168,24 @@ test commands.
 On macOS, GCC is built from the `gcc-darwin-reflect` submodule
 ([CppReflectionAD/gcc-darwin-arm64](https://github.com/CppReflectionAD/gcc-darwin-arm64),
 a fork of iains' Darwin port), and `--build-compilers` first replays
-`gcc-mirror`'s reflection commits onto its pin. That fork's `p4395` branch
-already holds that result, and will replace the replay. Until then, to build
-it directly:
+`gcc-mirror`'s reflection commits onto its pin. The fork's `p4395` branch is
+that pin with the same commits already applied, as of `gcc-mirror` commit
+`812075e0`, and will replace the replay.
+
+Clones made before the submodule moved to the fork still fetch it from iains.
+Update them once, after pulling:
 
 ```bash
-# once, after pulling the change to .gitmodules
 git submodule sync gcc-darwin-reflect
+```
 
-git -C gcc-darwin-reflect fetch origin p4395
-git -C gcc-darwin-reflect checkout --detach origin/p4395
-python3 run_tests.py --compiler gcc --build-compilers --no-gcc-sync
+To build `p4395` instead of the replay:
+
+```bash
+git submodule update --init gcc-darwin-reflect &&
+  git -C gcc-darwin-reflect fetch origin p4395 &&
+  git -C gcc-darwin-reflect checkout --detach origin/p4395 &&
+  python3 run_tests.py --compiler gcc --build-compilers --no-gcc-sync
 ```
 
 A later `--build-compilers` without `--no-gcc-sync` puts the tree back on the
