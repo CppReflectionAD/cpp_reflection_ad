@@ -135,6 +135,61 @@ jobs:
       - name: Test AD with CTest
         run: ctest --preset gcc-x86-64-v3
 
+  # The toolchain and test legs again on macOS arm64 (#94 C9), with GCC built
+  # from gcc-darwin-reflect. Like sanitize, they aren't in the summary job's
+  # needs yet.
+  toolchain-macos:
+    uses: ./.github/workflows/toolchain-cache-gcc.yml
+    with:
+      runner: macos-15
+
+  test-macos:
+    name: test (${{ matrix.build_type }}, macOS arm64)
+    needs: toolchain-macos
+    # Must match the runner toolchain-macos builds on.
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - build_type: Release
+            preset: gcc-release
+          - build_type: RelWithDebInfo
+            preset: gcc-relwithdebinfo
+          - build_type: Debug
+            preset: gcc-debug
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      # /opt belongs to root on macOS, so the cache can't create the prefix.
+      - name: Create the toolchain prefix
+        run: |
+          sudo mkdir -p /opt/toolchain-gcc
+          sudo chown "$(id -u):$(id -g)" /opt/toolchain-gcc
+
+      - name: Restore gcc toolchain from cache
+        uses: actions/cache/restore@v6
+        with:
+          path: /opt/toolchain-gcc
+          key: ${{ needs.toolchain-macos.outputs.cache_key }}
+          fail-on-cache-miss: true
+
+      - name: Install Ninja
+        run: command -v ninja || brew install ninja
+
+      - name: Configure CMake
+        run: |
+          cmake --preset "${{ matrix.preset }}" \
+            -DCMAKE_CXX_COMPILER=/opt/toolchain-gcc/bin/g++
+
+      - name: Build tests
+        run: cmake --build --preset "${{ matrix.preset }}"
+
+      - name: Test AD with CTest
+        run: ctest --preset "${{ matrix.preset }}"
+
   # The one check for the ruleset to require (#94 C4), so it names this
   # workflow's result rather than each matrix leg. always() makes it report
   # even when the toolchain fails and the legs are skipped, or the run is

@@ -1,5 +1,6 @@
 # Makes sure the GCC toolchain is in the cache, building it on a miss.
-# Called by gcc_prebuilt_cache.yml so tests wait for the toolchain.
+# Called by gcc_prebuilt_cache.yml so tests wait for the toolchain, once per
+# runner: on Linux from gcc-mirror, on macOS from gcc-darwin-reflect.
 # On a hit this job only looks the key up; the test jobs restore the prefix.
 # The cache key is the submodule commit plus a hash of the build script and
 # the recipe it runs, the one `run_tests.py --build-compilers` uses, so edits to
@@ -9,20 +10,31 @@ name: Build GCC Toolchain (Cache)
 
 on:
   workflow_call:
+    inputs:
+      runner:
+        description: Runner to build on, the one the test jobs use
+        type: string
+        default: ubuntu-24.04
     outputs:
       cache_key:
         description: Cache key holding /opt/toolchain-gcc
         value: ${{ jobs.gcc.outputs.cache_key }}
   workflow_dispatch:
+    inputs:
+      runner:
+        description: Runner to build on
+        type: choice
+        options: [ubuntu-24.04, macos-15]
+        default: ubuntu-24.04
 
 permissions:
   contents: read
 
 jobs:
   gcc:
-    # Pinned to match the test jobs in gcc_prebuilt_cache.yml: the cache key
+    # Must match the test jobs in gcc_prebuilt_cache.yml: the cache key
     # doesn't record the image, so both sides must run on the same one.
-    runs-on: ubuntu-24.04
+    runs-on: ${{ inputs.runner }}
     outputs:
       cache_key: ${{ steps.key.outputs.cache_key }}
 
@@ -31,16 +43,26 @@ jobs:
         uses: actions/checkout@v7
 
       # Reads the submodule commit from the superproject's tree, so the
-      # submodule doesn't need to be cloned on a hit.
+      # submodule doesn't need to be cloned on a hit. On macOS, GCC is
+      # configured with --with-sysroot=<Xcode's SDK>, so the key also records
+      # the SDK path: a runner image with another Xcode rebuilds the toolchain.
       - name: Compute cache key
         id: key
         shell: bash
         run: |
           set -euo pipefail
-          GCC_MIRROR_SHA="$(git rev-parse HEAD:gcc-mirror)"
+          if [ "$RUNNER_OS" = macOS ]; then
+            SUBMODULE=gcc-darwin-reflect
+            SDK_HASH="-$(xcrun --show-sdk-path | shasum -a 256 | cut -c1-8)"
+          else
+            SUBMODULE=gcc-mirror
+            SDK_HASH=""
+          fi
+          SOURCE_SHA="$(git rev-parse "HEAD:${SUBMODULE}")"
           BUILD_INPUT_HASH="$(cat .github/scripts/build-gcc-toolchain.sh \
-            tools/toolchain/common.py tools/toolchain/gcc.py | sha256sum | cut -d' ' -f1)"
-          CACHE_KEY="gcc-${{ runner.os }}-${{ runner.arch }}-${GCC_MIRROR_SHA:0:12}-${BUILD_INPUT_HASH:0:12}"
+            tools/toolchain/common.py tools/toolchain/gcc.py | shasum -a 256 | cut -d' ' -f1)"
+          CACHE_KEY="gcc-${{ runner.os }}-${{ runner.arch }}-${SOURCE_SHA:0:12}-${BUILD_INPUT_HASH:0:12}${SDK_HASH}"
+          echo "submodule=${SUBMODULE}" >> "$GITHUB_OUTPUT"
           echo "cache_key=${CACHE_KEY}" >> "$GITHUB_OUTPUT"
 
       - name: Check cache
@@ -51,15 +73,19 @@ jobs:
           key: ${{ steps.key.outputs.cache_key }}
           lookup-only: true
 
-      - name: Init gcc-mirror submodule only
+      - name: Init the GCC submodule only
         if: steps.cache.outputs.cache-hit != 'true'
+        env:
+          SUBMODULE: ${{ steps.key.outputs.submodule }}
         run: |
-          git submodule sync -- gcc-mirror
-          git submodule update --init --depth 1 gcc-mirror
+          git submodule sync -- "$SUBMODULE"
+          git submodule update --init --depth 1 "$SUBMODULE"
 
       - name: Build and install GCC into clean prefix
         if: steps.cache.outputs.cache-hit != 'true'
-        run: .github/scripts/build-gcc-toolchain.sh gcc-mirror /opt/toolchain-gcc
+        run: >-
+          .github/scripts/build-gcc-toolchain.sh
+          "${{ steps.key.outputs.submodule }}" /opt/toolchain-gcc
 
       - name: Verify built prefix
         if: steps.cache.outputs.cache-hit != 'true'
