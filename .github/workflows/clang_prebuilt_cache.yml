@@ -136,7 +136,7 @@ jobs:
 
   # The toolchain, test and sanitize legs again on macOS arm64 (#94 C9), where
   # most of the group works. Unlike the x86-64-v3 leg, this can catch the clang
-  # half of #95. Like sanitize, they aren't in the summary job's needs yet.
+  # half of #95. Unlike sanitize, they aren't in the summary job's needs yet.
   # clang is built only on a cache miss: when the pin, the build script or the
   # recipe changes, or the cache was evicted after 7 days unused.
   toolchain-macos:
