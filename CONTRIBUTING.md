@@ -13,6 +13,7 @@ goes is in [tests/README.md](tests/README.md).
 - [Benchmarks](#benchmarks)
 - [Formatting and linting](#formatting-and-linting)
 - [CI checks](#ci-checks)
+- [Merging a pull request](#merging-a-pull-request)
 - [Bumping a compiler pin](#bumping-a-compiler-pin)
 
 ## Prerequisites
@@ -271,6 +272,26 @@ and `tools/toolchain/<compiler>.py`. So a change to one of those files, or a
 pin bump, rebuilds the toolchain, and a change to `common.py` rebuilds both.
 A cache saved by a pull request can't be read from `main`, so the toolchain is
 built again after merging. Workflow YAML isn't in the key.
+
+## Merging a pull request
+
+`main` changes only through pull requests, and they are squash-merged. A pull
+request can merge once it has:
+
+- `pre-commit`, `Clang tests` and `GCC tests` passing (see
+  [CI checks](#ci-checks));
+- its branch up to date with `main`. If `main` has moved, merge it in (the
+  "Update branch" button does this), and CI runs again;
+- an approving review from someone other than whoever pushed last. A push
+  dismisses earlier approvals, so updating the branch after an approval can
+  mean asking for another;
+- every review thread resolved.
+
+Nobody can bypass these, admins included. They come from the repository's two
+rulesets on the default branch, "default ruleset" and "main merge" (Settings →
+Rules → Rulesets), which
+[#94](https://github.com/CppReflectionAD/cpp_reflection_ad/issues/94) C5
+tracks.
 
 ## Bumping a compiler pin
 
