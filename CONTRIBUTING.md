@@ -296,11 +296,12 @@ request can merge once it has:
   mean asking for another;
 - every review thread resolved.
 
-Nobody can bypass these, admins included. They come from the repository's two
-rulesets on the default branch, "default ruleset" and "main merge" (Settings →
-Rules → Rulesets), which
+Nobody can bypass these, admins included. They come from the repository's
+"main" ruleset on the default branch (Settings → Rules → Rulesets), which
 [#94](https://github.com/CppReflectionAD/cpp_reflection_ad/issues/94) C5
-tracks.
+tracks. It applies only to pull requests into `main`, so one stacked on
+another pull request's branch shows as mergeable without a review until it is
+retargeted to `main`.
 
 ## Bumping a compiler pin
 
