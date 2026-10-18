@@ -6,6 +6,8 @@ on:
   push:
     branches: ["main"]
   pull_request:
+  # The merge queue waits for the required `Clang tests` on each queued change.
+  merge_group:
   workflow_dispatch:
   # Nightly on main, off the hour to avoid GitHub's peak queueing. Restoring
   # the toolchain resets the cache's 7-day eviction clock, or rebuilds it if
