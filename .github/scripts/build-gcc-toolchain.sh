@@ -9,17 +9,13 @@
 # nothing else does.
 #
 # Usage, from the repo root: build-gcc-toolchain.sh [source-dir] [prefix]
-#   source-dir  GCC checkout (default: gcc-mirror, or gcc-darwin-reflect on
-#               macOS)
+#   source-dir  GCC checkout (default: the one tools/toolchain/gcc.py picks for
+#               this OS, gcc-darwin-reflect on macOS and gcc-mirror elsewhere)
 #   prefix      install prefix (default: /opt/toolchain-gcc)
 # The build directory is build/<basename of source-dir>.
 set -euo pipefail
 
-if [[ "$(uname -s)" == Darwin ]]; then
-  SRC="${1:-gcc-darwin-reflect}"
-else
-  SRC="${1:-gcc-mirror}"
-fi
+SRC="${1:-$(python3 -c 'from tools.toolchain.gcc import SOURCE_SUBMODULE; print(SOURCE_SUBMODULE)')}"
 PREFIX="${2:-/opt/toolchain-gcc}"
 
 recipe_args=(--source-dir "$SRC" --build-dir "build/$(basename "$SRC")" \

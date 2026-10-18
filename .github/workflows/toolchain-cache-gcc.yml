@@ -46,20 +46,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      # Reads the submodule commit from the superproject's tree, so the
-      # submodule doesn't need to be cloned on a hit. On macOS, GCC is
-      # configured with --with-sysroot=<Xcode's SDK>, so the key also records
-      # the SDK path: a runner image with another Xcode rebuilds the toolchain.
+      # tools/toolchain/gcc.py picks the submodule for this OS. The key reads
+      # its commit from the superproject's tree, so the submodule doesn't need
+      # to be cloned on a hit. On macOS, GCC is configured with
+      # --with-sysroot=<Xcode's SDK>, so the key also records the SDK path: a
+      # runner image with another Xcode rebuilds the toolchain.
       - name: Compute cache key
         id: key
         shell: bash
         run: |
           set -euo pipefail
+          SUBMODULE="$(python3 -c 'from tools.toolchain.gcc import SOURCE_SUBMODULE; print(SOURCE_SUBMODULE)')"
           if [ "$RUNNER_OS" = macOS ]; then
-            SUBMODULE=gcc-darwin-reflect
             SDK_HASH="-$(xcrun --show-sdk-path | shasum -a 256 | cut -c1-8)"
           else
-            SUBMODULE=gcc-mirror
             SDK_HASH=""
           fi
           SOURCE_SHA="$(git rev-parse "HEAD:${SUBMODULE}")"

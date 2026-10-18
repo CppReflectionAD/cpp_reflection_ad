@@ -32,6 +32,12 @@ from .common import (
     strip_binaries,
 )
 
+# The GCC checkout to build on this platform. On macOS that's
+# gcc-darwin-reflect, our fork of iains' Darwin port with gcc-mirror's
+# reflection commits on top (see CONTRIBUTING.md): gcc-mirror doesn't build
+# there. run_tests.py, the CI build script and the CI cache key all use this.
+SOURCE_SUBMODULE = "gcc-darwin-reflect" if sys.platform == "darwin" else "gcc-mirror"
+
 
 def macos_sdk_path(verbose: bool) -> str:
     """Resolve the active macOS SDK path via xcrun."""
@@ -102,8 +108,11 @@ def main() -> int:
     )
     parser.add_argument(
         "--source-dir",
-        default=str(ROOT / "gcc-mirror"),
-        help="GCC checkout. Default: the gcc-mirror submodule.",
+        default=str(ROOT / SOURCE_SUBMODULE),
+        help=(
+            "GCC checkout. Default: the gcc-darwin-reflect submodule on macOS, "
+            "gcc-mirror elsewhere."
+        ),
     )
     parser.add_argument(
         "--build-dir",
