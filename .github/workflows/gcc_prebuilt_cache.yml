@@ -191,9 +191,6 @@ jobs:
           fi
           echo "SDK found: $SYSROOT"
 
-      - name: Install Ninja
-        run: command -v ninja || brew install ninja
-
       - name: Configure CMake
         run: |
           cmake --preset "${{ matrix.preset }}" \
