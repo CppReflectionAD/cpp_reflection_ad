@@ -225,6 +225,17 @@ uv run pre-commit install           # optional: run the hooks on every commit
 
 The Python helper scripts' dependencies are in the `scripts` group, e.g. `uv run --group scripts tools/black_scholes_sympy_value_check.py`.
 
+Two of the hooks check generated values the tests rely on. Each runs its
+generator with `--check`, which recomputes the values in high precision and
+fails if the committed copy differs:
+
+- `tools/black_scholes_sympy_value_check.py` writes
+  `tests/fixtures/mc_sim/black_scholes_reference.hpp`, the exact Black-Scholes
+  price and first derivatives that `black_scholes_demo` checks against. Run it
+  without `--check` to rewrite the header after changing its inputs.
+- `tools/gen_erfc_chebyshev.py` prints the Chebyshev table in
+  `include/cx_std/cx_erfc.hpp`; paste its output over the table.
+
 ### Suppressing a finding
 
 Fix the finding if you can. If not, suppress it as narrowly as possible, and
