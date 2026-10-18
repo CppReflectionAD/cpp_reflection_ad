@@ -259,7 +259,7 @@ requests test the merge with `main`.
 | `GCC tests` | `gcc_prebuilt_cache.yml` | yes | `python3 run_tests.py --compiler gcc --build-type all` |
 | `sanitize (ASan+UBSan)` | both test workflows | not yet ([#94](https://github.com/CppReflectionAD/cpp_reflection_ad/issues/94) C8) | `python3 run_tests.py --sanitize` |
 | `test (Release, x86-64-v3)` | both test workflows | not yet | `cmake --preset clang-x86-64-v3 && cmake --build --preset clang-x86-64-v3 && ctest --preset clang-x86-64-v3` (or `gcc-`) |
-| `test (<build type>, macOS arm64)` | `gcc_prebuilt_cache.yml` | not yet ([#94](https://github.com/CppReflectionAD/cpp_reflection_ad/issues/94) C9) | `python3 run_tests.py --compiler gcc --build-type all`, on a Mac |
+| `test (<build type>, macOS arm64)` | `gcc_prebuilt_cache.yml` | not yet ([#94](https://github.com/CppReflectionAD/cpp_reflection_ad/issues/94) C9) | `python3 run_tests.py --compiler gcc --build-type all` and `python3 run_tests.py --compiler gcc --sanitize`, on a Mac |
 | `GCC pins` | `gcc-pins.yml` | not yet | `.github/scripts/check-gcc-pins.sh` |
 
 `Clang tests` and `GCC tests` are summary jobs. Each passes only when its
