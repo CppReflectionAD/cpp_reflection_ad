@@ -137,12 +137,10 @@ jobs:
 
   # The toolchain and test legs again on macOS arm64 (#94 C9), with GCC built
   # from gcc-darwin-reflect. Like sanitize, they aren't in the summary job's
-  # needs yet. They skip the nightly run, and test-macos is skipped with
-  # toolchain-macos. GCC is built only on a cache miss: when the pin, the
-  # build script or the recipe changes, or the cache was evicted after 7 days
-  # unused.
+  # needs yet. GCC is built only on a cache miss: when the pin, the Xcode SDK,
+  # the build script or the recipe changes, or the cache was evicted after 7
+  # days unused.
   toolchain-macos:
-    if: github.event_name != 'schedule'
     uses: ./.github/workflows/toolchain-cache-gcc.yml
     with:
       runner: macos-15

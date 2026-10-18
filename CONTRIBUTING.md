@@ -276,9 +276,7 @@ built again after merging. Workflow YAML isn't in the key.
 The GCC workflow also builds and caches GCC on macOS arm64, from
 `gcc-darwin-reflect`, in its `toolchain-macos` job. Its key uses that
 submodule's commit and also records the Xcode SDK path, which GCC is configured
-with, so a runner image with another Xcode rebuilds it. The macOS jobs don't
-run nightly, so their cache can be evicted after 7 days without a run, and the
-next pull request then builds it again (over an hour on a macOS runner).
+with, so a runner image with another Xcode rebuilds it.
 
 ## Bumping a compiler pin
 
