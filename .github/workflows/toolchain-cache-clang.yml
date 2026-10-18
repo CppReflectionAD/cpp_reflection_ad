@@ -1,6 +1,6 @@
 # Makes sure the clang toolchain is in the cache, building it on a miss.
 # Called by clang_prebuilt_cache.yml so tests wait for the toolchain, once per
-# runner (Linux x86-64 and macOS arm64).
+# runner (Linux x86-64, Linux arm64 and macOS arm64).
 # On a hit this job only looks the key up; the test jobs restore the prefix.
 # The cache key is the submodule commit plus a hash of the build script and
 # the recipe it runs, the one `run_tests.py --build-compilers` uses, so edits to
@@ -27,7 +27,7 @@ on:
       runner:
         description: Runner to build on
         type: choice
-        options: [ubuntu-24.04, macos-15]
+        options: [ubuntu-24.04, ubuntu-24.04-arm, macos-15]
         default: ubuntu-24.04
 
 permissions:

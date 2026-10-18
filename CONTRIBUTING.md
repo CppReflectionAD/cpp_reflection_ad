@@ -260,6 +260,7 @@ requests test the merge with `main`.
 | `sanitize (ASan+UBSan)` | both test workflows | not yet ([#94](https://github.com/CppReflectionAD/cpp_reflection_ad/issues/94) C8) | `python3 run_tests.py --sanitize` |
 | `test (Release, x86-64-v3)` | both test workflows | not yet | `cmake --preset clang-x86-64-v3 && cmake --build --preset clang-x86-64-v3 && ctest --preset clang-x86-64-v3` (or `gcc-`) |
 | `test (<build type>, macOS arm64)` | both test workflows | not yet ([#94](https://github.com/CppReflectionAD/cpp_reflection_ad/issues/94) C9) | `python3 run_tests.py --build-type all` and `python3 run_tests.py --sanitize`, on a Mac |
+| `test (<build type>, Linux arm64)` | both test workflows | not yet ([#94](https://github.com/CppReflectionAD/cpp_reflection_ad/issues/94) C9) | `python3 run_tests.py --build-type all` and `python3 run_tests.py --sanitize`, on an arm64 Linux machine |
 | `GCC pins` | `gcc-pins.yml` | not yet | `.github/scripts/check-gcc-pins.sh` |
 
 `Clang tests` and `GCC tests` are summary jobs. Each passes only when its
@@ -284,6 +285,11 @@ The GCC workflow also builds and caches GCC on macOS arm64, from
 `gcc-darwin-reflect`, in its `toolchain-macos` job. Its key uses that
 submodule's commit and also records the Xcode SDK path, which GCC is configured
 with, so a runner image with another Xcode rebuilds it.
+
+Both workflows also build and cache their compiler on Linux arm64
+(`ubuntu-24.04-arm`) in a `toolchain-arm64` job, with the same recipe and key
+as on x86-64. The key records the runner's architecture, so the two don't
+share an entry.
 
 ## Bumping a compiler pin
 
