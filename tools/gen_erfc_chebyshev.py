@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Generate cx_erfc.hpp's Chebyshev table.
+"""Generate cx_erfc.hpp's Chebyshev table, or check it.
 
-    uv run --group scripts tools/gen_erfc_chebyshev.py
+    uv run --group scripts tools/gen_erfc_chebyshev.py          # print it
+    uv run --group scripts tools/gen_erfc_chebyshev.py --check  # compare
 
 For x >= 0.5, cx::erfc computes erfc(x) = exp(-x^2) * g(x), with
 g(x) = exp(x^2) * erfc(x) smooth and slowly varying. g is fitted on the
@@ -11,12 +12,20 @@ degree is the least that keeps the relative error below 2^-60 on 401 points,
 plus one. The coefficients are printed with repr, so each is the double
 nearest the exact one.
 
-Paste the output over the table in cx_erfc.hpp.
+Paste the output over the table in cx_erfc.hpp. --check regenerates the table
+and fails unless cx_erfc.hpp holds the same numbers; pre-commit runs it. It
+compares numbers rather than text, since clang-format reflows the table.
 """
+
+import re
+import sys
+from pathlib import Path
 
 import mpmath
 
 mpmath.mp.prec = 300
+
+HEADER = Path(__file__).resolve().parent.parent / "include/cx_std/cx_erfc.hpp"
 
 
 def g(x):
@@ -53,7 +62,7 @@ def max_rel_error(c, a, b):
     return worst
 
 
-def main():
+def table():
     pieces = []
     for i in range(6):
         a, b = mpmath.mpf(2) ** (i - 1), mpmath.mpf(2) ** i
@@ -62,19 +71,49 @@ def main():
             n += 1
         pieces.append(chebyshev(g, a, b, n + 1))
     width = max(len(c) for c in pieces)
-    print(f"inline constexpr std::size_t kErfcPieces = {len(pieces)};")
-    print(f"inline constexpr std::size_t kErfcMaxTerms = {width};")
-    print(
+    lines = [
+        f"inline constexpr std::size_t kErfcPieces = {len(pieces)};",
+        f"inline constexpr std::size_t kErfcMaxTerms = {width};",
         "inline constexpr std::size_t erfc_terms[kErfcPieces] = {"
         + ", ".join(str(len(c)) for c in pieces)
-        + "};"
-    )
-    print("inline constexpr double erfc_chebyshev[kErfcPieces][kErfcMaxTerms] = {")
+        + "};",
+        "inline constexpr double erfc_chebyshev[kErfcPieces][kErfcMaxTerms] = {",
+    ]
     for i, c in enumerate(pieces):
-        print(f"    // [{float(2.0 ** (i - 1))}, {float(2.0**i)}]")
-        print("    {" + ", ".join(repr(float(v)) for v in c) + "},")
-    print("};")
+        lines.append(f"    // [{float(2.0 ** (i - 1))}, {float(2.0**i)}]")
+        lines.append("    {" + ", ".join(repr(float(v)) for v in c) + "},")
+    lines.append("};")
+    return "\n".join(lines) + "\n"
+
+
+def numbers(text):
+    """The numbers in a table, in order, without comments or array bounds."""
+    text = re.sub(r"//[^\n]*", "", text)
+    text = re.sub(r"\[kErfc\w+\]", "", text)
+    return [float(t) for t in re.findall(r"[-+]?\d[\d.]*(?:e[-+]?\d+)?", text)]
+
+
+def check(generated):
+    text = HEADER.read_text()
+    start = text.index("inline constexpr std::size_t kErfcPieces")
+    end = text.index("};", text.index("erfc_chebyshev[kErfcPieces]")) + 2
+    if numbers(text[start:end]) != numbers(generated):
+        print(
+            f"{HEADER.name}: the Chebyshev table differs from what "
+            f"{Path(__file__).name} generates. Paste its output over the table.",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
+def main():
+    generated = table()
+    if "--check" in sys.argv[1:]:
+        return check(generated)
+    print(generated, end="")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
