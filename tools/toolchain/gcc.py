@@ -3,10 +3,12 @@
 `run_tests.py --build-compilers` calls build_gcc() for a local build into
 build/gcc-p2996/artifacts (on macOS from the gcc-darwin-reflect submodule).
 CI's toolchain cache (.github/scripts/build-gcc-toolchain.sh) runs this file
-with its own prefix, stripped:
+with its own build directory and prefix, stripped on Linux:
 
-    python3 -m tools.toolchain.gcc --build-dir build/gcc-mirror \\
-        --prefix /opt/toolchain-gcc --strip
+    python3 -m tools.toolchain.gcc --source-dir <submodule> \\
+        --build-dir build/<submodule> --prefix /opt/toolchain-gcc [--strip]
+
+where <submodule> is SOURCE_SUBMODULE.
 
 The CI cache key hashes this file and common.py, so any change to the recipe
 rebuilds the toolchain.
