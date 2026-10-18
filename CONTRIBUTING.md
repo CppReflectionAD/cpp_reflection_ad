@@ -249,7 +249,8 @@ say why in a comment next to the suppression:
 
 Every pull request and every push to `main` runs these workflows, and the test
 workflows also run nightly on `main` (03:17 UTC) to keep the toolchain caches
-warm. Pull requests test the merge with `main`.
+warm. `GCC pins` runs nightly too, in case a pin stops being fetchable. Pull
+requests test the merge with `main`.
 
 | Check | Workflow | Required | Reproduce locally |
 |---|---|---|---|
@@ -259,6 +260,7 @@ warm. Pull requests test the merge with `main`.
 | `sanitize (ASan+UBSan)` | both test workflows | not yet ([#94](https://github.com/CppReflectionAD/cpp_reflection_ad/issues/94) C8) | `python3 run_tests.py --sanitize` |
 | `test (Release, x86-64-v3)` | both test workflows | not yet | `cmake --preset clang-x86-64-v3 && cmake --build --preset clang-x86-64-v3 && ctest --preset clang-x86-64-v3` (or `gcc-`) |
 | `test (<build type>, macOS arm64)` | `gcc_prebuilt_cache.yml` | not yet ([#94](https://github.com/CppReflectionAD/cpp_reflection_ad/issues/94) C9) | `python3 run_tests.py --compiler gcc --build-type all`, on a Mac |
+| `GCC pins` | `gcc-pins.yml` | not yet | `.github/scripts/check-gcc-pins.sh` |
 
 `Clang tests` and `GCC tests` are summary jobs. Each passes only when its
 workflow's `toolchain` job and its three `test (<build type>)` legs pass, one
@@ -323,7 +325,9 @@ git add gcc-darwin-reflect
 Run the `git cherry` line again afterwards: it should print only `-` lines,
 meaning every reflection commit in `gcc-mirror` is in `p4395`. If it already
 does before you start, `git cherry-pick` stops with "empty commit set passed":
-there is nothing to bring over.
+there is nothing to bring over. `.github/scripts/check-gcc-pins.sh` runs the
+same check on the staged pins, in a scratch clone, and the `GCC pins` CI check
+runs it on every pull request.
 
 The iains snapshot under `p4395` must have the same upstream GCC base as
 `gcc-mirror`. If `gcc-mirror` merged a newer upstream GCC, the `git cherry`

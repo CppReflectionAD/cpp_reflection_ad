@@ -1,0 +1,36 @@
+# Checks that the gcc-darwin-reflect pin has every reflection commit in the
+# gcc-mirror pin (#94 C11), so macOS builds the same GCC as Linux. Reproduce it
+# locally with .github/scripts/check-gcc-pins.sh.
+name: GCC pins
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  workflow_dispatch:
+  # Nightly on main as well, so a pin that can no longer be fetched (p4395
+  # replaced without tagging the old one) shows up without waiting for a PR.
+  schedule:
+    - cron: "17 3 * * *"
+
+permissions:
+  contents: read
+
+# A new push to a PR cancels that PR's previous run. Runs on main are never
+# cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    name: GCC pins
+    runs-on: ubuntu-latest
+    steps:
+      # The script reads the pins from the index and fetches them itself, so
+      # the submodules aren't checked out.
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Check that gcc-darwin-reflect has every gcc-mirror commit
+        run: .github/scripts/check-gcc-pins.sh
