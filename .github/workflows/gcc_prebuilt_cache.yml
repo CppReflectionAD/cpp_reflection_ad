@@ -178,6 +178,19 @@ jobs:
           key: ${{ needs.toolchain-macos.outputs.cache_key }}
           fail-on-cache-miss: true
 
+      # The restored g++ finds the macOS headers only through the SDK path it
+      # was configured with on the toolchain runner. During a runner image
+      # rollout this runner can have another Xcode, so check that the path
+      # exists here instead of failing later with missing headers.
+      - name: Check the toolchain's SDK is on this runner
+        run: |
+          SYSROOT="$(/opt/toolchain-gcc/bin/g++ -print-sysroot)"
+          if [ ! -d "$SYSROOT/usr/include" ]; then
+            echo "::error::The cached g++ was built against the SDK at '$SYSROOT', which this runner doesn't have (its SDK is '$(xcrun --show-sdk-path)'). The toolchain and test jobs ran on different runner images; re-run all jobs."
+            exit 1
+          fi
+          echo "SDK found: $SYSROOT"
+
       - name: Install Ninja
         run: command -v ninja || brew install ninja
 
