@@ -196,7 +196,7 @@ jobs:
   # GitHub's hosted ubuntu-24.04-arm runners, with the same recipe as x86-64.
   # arm64 always has FMA, so FMA contraction bugs like #95's show here, as on
   # the group's Macs. runner.arch is in the cache key, so this leg has its own
-  # toolchain. Like sanitize, these jobs aren't in the summary job's needs yet.
+  # toolchain. Unlike sanitize, these jobs aren't in the summary job's needs yet.
   toolchain-arm64:
     uses: ./.github/workflows/toolchain-cache-clang.yml
     with:
