@@ -64,9 +64,8 @@ jobs:
       - name: Test AD with CTest
         run: ctest --preset "$PRESET"
 
-  # ASan and UBSan (#94 T1), through the gcc-sanitize preset. It isn't in
-  # the summary job's needs, so it isn't a required check yet; #94 C8 makes it
-  # one once it has proved stable.
+  # ASan and UBSan (#94 T1), through the gcc-sanitize preset. It's in the
+  # summary job's needs, so it's required (#94 C8).
   sanitize:
     name: sanitize (ASan+UBSan)
     needs: toolchain
@@ -97,8 +96,8 @@ jobs:
 
   # A Release build with -march=x86-64-v3 (#94 C9), through the
   # gcc-x86-64-v3 preset. It turns on FMA, which arm64 always has and plain
-  # x86-64 lacks, so FMA contraction bugs like #95's show here too. Like
-  # sanitize, it isn't in the summary job's needs yet.
+  # x86-64 lacks, so FMA contraction bugs like #95's show here too. It
+  # isn't in the summary job's needs yet.
   x86-64-v3:
     name: test (Release, x86-64-v3)
     needs: toolchain
@@ -212,7 +211,7 @@ jobs:
   # cancelled: a skipped required check would count as passing.
   summary:
     name: GCC tests
-    needs: [toolchain, test]
+    needs: [toolchain, test, sanitize]
     if: always()
     runs-on: ubuntu-24.04
     steps:
@@ -220,7 +219,7 @@ jobs:
         env:
           RESULTS: ${{ join(needs.*.result, ' ') }}
         run: |
-          echo "toolchain and test legs: $RESULTS"
+          echo "toolchain, test legs and sanitize: $RESULTS"
           for result in $RESULTS; do
             [ "$result" = success ] || exit 1
           done
