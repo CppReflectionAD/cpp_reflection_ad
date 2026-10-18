@@ -58,6 +58,7 @@ file(GLOB_RECURSE _stray CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}
     "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
 list(FILTER _stray EXCLUDE REGEX
     "^(common|clang_only|gcc_only|static_fail|known_gap/clang|known_gap/gcc)/[^/]+\\.cpp$")
+list(REMOVE_ITEM _stray install/consumer/main.cpp)
 if(_stray)
     message(FATAL_ERROR "Tests outside the test directories: ${_stray}. "
                         "Move each into one of them (see tests/README.md).")
@@ -94,6 +95,20 @@ if(_is_gcc)
         add_reflect_test(${_name} "${_src}")
     endforeach()
 endif()
+
+# The installed package (#94 B5): install this build, then build a separate
+# project against it, which uses only find_package(reflection_ad) and
+# reflection_ad::ad. It has no target of its own; the test does the work.
+add_test(NAME install_consumer
+    COMMAND "${CMAKE_COMMAND}"
+        "-DBUILD_DIR=${CMAKE_BINARY_DIR}"
+        "-DSCRATCH_DIR=${CMAKE_CURRENT_BINARY_DIR}/install_consumer"
+        "-DCONSUMER_DIR=${CMAKE_CURRENT_SOURCE_DIR}/install/consumer"
+        "-DCXX=${CMAKE_CXX_COMPILER}"
+        "-DGENERATOR=${CMAKE_GENERATOR}"
+        "-DMAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}"
+        "-DBUILD_TYPE=${CMAKE_BUILD_TYPE}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/install/run_consumer_test.cmake")
 
 compile_check(reflection_ad "${_static_fail}")
 if(_is_clang)
