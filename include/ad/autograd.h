@@ -323,10 +323,6 @@ consteval std::size_t narrow_guard(Ctx &c, std::size_t outer, std::size_t p) {
 consteval std::size_t lower(Ctx &c, info e);
 consteval std::size_t lower_body(Ctx &c, info body);
 consteval std::size_t inline_call(Ctx &c, info call);
-consteval void lower_stmt(Ctx &c, info s);
-consteval void lower_block(Ctx &c, info stmtOrCompound);
-consteval void lower_if(Ctx &c, info ifStmt);
-consteval void lower_for(Ctx &c, info forStmt);
 
 // Resolve a referenced variable to its SSA slot by identifier name. We match by
 // name (unique within a straight-line body) rather than reflection identity
@@ -543,10 +539,10 @@ consteval std::size_t lower(Ctx &c, info e) {
     // callee_of(e) is the only way to get it.
     auto ops = m::operands_of(e);
     Prim p = find_primitive(m::declaration_of(m::callee_of(e)));
-    if (!p.found)                         // user helper -> inline its body
+    if (!p.found) // user helper -> inline its body
       return inline_call(c, e);
     OpKind op = p.op;
-    if (op_has_b(op)) {                    // binary call, e.g. matmul(a, b)
+    if (op_has_b(op)) { // binary call, e.g. matmul(a, b)
       std::size_t a = lower(c, ops[0]);
       std::size_t b = lower(c, ops[1]);
       return emit(c, op, a, b);
@@ -559,262 +555,35 @@ consteval std::size_t lower(Ctx &c, info e) {
   return emit(c, OpKind::Const, 0, 0, m::constant_of(e));
 }
 
-// Resolve `v = rhs;`'s left-hand variable and rebind its slot to `rhs`'s
-// value. Reuses findSlot's last-wins shadowing (push a new entry with the
-// same identifier) rather than new resolution logic, so a later reference to
-// `v` sees the new value with no change to how names are looked up.
-consteval void lower_assign(Ctx &c, info assignExpr) {
-  auto ops = m::operands_of(assignExpr);
-  info decl = m::declaration_of(ops[0]);
-  std::size_t slot = lower(c, ops[1]);
-  c.envDecl.push_back(decl);
-  c.envSlot.push_back(slot);
-}
-
-// One statement that is not the reflected function's own `return`: a
-// declaration, an assignment to an existing variable, or nested control flow.
-// Shared by the top-level body (via lower_body) and the body of an `if`/`for`
-// (via lower_block).
-consteval void lower_stmt(Ctx &c, info s) {
-  if (m::is_declaration_statement(s)) {
-    // declarators_of/initializers_of handle `T a, b = 5;` -- multiple
-    // declarators sharing one declaration-statement -- not just one.
-    auto decls = m::declarators_of(s);
-    auto inits = m::initializers_of(s);
-    for (std::size_t i = 0; i < decls.size(); ++i) {
-      std::size_t slot = lower(c, inits[i]);
-      c.envDecl.push_back(decls[i]);
-      c.envSlot.push_back(slot);
-    }
-  } else if (m::is_expression_statement(s)) {
-    info e = m::expression_of(s);
-    if (m::is_operator_expression(e) && m::operands_of(e).size() == 2 &&
-        m::expression_operator_of(e) == m::operators::op_equals)
-      lower_assign(c, e);
-    else
-      throw "reflection AD: unsupported expression statement; only "
-            "assignment to an existing variable (`v = expr;`) is supported "
-            "outside of declarations and the final return";
-  } else if (m::is_if_statement(s)) {
-    lower_if(c, s);
-  } else if (m::is_for_statement(s)) {
-    lower_for(c, s);
-  } else if (m::is_while_statement(s)) {
-    throw "reflection AD: while loops are not supported; use a `for` loop "
-          "with a compile-time-constant bound";
-  } else if (m::is_return_statement(s)) {
-    throw "reflection AD: return is only supported as the final statement of "
-          "the reflected function, not inside a branch or loop";
-  } else {
-    throw "reflection AD: unsupported statement inside a branch or loop body";
-  }
-}
-
-// A statement that may or may not be braced, lowered as a sequence (the body
-// of an `if`/`else`/`for`). `return` is not supported here -- early return
-// from inside a branch or loop isn't modeled, only from the end of the
-// reflected function itself.
-consteval void lower_block(Ctx &c, info stmtOrCompound) {
-  if (m::is_compound_statement(stmtOrCompound)) {
-    for (info s : m::statements_of(stmtOrCompound))
-      lower_stmt(c, s);
-  } else {
-    lower_stmt(c, stmtOrCompound);
-  }
-}
-
-// Lower `if (init; cond) then else`. Reuses the ternary's guard/Select
-// machinery (narrow_guard) at statement granularity: each branch is lowered
-// under a narrowed guard, and at the join, any outer variable whose slot
-// differs between the branches gets a Select picking the one that ran --
-// exactly the ternary's phi, generalized from one expression to a sequence of
-// statements. A branch that didn't touch a name keeps its pre-if slot (an
-// absent `else` behaves as if it were `{}`, i.e. "keep the pre-if value").
-consteval void lower_if(Ctx &c, info ifStmt) {
-  info initStmt = m::init_statement_of(ifStmt);
-  if (initStmt != info{})
-    lower_stmt(c, initStmt);
-
-  std::size_t p = lower(c, m::condition_of(ifStmt));
-  std::size_t outer = c.curGuard;
-  std::size_t mark = c.envDecl.size();
-  std::vector<info> baseDecl(c.envDecl.begin(), c.envDecl.end());
-  std::vector<std::size_t> baseSlot(c.envSlot.begin(), c.envSlot.end());
-
-  auto slotsOfBase = [&] {
-    std::vector<std::size_t> result(baseDecl.size());
-    for (std::size_t i = 0; i < baseDecl.size(); ++i)
-      result[i] = findSlot(c, m::identifier_of(baseDecl[i]));
-    return result;
-  };
-
-  c.curGuard = narrow_guard(c, outer, p);
-  lower_block(c, m::then_statement_of(ifStmt));
-  std::vector<std::size_t> thenSlot = slotsOfBase();
-  c.envDecl.resize(mark);
-  c.envSlot.resize(mark);
-
-  c.curGuard = outer;
-  std::size_t notP = emit(c, OpKind::Not, p);
-
-  info elseStmt = m::else_statement_of(ifStmt);
-  std::vector<std::size_t> elseSlot = baseSlot;
-  if (elseStmt != info{}) {
-    c.curGuard = narrow_guard(c, outer, notP);
-    lower_block(c, elseStmt);
-    elseSlot = slotsOfBase();
-    c.envDecl.resize(mark);
-    c.envSlot.resize(mark);
-  }
-  c.curGuard = outer;
-
-  for (std::size_t i = 0; i < baseDecl.size(); ++i)
-    if (thenSlot[i] != elseSlot[i]) {
-      std::size_t merged =
-          emit(c, OpKind::Select, thenSlot[i], elseSlot[i], ^^int, p);
-      c.envDecl.push_back(baseDecl[i]);
-      c.envSlot.push_back(merged);
-    }
-}
-
-// A for-loop header's constants (counter init, bound, step) are required to
-// be `int` literals -- extract() needs an exact type match, and `int` covers
-// every loop header this engine is meant to unroll. stripCasts first: `lower`
-// peels its own operands the same way before checking is_literal (an operand
-// used by value, e.g. in a comparison, comes wrapped in an implicit cast).
-consteval double extractIntLiteral(info e) {
-  e = stripCasts(e);
-  return static_cast<double>(m::extract<int>(m::constant_of(e)));
-}
-
-// Does `e` resolve to the given declaration by name? (A DeclRefExpr's
-// declaration_of and a variable's own declared-variable reflection both come
-// back as ReflectionKind::Declaration for a plain local, so `==` holds -- see
-// findSlot's comment for the case, parameters, where it would not.)
-consteval bool refersTo(info e, info decl) {
-  e = stripCasts(e);
-  return m::is_id_expression(e) && m::declaration_of(e) == decl;
-}
-
-// Is `e` (after peeling implicit casts) a literal? Same stripCasts reasoning
-// as extractIntLiteral/refersTo.
-consteval bool isLiteralOperand(info e) {
-  return m::is_literal(stripCasts(e));
-}
-
-// Lower `for (T i = c0; i OP c1; ++i / i += step) body` where c0, c1, and the
-// step are compile-time literals -- the only loop shape this engine supports.
-// The trip count is computed right here, at reflection time, by directly
-// simulating the header (consteval arithmetic, not a new IR concept), and the
-// body is lowered once per iteration with `i` bound to that iteration's
-// value: unconditional unrolling, no guard needed, since (unlike `if`) every
-// iteration actually runs. A pre-loop variable's slot is threaded from one
-// iteration to the next the same way `if`/`else` threads it across a join --
-// diff the environment before/after, and rebind whatever changed.
-consteval void lower_for(Ctx &c, info forStmt) {
-  info initStmt = m::init_statement_of(forStmt);
-  if (initStmt == info{} || !m::is_declaration_statement(initStmt))
-    throw "reflection AD: unsupported for-loop; `for (T i = c0; ...; ...)` "
-          "with a declared, literal-initialized counter is required";
-  info loopVar = m::declared_variable_of(initStmt);
-  info initExpr = m::initializer_of(loopVar);
-  if (!isLiteralOperand(initExpr))
-    throw "reflection AD: unsupported for-loop; the counter's initial value "
-          "must be a literal";
-  double c0 = extractIntLiteral(initExpr);
-
-  info cond = m::condition_of(forStmt);
-  if (cond == info{} ||
-      !(m::is_operator_expression(cond) && m::operands_of(cond).size() == 2))
-    throw "reflection AD: unsupported for-loop; the condition must compare "
-          "the counter against a literal bound";
-  m::operators condOp = m::expression_operator_of(cond);
-  auto condOps = m::operands_of(cond);
-  if (!refersTo(condOps[0], loopVar) || !isLiteralOperand(condOps[1]) ||
-      !(condOp == m::operators::op_less || condOp == m::operators::op_less_equals ||
-        condOp == m::operators::op_greater || condOp == m::operators::op_greater_equals))
-    throw "reflection AD: unsupported for-loop; expected `i < bound`, "
-          "`i <= bound`, `i > bound`, or `i >= bound` with a literal bound";
-  double bound = extractIntLiteral(condOps[1]);
-
-  info inc = m::increment_of(forStmt);
-  double step;
-  if (inc != info{} &&
-      m::is_operator_expression(inc) && m::operands_of(inc).size() == 1 &&
-      refersTo(m::operands_of(inc)[0], loopVar)) {
-    m::operators incOp = m::expression_operator_of(inc);
-    if (incOp == m::operators::op_plus_plus) step = 1.0;
-    else if (incOp == m::operators::op_minus_minus) step = -1.0;
-    else throw "reflection AD: unsupported for-loop increment";
-  } else if (inc != info{} &&
-             m::is_operator_expression(inc) && m::operands_of(inc).size() == 2 &&
-             refersTo(m::operands_of(inc)[0], loopVar) &&
-             isLiteralOperand(m::operands_of(inc)[1])) {
-    m::operators incOp = m::expression_operator_of(inc);
-    double delta = extractIntLiteral(m::operands_of(inc)[1]);
-    if (incOp == m::operators::op_plus_equals) step = delta;
-    else if (incOp == m::operators::op_minus_equals) step = -delta;
-    else throw "reflection AD: unsupported for-loop increment";
-  } else {
-    throw "reflection AD: unsupported for-loop increment; expected `++i`, "
-          "`--i`, `i += step`, or `i -= step` with a literal step";
-  }
-
-  auto holds = [&](double i) {
-    if (condOp == m::operators::op_less) return i < bound;
-    if (condOp == m::operators::op_less_equals) return i <= bound;
-    if (condOp == m::operators::op_greater) return i > bound;
-    return i >= bound;  // op_greater_equals
-  };
-  constexpr long long kMaxUnroll = 100000;
-  long long n = 0;
-  for (double i = c0; holds(i); i += step) {
-    if (++n > kMaxUnroll)
-      throw "reflection AD: for-loop bound is not a compile-time-provable "
-            "constant (or unrolls to more iterations than this engine allows)";
-  }
-
-  std::size_t preLoopMark = c.envDecl.size();
-  std::vector<info> preLoopDecl(c.envDecl.begin(), c.envDecl.end());
-
-  double i = c0;
-  for (long long k = 0; k < n; ++k, i += step) {
-    std::size_t iSlot = emit(c, OpKind::Const, 0, 0, m::reflect_constant(i));
-    c.envDecl.push_back(loopVar);
-    c.envSlot.push_back(iSlot);
-
-    lower_block(c, m::loop_body_of(forStmt));
-
-    std::vector<std::size_t> newSlot(preLoopDecl.size());
-    for (std::size_t j = 0; j < preLoopDecl.size(); ++j)
-      newSlot[j] = findSlot(c, m::identifier_of(preLoopDecl[j]));
-    c.envDecl.resize(preLoopMark);
-    c.envSlot.resize(preLoopMark);
-    for (std::size_t j = 0; j < preLoopDecl.size(); ++j)
-      if (newSlot[j] != c.envSlot[j]) {
-        c.envDecl.push_back(preLoopDecl[j]);
-        c.envSlot.push_back(newSlot[j]);
-      }
-  }
-}
-
-// Lower the statements of a straight-line body into `c`, resolving names against
-// the current environment; returns the slot of the (single) return value. Shared
-// by build_nodes (top-level function) and inline_call (inlined callee).
-// Exactly one `return`, as the final statement, is required: skipping that
-// check would silently build a DAG that does not match the source, i.e. a
-// wrong derivative with no diagnostic.
+// Lower the statements of a straight-line body into `c`, resolving names
+// against the current environment; returns the slot of the (single) return
+// value. Shared by build_nodes (top-level function) and inline_call (inlined
+// callee). Anything outside that shape (control flow, assignment, a second
+// return, no return at all) is rejected: skipping it would silently build a DAG
+// that does not match the source, i.e. a wrong derivative with no diagnostic.
 consteval std::size_t lower_body(Ctx &c, info body) {
   std::size_t root = 0;
   bool sawReturn = false;
   for (info s : m::statements_of(body)) {
-    if (sawReturn)
-      throw "reflection AD: statement after the return (return must be last)";
-    if (m::is_return_statement(s)) {
+    if (m::is_declaration_statement(s)) {
+      // declarators_of/initializers_of handle `T a, b = 5;` -- multiple
+      // declarators sharing one declaration-statement -- not just one.
+      auto decls = m::declarators_of(s);
+      auto inits = m::initializers_of(s);
+      for (std::size_t i = 0; i < decls.size(); ++i) {
+        std::size_t slot = lower(c, inits[i]);
+        c.envDecl.push_back(decls[i]);
+        c.envSlot.push_back(slot);
+      }
+    } else if (m::is_return_statement(s)) {
+      if (sawReturn)
+        throw "reflection AD: multiple return statements (straight-line bodies "
+              "only)";
       root = lower(c, m::return_operand_of(s));
       sawReturn = true;
     } else {
-      lower_stmt(c, s);
+      throw "reflection AD: unsupported statement; straight-line bodies only "
+            "(`T v = expr;` declarations and one `return expr;`)";
     }
   }
   if (!sawReturn)
@@ -829,7 +598,7 @@ consteval std::size_t lower_body(Ctx &c, info body) {
 // analysis and codegen are unaffected, and arguments are evaluated once (a
 // param used N times reuses its one slot).
 consteval std::size_t inline_call(Ctx &c, info call) {
-  auto ops = m::operands_of(call);          // [arg0, arg1, ...]
+  auto ops = m::operands_of(call); // [arg0, arg1, ...]
   info callee = m::declaration_of(m::callee_of(call));
 
   // Cycle guard: recursive helpers are out of scope (would not terminate here).
