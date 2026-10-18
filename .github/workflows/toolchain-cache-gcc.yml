@@ -19,6 +19,9 @@ on:
       cache_key:
         description: Cache key holding /opt/toolchain-gcc
         value: ${{ jobs.gcc.outputs.cache_key }}
+      runner:
+        description: Runner the toolchain was built on, for the test jobs
+        value: ${{ jobs.gcc.outputs.runner }}
   workflow_dispatch:
     inputs:
       runner:
@@ -37,6 +40,7 @@ jobs:
     runs-on: ${{ inputs.runner }}
     outputs:
       cache_key: ${{ steps.key.outputs.cache_key }}
+      runner: ${{ inputs.runner }}
 
     steps:
       - name: Checkout

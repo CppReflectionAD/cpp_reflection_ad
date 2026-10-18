@@ -148,8 +148,9 @@ jobs:
   test-macos:
     name: test (${{ matrix.build_type }}, macOS arm64)
     needs: toolchain-macos
-    # Must match the runner toolchain-macos builds on.
-    runs-on: macos-15
+    # The runner toolchain-macos built on: the cache key doesn't record the
+    # image.
+    runs-on: ${{ needs.toolchain-macos.outputs.runner }}
     strategy:
       fail-fast: false
       matrix:
