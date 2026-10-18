@@ -1,6 +1,3 @@
-// TEST-FLAGS-CLANG: -fconstexpr-steps=16000000
-// TEST-FLAGS-GCC: -fconstexpr-ops-limit=96000000
-
 #include <ad/forward_derivative.h>
 #include <ad/higher_order_taylor_ad.h>
 #include <ad/recursive_higher_order_derivative.h>

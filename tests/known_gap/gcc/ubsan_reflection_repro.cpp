@@ -10,7 +10,8 @@
 // tests/CMakeLists.txt builds this file with the sanitizer flag and expects the
 // error in ubsan_reflection_repro.fail.txt. When GCC fixes the gap, the test
 // fails because the file compiles: move it to tests/gcc_only/ (without the
-// flag) and delete the .fail.txt.
+// flag) and delete the .fail.txt. Then drop the -fno-sanitize= list that
+// REFLECTION_AD_SANITIZE adds for GCC in cmake/reflect_flags.cmake.
 #include <meta>
 
 inline double f(double x) { return 1.0 / x; }

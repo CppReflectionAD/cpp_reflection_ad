@@ -1,4 +1,4 @@
 === GCC ===
-tests/known_gap/gcc/ubsan_reflection_repro.cpp:24:40: error: static assertion failed: UBSan instrumentation hides the variable reference in 1.0 / x
-   24 | static_assert(rhs_is_variable_reference(),
+tests/known_gap/gcc/ubsan_reflection_repro.cpp:25:40: error: static assertion failed: UBSan instrumentation hides the variable reference in 1.0 / x
+   25 | static_assert(rhs_is_variable_reference(),
       |               ~~~~~~~~~~~~~~~~~~~~~~~~~^~
