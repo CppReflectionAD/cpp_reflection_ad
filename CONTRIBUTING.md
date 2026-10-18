@@ -289,8 +289,12 @@ built again after merging. Workflow YAML isn't in the key.
 
 The GCC workflow also builds and caches GCC on macOS arm64, from
 `gcc-darwin-reflect`, in its `toolchain-macos` job. Its key uses that
-submodule's commit and also records the Xcode SDK path, which GCC is configured
-with, so a runner image with another Xcode rebuilds it.
+submodule's commit and also records the runner's SDK (its path, which GCC is
+configured with, and its build version) and linker version, from
+`.github/scripts/macos-sdk-id.sh`. So a runner image with another Xcode, SDK
+or linker rebuilds it. The macOS test legs fail early if their runner's SDK or
+linker differs from the toolchain job's, which can happen while GitHub rolls
+out a new runner image; wait for the rollout to finish, then re-run all jobs.
 
 ## Bumping a compiler pin
 
