@@ -1,10 +1,10 @@
 // GCC reflection gap: `&&`, `||` and `!` are not classified as operators.
 //
 // For a comparison such as `x > 0.0`, both compilers report
-// is_binary_operator == true. For the logical operators, clang reports
-// is_binary_operator / is_unary_operator == true, but GCC reports false --
-// even though GCC's expression_operator_of() and operands_of() already
-// handle these expressions correctly.
+// is_operator_expression == true. For the logical operators, clang reports
+// is_operator_expression == true (with operands_of().size() giving the
+// arity), but GCC reports false -- even though GCC's expression_operator_of()
+// and operands_of() already handle these expressions correctly.
 //
 // This file checks what works on both compilers. The classification asserts
 // that fail on GCC are in tests/known_gap/gcc/logical_operator_reflection.cpp
@@ -37,7 +37,7 @@ constexpr m::info AND = return_expr(^^f_and);
 constexpr m::info NOT = return_expr(^^f_not);
 
 // Comparison: fine on both compilers.
-static_assert(m::is_binary_operator(CMP));
+static_assert(m::is_operator_expression(CMP) && m::operands_of(CMP).size() == 2);
 
 // Logical operators: the operator and operands can be queried on GCC too.
 static_assert(m::expression_operator_of(OR) == m::operators::op_pipe_pipe);

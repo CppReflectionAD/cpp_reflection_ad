@@ -16,8 +16,8 @@ consteval std::meta::info return_statement_of(std::meta::info fn) {
 // The expression in a function's `return` statement, with implicit
 // conversions peeled off.
 consteval std::meta::info return_expr(std::meta::info fn) {
-  std::meta::info e = std::meta::return_value_of(return_statement_of(fn));
-  while (std::meta::is_cast(e))
+  std::meta::info e = std::meta::return_operand_of(return_statement_of(fn));
+  while (std::meta::is_conversion(e))
     e = std::meta::operands_of(e).front();
   return e;
 }

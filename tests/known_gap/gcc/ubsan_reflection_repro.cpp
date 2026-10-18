@@ -18,8 +18,8 @@ inline double f(double x) { return 1.0 / x; }
 
 consteval bool rhs_is_variable_reference() {
   auto ret = std::meta::statements_of(std::meta::body_of(^^f))[0];
-  auto ops = std::meta::operands_of(std::meta::return_value_of(ret));
-  return std::meta::is_variable_reference(ops[1]);
+  auto ops = std::meta::operands_of(std::meta::return_operand_of(ret));
+  return std::meta::is_id_expression(ops[1]);
 }
 
 static_assert(rhs_is_variable_reference(),
