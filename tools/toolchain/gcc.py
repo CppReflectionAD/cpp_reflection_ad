@@ -3,10 +3,10 @@
 `run_tests.py --build-compilers` calls build_gcc() for a local build into
 build/gcc-p2996/artifacts (on macOS from the gcc-darwin-reflect submodule).
 CI's toolchain cache (.github/scripts/build-gcc-toolchain.sh) runs this file
-with its own build directory and prefix, stripped on Linux:
+with its own build directory and prefix, stripped (except on macOS):
 
     python3 -m tools.toolchain.gcc --source-dir <submodule> \\
-        --build-dir build/<submodule> --prefix /opt/toolchain-gcc [--strip]
+        --build-dir build/<submodule> --prefix /opt/toolchain-gcc --strip
 
 where <submodule> is SOURCE_SUBMODULE.
 
@@ -94,7 +94,10 @@ def build_gcc(
     )
     require_success(install_result, "gcc install")
 
-    if strip:
+    if strip and sys.platform == "darwin":
+        # strip_binaries uses GNU strip options, which Apple's strip rejects.
+        log("[gcc] not stripping: --strip needs GNU strip, which macOS lacks")
+    elif strip:
         log(f"[gcc] stripping {spec.binary_dir}")
         strip_binaries(spec.binary_dir, args.verbose)
 
@@ -125,7 +128,9 @@ def main() -> int:
         "--prefix", help="Install prefix. Default: <build-dir>/artifacts."
     )
     parser.add_argument(
-        "--strip", action="store_true", help="Strip the installed toolchain (Linux)."
+        "--strip",
+        action="store_true",
+        help="Strip the installed toolchain. Ignored on macOS.",
     )
     parser.add_argument("--jobs", type=int, default=os.cpu_count() or 1)
     parser.add_argument("--verbose", action="store_true")
