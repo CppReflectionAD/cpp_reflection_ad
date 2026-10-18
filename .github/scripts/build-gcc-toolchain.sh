@@ -29,7 +29,8 @@ if [[ "$(uname -s)" == Linux ]]; then
   sudo apt-get update
   sudo apt-get install -y build-essential flex bison libgmp-dev libmpfr-dev \
     libmpc-dev texinfo zlib1g-dev dejagnu python3 git
-  # The recipe strips ELF files only.
+  # The recipe's strip step uses GNU strip options, which Apple's strip
+  # rejects.
   recipe_args+=(--strip)
 fi
 
