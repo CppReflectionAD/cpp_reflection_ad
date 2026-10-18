@@ -19,15 +19,12 @@ SRC="${1:-$(python3 -c 'from tools.toolchain.gcc import SOURCE_SUBMODULE; print(
 PREFIX="${2:-/opt/toolchain-gcc}"
 
 recipe_args=(--source-dir "$SRC" --build-dir "build/$(basename "$SRC")" \
-  --prefix "$PREFIX")
+  --prefix "$PREFIX" --strip)
 
 if [[ "$(uname -s)" == Linux ]]; then
   sudo apt-get update
   sudo apt-get install -y build-essential flex bison libgmp-dev libmpfr-dev \
     libmpc-dev texinfo zlib1g-dev dejagnu python3 git
-  # The recipe's strip step uses GNU strip options, which Apple's strip
-  # rejects.
-  recipe_args+=(--strip)
 fi
 
 sudo mkdir -p "$PREFIX"
