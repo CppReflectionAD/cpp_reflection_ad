@@ -38,3 +38,21 @@ repos:
         # The mirror also formats JSON, Java, ... by default; this repo only
         # formats C and C++, as the old clang-format action did.
         types_or: [c, c++]
+
+  # Generated values the tests rely on (#94 T2): each generator recomputes
+  # them and fails if the committed copy differs. Their dependencies are uv's
+  # scripts group.
+  - repo: local
+    hooks:
+      - id: black-scholes-reference
+        name: Black-Scholes reference values
+        entry: uv run --group scripts tools/black_scholes_sympy_value_check.py --check
+        language: system
+        files: ^(tools/black_scholes_sympy_value_check\.py|tests/fixtures/mc_sim/black_scholes_reference\.hpp)$
+        pass_filenames: false
+      - id: erfc-chebyshev
+        name: cx_erfc.hpp Chebyshev table
+        entry: uv run --group scripts tools/gen_erfc_chebyshev.py --check
+        language: system
+        files: ^(tools/gen_erfc_chebyshev\.py|include/cx_std/cx_erfc\.hpp)$
+        pass_filenames: false
