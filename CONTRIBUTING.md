@@ -49,33 +49,29 @@ first applies LLVM's fix for the sanitizers hanging at startup on macOS 26
 `git status`.
 
 GCC comes from the `gcc-mirror` submodule into `build/gcc-p2996`. On macOS it
-is built from `gcc-darwin-reflect` instead
-([CppReflectionAD/gcc-darwin-arm64](https://github.com/CppReflectionAD/gcc-darwin-arm64),
-a fork of iains' Darwin port), with `gcc-mirror`'s reflection commits replayed
-onto its pin first (see `--gcc-sync-*` in `run_tests.py --help`). The fork's
-`p4395` branch is that pin with the same commits already applied, as of
-`gcc-mirror` commit `812075e0`, and will replace the replay.
-If the `gcc-mirror` pin has moved past that commit, `p4395` lacks the newer
-commits; use the replay until the branch is updated.
+is built from `gcc-darwin-reflect` instead: the `p4395` branch of
+[CppReflectionAD/gcc-darwin-arm64](https://github.com/CppReflectionAD/gcc-darwin-arm64),
+our fork of iains' Darwin port. That branch is an iains snapshot with
+`gcc-mirror`'s reflection commits cherry-picked on top (see
+[Bumping a compiler pin](#bumping-a-compiler-pin)).
 
-Clones made before the submodule moved to the fork still fetch it from iains.
-Update them once, after pulling:
+Clones made before the submodule moved to the fork still fetch it from iains,
+and may hold commits from the old replay. Update them once, after pulling:
 
 ```bash
-git submodule sync gcc-darwin-reflect
+git submodule sync gcc-darwin-reflect && git submodule update gcc-darwin-reflect
 ```
 
-To build `p4395` instead of the replay:
+To work on GCC on a Mac, branch from `p4395` in `gcc-darwin-reflect`:
+`--build-compilers` builds whatever is checked out there. Then move the
+commits to `gcc-mirror` and open the pull request there, which Linux CI tests:
 
 ```bash
-git submodule update --init gcc-darwin-reflect &&
-  git -C gcc-darwin-reflect fetch origin p4395 &&
-  git -C gcc-darwin-reflect checkout --detach origin/p4395 &&
-  python3 run_tests.py --compiler gcc --build-compilers --no-gcc-sync
+git -C gcc-mirror fetch ../gcc-darwin-reflect <branch>
+git -C gcc-mirror cherry-pick <commits>
 ```
 
-A later `--build-compilers` without `--no-gcc-sync` puts the tree back on the
-pin and replays the commits, as before.
+Once `gcc-mirror` has them, they reach `p4395` with the next pin bump.
 
 The recipes live in `tools/toolchain/`, and CI's toolchain cache runs the same
 ones (`.github/scripts/build-*-toolchain.sh`), so a local build matches CI's.
@@ -300,18 +296,43 @@ CI rebuilds the toolchain on the pull request, and on `main` again after
 merging (see [CI checks](#ci-checks)). Open pull requests rebuild it as well
 once they test against the new `main`.
 
-`gcc-darwin-reflect` is set to `ignore = all`, because the macOS build commits
-`gcc-mirror`'s reflection commits onto it locally. So `git add` doesn't see a
-new pin there; record it with
-`git update-index --cacheinfo 160000,<commit>,gcc-darwin-reflect`. Its GCC
-base must match `gcc-mirror`'s, so the two pins move together (see the comment
-in `.gitmodules`).
-
-Its URL is our fork of iains' repository, which has only the branches someone
-pushed to it. So first push the new snapshot's branch from iains to the fork,
-or `git submodule update` fails with "not our ref":
+`gcc-darwin-reflect` follows `gcc-mirror`, so when the `gcc-mirror` pin moves,
+bring its new commits over to `p4395` in the same pull request. `git cherry`
+matches commits by content, so this works from any clone, skips `gcc-mirror`'s
+merge commits, and picks only what `p4395` lacks:
 
 ```bash
-git -C gcc-darwin-reflect fetch https://github.com/iains/gcc-darwin-arm64.git <branch>
-git -C gcc-darwin-reflect push origin FETCH_HEAD:refs/heads/<branch>
+new=$(git rev-parse :gcc-mirror)
+cd gcc-darwin-reflect
+git fetch origin p4395
+git fetch --no-tags ../gcc-mirror "$new"
+git checkout --detach origin/p4395
+git cherry HEAD "$new" "$(git merge-base HEAD "$new")" | sed -n 's/^+ //p' |
+  git cherry-pick -x --stdin
+git push origin HEAD:p4395
+cd ..
+git add gcc-darwin-reflect
 ```
+
+Run the `git cherry` line again afterwards: it should print only `-` lines,
+meaning every reflection commit in `gcc-mirror` is in `p4395`. If it already
+does before you start, `git cherry-pick` stops with "empty commit set passed":
+there is nothing to bring over.
+
+The iains snapshot under `p4395` must have the same upstream GCC base as
+`gcc-mirror`. If `gcc-mirror` merged a newer upstream GCC, the `git cherry`
+list above also holds upstream commits; move to a newer iains snapshot instead.
+The fork has only the branches someone pushed to it, so push the snapshot's
+branch from iains first, then rebuild the stack on it:
+
+```bash
+cd gcc-darwin-reflect
+git fetch https://github.com/iains/gcc-darwin-arm64.git <branch>
+git push origin FETCH_HEAD:refs/heads/<branch>
+git checkout --detach FETCH_HEAD
+```
+
+Then run the `git cherry` pipeline above (from `git cherry` on), tag the old
+`p4395` so the pins in older commits stay fetchable
+(`git push origin origin/p4395:refs/tags/p4395-<old branch>`), and replace it
+with `git push --force-with-lease origin HEAD:p4395`.

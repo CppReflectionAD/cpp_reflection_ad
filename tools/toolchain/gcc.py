@@ -1,9 +1,9 @@
 """The recipe for the GCC reflection toolchain.
 
 `run_tests.py --build-compilers` calls build_gcc() for a local build into
-build/gcc-p2996/artifacts (on macOS it first syncs the darwin fork; see
-run_tests.py). CI's toolchain cache (.github/scripts/build-gcc-toolchain.sh)
-runs this file with its own prefix, stripped:
+build/gcc-p2996/artifacts (on macOS from the gcc-darwin-reflect submodule).
+CI's toolchain cache (.github/scripts/build-gcc-toolchain.sh) runs this file
+with its own prefix, stripped:
 
     python3 -m tools.toolchain.gcc --build-dir build/gcc-mirror \\
         --prefix /opt/toolchain-gcc --strip
