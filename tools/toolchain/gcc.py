@@ -3,10 +3,12 @@
 `run_tests.py --build-compilers` calls build_gcc() for a local build into
 build/gcc-p2996/artifacts (on macOS from the gcc-darwin-reflect submodule).
 CI's toolchain cache (.github/scripts/build-gcc-toolchain.sh) runs this file
-with its own prefix, stripped:
+with its own build directory and prefix, stripped on Linux:
 
-    python3 -m tools.toolchain.gcc --build-dir build/gcc-mirror \\
-        --prefix /opt/toolchain-gcc --strip
+    python3 -m tools.toolchain.gcc --source-dir <submodule> \\
+        --build-dir build/<submodule> --prefix /opt/toolchain-gcc [--strip]
+
+where <submodule> is SOURCE_SUBMODULE.
 
 The CI cache key hashes this file and common.py, so any change to the recipe
 rebuilds the toolchain.
@@ -31,6 +33,12 @@ from .common import (
     run_command_streamed,
     strip_binaries,
 )
+
+# The GCC checkout to build on this platform. On macOS that's
+# gcc-darwin-reflect, our fork of iains' Darwin port with gcc-mirror's
+# reflection commits on top (see CONTRIBUTING.md): gcc-mirror doesn't build
+# there. run_tests.py, the CI build script and the CI cache key all use this.
+SOURCE_SUBMODULE = "gcc-darwin-reflect" if sys.platform == "darwin" else "gcc-mirror"
 
 
 def macos_sdk_path(verbose: bool) -> str:
@@ -102,8 +110,11 @@ def main() -> int:
     )
     parser.add_argument(
         "--source-dir",
-        default=str(ROOT / "gcc-mirror"),
-        help="GCC checkout. Default: the gcc-mirror submodule.",
+        default=str(ROOT / SOURCE_SUBMODULE),
+        help=(
+            "GCC checkout. Default: the gcc-darwin-reflect submodule on macOS, "
+            "gcc-mirror elsewhere."
+        ),
     )
     parser.add_argument(
         "--build-dir",
