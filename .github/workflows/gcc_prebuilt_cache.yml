@@ -135,11 +135,12 @@ jobs:
       - name: Test AD with CTest
         run: ctest --preset gcc-x86-64-v3
 
-  # The toolchain and test legs again on macOS arm64 (#94 C9), with GCC built
-  # from gcc-darwin-reflect. Like sanitize, they aren't in the summary job's
-  # needs yet. GCC is built only on a cache miss: when the pin, the Xcode SDK,
-  # the build script or the recipe changes, or the cache was evicted after 7
-  # days unused.
+  # The toolchain, test and sanitize legs again on macOS arm64 (#94 C9), with
+  # GCC built from gcc-darwin-reflect. The sanitize leg catches macOS-only
+  # sanitizer regressions such as #132's ASan startup hang. Like the Linux
+  # sanitize job, they aren't in the summary job's needs yet. GCC is built
+  # only on a cache miss: when the pin, the Xcode SDK, the build script or the
+  # recipe changes, or the cache was evicted after 7 days unused.
   toolchain-macos:
     uses: ./.github/workflows/toolchain-cache-gcc.yml
     with:
@@ -161,6 +162,8 @@ jobs:
             preset: gcc-relwithdebinfo
           - build_type: Debug
             preset: gcc-debug
+          - build_type: ASan+UBSan
+            preset: gcc-sanitize
 
     steps:
       - name: Checkout code
