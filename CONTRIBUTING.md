@@ -170,7 +170,7 @@ a CMake package. Another project then uses it with:
 
 ```cmake
 project(my_project CXX)
-find_package(reflection_ad CONFIG REQUIRED)   # -DCMAKE_PREFIX_PATH=<dir>
+find_package(reflection_ad 0.1 CONFIG REQUIRED)   # -DCMAKE_PREFIX_PATH=<dir>
 target_link_libraries(my_target PRIVATE reflection_ad::ad)
 ```
 
@@ -178,7 +178,9 @@ target_link_libraries(my_target PRIVATE reflection_ad::ad)
 maths. The project must be built with one of the reflection forks, and needs
 CMake 3.25 or later. The package stores no compiler paths: `find_package` works
 out the flag profile (the reflection flags and the fork's standard library) for
-the project's own compiler, and checks it can build reflection code. The
+the project's own compiler, and checks it can build reflection code. Until
+1.0, a minor version may break the API, so asking for 0.1 accepts any 0.1.x
+and nothing else; the version is in `project()` in `CMakeLists.txt`. The
 `install_consumer` test (`tests/install/`) installs each build and builds a
 small project against it.
 

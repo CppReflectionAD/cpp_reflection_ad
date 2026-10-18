@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
-project(reflection_ad CXX)
+project(reflection_ad VERSION 0.1.0 LANGUAGES CXX)
 
+include(CMakePackageConfigHelpers)
 include(GNUInstallDirs)
 include(cmake/reflect_flags.cmake)
 
@@ -35,6 +36,8 @@ target_link_libraries(reflection_ad_ad INTERFACE reflection_ad::cx_std)
 # ---------------------------------------------------------------------------
 # Install: the headers, the targets above as reflection_ad::cx_std and
 # reflection_ad::ad, and a package config for find_package(reflection_ad).
+# Before 1.0 a minor version may break the API, so find_package(reflection_ad
+# 0.1) accepts any 0.1.x and nothing else. The headers fit any architecture.
 # tests/install/ checks that a separate project can use it.
 # ---------------------------------------------------------------------------
 set(REFLECTION_AD_INSTALL_CMAKEDIR "${CMAKE_INSTALL_LIBDIR}/cmake/reflection_ad")
@@ -43,8 +46,13 @@ install(TARGETS reflection_ad_cx_std reflection_ad_ad EXPORT reflection_adTarget
 install(EXPORT reflection_adTargets
     NAMESPACE reflection_ad::
     DESTINATION "${REFLECTION_AD_INSTALL_CMAKEDIR}")
+write_basic_package_version_file(
+    "${PROJECT_BINARY_DIR}/reflection_adConfigVersion.cmake"
+    COMPATIBILITY SameMinorVersion
+    ARCH_INDEPENDENT)
 install(FILES
     cmake/reflection_adConfig.cmake
+    "${PROJECT_BINARY_DIR}/reflection_adConfigVersion.cmake"
     cmake/reflection_ad_flags.cmake
     DESTINATION "${REFLECTION_AD_INSTALL_CMAKEDIR}")
 

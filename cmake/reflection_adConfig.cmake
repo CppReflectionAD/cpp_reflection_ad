@@ -1,7 +1,7 @@
 # Package config for find_package(reflection_ad), installed with the headers.
 #
 #     project(my_project CXX)
-#     find_package(reflection_ad CONFIG REQUIRED)
+#     find_package(reflection_ad 0.1 CONFIG REQUIRED)
 #     target_link_libraries(my_target PRIVATE reflection_ad::ad)
 #
 # reflection_ad::ad is the AD engine, and reflection_ad::cx_std the constexpr

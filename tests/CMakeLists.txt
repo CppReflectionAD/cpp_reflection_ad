@@ -97,8 +97,8 @@ if(_is_gcc)
 endif()
 
 # The installed package (#94 B5): install this build, then build a separate
-# project against it, which uses only find_package(reflection_ad) and
-# reflection_ad::ad. It has no target of its own; the test does the work.
+# project against it, which uses only find_package(reflection_ad <version>)
+# and reflection_ad::ad. It has no target of its own; the test does the work.
 add_test(NAME install_consumer
     COMMAND "${CMAKE_COMMAND}"
         "-DBUILD_DIR=${CMAKE_BINARY_DIR}"
@@ -108,6 +108,7 @@ add_test(NAME install_consumer
         "-DGENERATOR=${CMAKE_GENERATOR}"
         "-DMAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}"
         "-DBUILD_TYPE=${CMAKE_BUILD_TYPE}"
+        "-DVERSION=${PROJECT_VERSION}"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/install/run_consumer_test.cmake")
 
 compile_check(reflection_ad "${_static_fail}")
