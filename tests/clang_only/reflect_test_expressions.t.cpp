@@ -1,8 +1,8 @@
-// Checks reflect_test (include/testing/clang_only/reflect_test.hpp): that its
-// checks pass and fail when they should, and that a failure prints the checked
-// expressions' text. The failure output is checked with test_simple's macros.
+// Checks the reflect_test expression-text layer
+// (include/testing/clang_only/reflect_test_expressions.hpp): that a failure
+// names its operands by their source text. Checked with test_simple's macros.
 
-#include <testing/clang_only/reflect_test.hpp>
+#include <testing/clang_only/reflect_test_expressions.hpp>
 
 #include <test_simple_include.hpp>
 
@@ -79,63 +79,92 @@ bool ends_with(const std::string &line, const std::string &suffix) {
          line.compare(line.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
 
+// The failures in `lines`, each from its "<file>:<line> Failure" line to the
+// next one.
+std::vector<std::vector<std::string>>
+failures_in(const std::vector<std::string> &lines) {
+  std::vector<std::vector<std::string>> failures;
+  for (const std::string &line : lines) {
+    if (ends_with(line, " Failure") || failures.empty())
+      failures.emplace_back();
+    failures.back().push_back(line);
+  }
+  return failures;
+}
+
 int compare_side_by_side();
 
 int main() {
   namespace detail = reflect_test::detail;
 
   // Passing checks print nothing and count no error.
-  const auto passing = output_of([] { reflect_test::run<^^passing_checks>(); });
+  const auto passing =
+      output_of([] { reflect_test::run_with_text<^^passing_checks>(); });
   EXPECT_EQUAL(passing.size(), 0u);
   EXPECT_EQUAL(reflect_test::result(), 0);
 
-  // Each failing check prints where it is and its expressions' text, the
-  // multi-line one included.
-  const auto failing = output_of([] { reflect_test::run<^^failing_checks>(); });
+  // Each failing check prints where it is, its operands' text and the values
+  // of those that aren't literals.
+  const auto failing = failures_in(
+      output_of([] { reflect_test::run_with_text<^^failing_checks>(); }));
   EXPECT_EQUAL(reflect_test::result(), 3);
-  EXPECT_EQUAL(failing.size(), 6u);
-  if (failing.size() == 6) {
-    EXPECT_TRUE(ends_with(failing[0], "reflect_test.t.cpp:32 Failure"));
-    EXPECT_EQUAL(failing[1], "Expected a != b");
-    EXPECT_TRUE(ends_with(failing[2], "reflect_test.t.cpp:34 Failure"));
-    EXPECT_EQUAL(failing[3], "Expected twice(a) != a + b");
-    EXPECT_TRUE(ends_with(failing[4], "reflect_test.t.cpp:37 Failure"));
-    EXPECT_EQUAL(failing[5], "Expected -i != 0");
+  EXPECT_EQUAL(failing.size(), 3u);
+  if (failing.size() == 3) {
+    EXPECT_TRUE(
+        ends_with(failing[0][0], "reflect_test_expressions.t.cpp:32 Failure"));
+    EXPECT_TRUE(failing[0] ==
+                std::vector<std::string>({failing[0][0], "Expected a != b",
+                                          "  a: 1.0", "  b: 1.0"}));
+    EXPECT_TRUE(
+        ends_with(failing[1][0], "reflect_test_expressions.t.cpp:34 Failure"));
+    EXPECT_TRUE(failing[1] == std::vector<std::string>(
+                                  {failing[1][0], "Expected twice(a) != a + b",
+                                   "  twice(a): 2.0", "  a + b: 2.0"}));
+    EXPECT_TRUE(
+        ends_with(failing[2][0], "reflect_test_expressions.t.cpp:37 Failure"));
+    EXPECT_TRUE(failing[2] ==
+                std::vector<std::string>(
+                    {failing[2][0], "Expected -i != 0", "  -i: 0"}));
   }
 
   // The same for expect_equal, mixed with expect_not_equal in one body.
   const auto passing_equal =
-      output_of([] { reflect_test::run<^^passing_equal_checks>(); });
+      output_of([] { reflect_test::run_with_text<^^passing_equal_checks>(); });
   EXPECT_EQUAL(passing_equal.size(), 0u);
   EXPECT_EQUAL(reflect_test::result(), 3);
 
-  const auto failing_equal =
-      output_of([] { reflect_test::run<^^failing_equal_checks>(); });
+  const auto failing_equal = failures_in(
+      output_of([] { reflect_test::run_with_text<^^failing_equal_checks>(); }));
   EXPECT_EQUAL(reflect_test::result(), 6);
-  EXPECT_EQUAL(failing_equal.size(), 6u);
-  if (failing_equal.size() == 6) {
-    EXPECT_TRUE(ends_with(failing_equal[0], "reflect_test.t.cpp:55 Failure"));
-    EXPECT_EQUAL(failing_equal[1], "Expected a == b");
-    EXPECT_TRUE(ends_with(failing_equal[2], "reflect_test.t.cpp:56 Failure"));
-    EXPECT_EQUAL(failing_equal[3], "Expected b != twice(a)");
-    EXPECT_TRUE(ends_with(failing_equal[4], "reflect_test.t.cpp:58 Failure"));
-    EXPECT_EQUAL(failing_equal[5], "Expected twice(a) == a + b");
+  EXPECT_EQUAL(failing_equal.size(), 3u);
+  if (failing_equal.size() == 3) {
+    EXPECT_TRUE(ends_with(failing_equal[0][0],
+                          "reflect_test_expressions.t.cpp:55 Failure"));
+    EXPECT_EQUAL(failing_equal[0][1], "Expected a == b");
+    EXPECT_TRUE(ends_with(failing_equal[1][0],
+                          "reflect_test_expressions.t.cpp:56 Failure"));
+    EXPECT_EQUAL(failing_equal[1][1], "Expected b != twice(a)");
+    EXPECT_TRUE(ends_with(failing_equal[2][0],
+                          "reflect_test_expressions.t.cpp:58 Failure"));
+    EXPECT_EQUAL(failing_equal[2][1], "Expected twice(a) == a + b");
   }
 
-  // Outside run() the check still fails, without the expressions' text.
+  // Outside run_with_text() a check prints `lhs` and `rhs`, as without this
+  // layer.
   const auto outside = output_of([] { reflect_test::expect_not_equal(1, 1); });
   EXPECT_EQUAL(reflect_test::result(), 7);
-  EXPECT_EQUAL(outside.size(), 2u);
-  if (outside.size() == 2)
-    EXPECT_TRUE(outside[1].starts_with("Expected lhs != rhs"));
+  EXPECT_EQUAL(outside.size(), 4u);
+  if (outside.size() == 4)
+    EXPECT_EQUAL(outside[1], "Expected lhs != rhs");
 
-  for (const std::string &line : failing)
-    std::cout << "  | " << line << std::endl;
+  for (const auto &failure : failing)
+    for (const std::string &line : failure)
+      std::cout << "  | " << line << std::endl;
 
   detail::error_count = 0;
 
-  // The macros and the functions print the same, except where the text can't
-  // be recovered from the reflection.
+  // The macros and the functions print the same first two lines, except
+  // where the text can't be recovered from the reflection.
   EXPECT_EQUAL(compare_side_by_side(), 0);
   TEST_END;
 }
@@ -193,7 +222,8 @@ void side_by_side_same_2() {
   reflect_test::expect_equal(scaled(v[1]), 1.0);
 }
 
-// Where the text differs: see the header comment of reflect_test.hpp.
+// Where the text differs: see the header comment of
+// reflect_test_expressions.hpp.
 void side_by_side_different() {
   int i = 1;
   std::string s = "abc";
@@ -228,13 +258,14 @@ std::string next_line(const std::string &location) {
 }
 
 // Runs `Fn` and prints the failures of each macro check and of the function
-// check after it side by side. Returns the number of pairs that print
-// differently, other than the function's line being the next one.
+// check after it side by side, then the values the function prints. Returns
+// the number of pairs whose first two lines differ, other than the function's
+// line being the next one.
 template <std::meta::info Fn> int side_by_side(const char *title) {
   const int macro_errors = detail_test::_result;
   detail_test::_result = 0;
-  const std::vector<std::string> lines =
-      output_of([] { reflect_test::run<Fn>(); });
+  const auto failures =
+      failures_in(output_of([] { reflect_test::run_with_text<Fn>(); }));
   detail_test::_result = macro_errors;
   reflect_test::detail::error_count = 0;
 
@@ -245,17 +276,25 @@ template <std::meta::info Fn> int side_by_side(const char *title) {
   std::cout << title << ":\n  " << column("EXPECT_*") << " | "
             << "reflect_test::expect_*" << std::endl;
   int different = 0;
-  for (std::size_t i = 0; i + 3 < lines.size(); i += 4) {
-    const std::string macro_at = location_of(lines[i]);
-    const std::string function_at = location_of(lines[i + 2]);
+  for (std::size_t i = 0; i + 1 < failures.size(); i += 2) {
+    const auto &macro = failures[i];
+    const auto &function = failures[i + 1];
+    if (macro.size() != 2 || function.size() < 2) {
+      ++different;
+      continue;
+    }
+    const std::string macro_at = location_of(macro[0]);
+    const std::string function_at = location_of(function[0]);
     const bool same =
-        function_at == next_line(macro_at) && lines[i + 1] == lines[i + 3];
+        function_at == next_line(macro_at) && macro[1] == function[1];
     different += same ? 0 : 1;
     std::cout << "  " << column(macro_at) << " | " << function_at << "\n  "
-              << column(lines[i + 1]) << " | " << lines[i + 3]
+              << column(macro[1]) << " | " << function[1]
               << (same ? "" : "   <- differs") << std::endl;
+    for (std::size_t j = 2; j < function.size(); ++j)
+      std::cout << "  " << column("") << " | " << function[j] << std::endl;
   }
-  if (lines.size() % 4 != 0)
+  if (failures.size() % 2 != 0)
     ++different;
   return different;
 }

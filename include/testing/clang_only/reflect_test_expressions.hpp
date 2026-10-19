@@ -1,27 +1,30 @@
-#ifndef REFLECTION_AD_TESTING_REFLECT_TEST_HPP
-#define REFLECTION_AD_TESTING_REFLECT_TEST_HPP
+#ifndef REFLECTION_AD_TESTING_REFLECT_TEST_EXPRESSIONS_HPP
+#define REFLECTION_AD_TESTING_REFLECT_TEST_EXPRESSIONS_HPP
 
-// Test checks without macros: the text of each checked expression, which
-// test_simple_include.hpp gets from the preprocessor (`#VAL`), is read from
+// An optional layer over testing/reflect_test.hpp: a failed check names its
+// operands by their source text, which test_simple_include.hpp gets from the
+// preprocessor (`#VAL`), instead of `lhs` and `rhs`. The text is read from
 // the test function's body with statement and expression reflection.
 //
 //   void my_test() {
 //     double a = 1.0;
 //     double b = 2.0;
 //     reflect_test::expect_equal(a + a, b);
-//     reflect_test::expect_not_equal(a, b);
 //   }
-//   int main() { return reflect_test::run<^^my_test>(); }
+//   int main() { return reflect_test::run_with_text<^^my_test>(); }
 //
-// A failed check prints, like EXPECT_EQUAL and EXPECT_NOT_EQUAL,
+// prints, like EXPECT_EQUAL, then the operands' values,
 //
-//   my_test.cpp:5 Failure
-//   Expected a != b
+//   my_test.cpp:4 Failure
+//   Expected a + a == b
+//     a + a: 2.0
+//     b: 1.0
 //
-// Only checks written directly in the body of the function given to run()
-// (including nested blocks, `if`s and loops) have their text. Each check is
-// found by its line, so put at most one check per line. Declare one variable
-// per declaration in that body (see AGENTS.md).
+// Only checks written directly in the body of the function given to
+// run_with_text() (including nested blocks, `if`s and loops) have their text;
+// the others print `lhs` and `rhs`. Each check is found by its line, so put
+// at most one check per line. Declare one variable per declaration in that
+// body (see AGENTS.md).
 //
 // The text is rebuilt from the expression, not copied from the source, so it
 // can differ from what the macros print: parentheses are only those the
@@ -35,13 +38,12 @@
 // Clang only: GCC crashes walking the test body
 // (tests/known_gap/gcc/statement_reflection_equality.cpp).
 
+#include <testing/reflect_test.hpp>
+
 #include <cstddef>
-#include <iostream>
-#include <limits>
 #include <meta>
 #include <source_location>
 #include <span>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -49,20 +51,11 @@
 
 namespace reflect_test {
 
-template <class L, class R>
-void expect_equal(const L &lhs, const R &rhs,
-                  std::source_location loc = std::source_location::current());
-
-template <class L, class R>
-void expect_not_equal(
-    const L &lhs, const R &rhs,
-    std::source_location loc = std::source_location::current());
-
 namespace detail {
 namespace m = std::meta;
 
 // One check call found in a test body, with its operands' source text. A null
-// text marks a string literal operand, whose text is made from its value.
+// text marks a string literal operand, whose text is its value.
 struct check_site {
   const char *file;
   unsigned line;
@@ -70,18 +63,8 @@ struct check_site {
   const char *rhs;
 };
 
-inline int error_count = 0;
-
-// The checks of the test body run() is running.
+// The checks of the test body run_with_text() is running.
 inline std::span<const check_site> active_sites;
-
-inline void increase_error_count() {
-  constexpr int limit = 10;
-  if (++error_count == limit) {
-    std::cout << "maximum number of errors exceeded" << std::endl;
-    throw std::runtime_error("maximum number of errors exceeded");
-  }
-}
 
 // An expression without its conversions and single-argument copies (see
 // ad::detail::stripCasts), and the innermost of those, if any.
@@ -136,30 +119,7 @@ consteval m::info expression_of_statement(m::info s) {
   return {};
 }
 
-// Literal spelling: a string literal (escaped and quoted), then values.
-
-constexpr std::string quoted(std::string_view s) {
-  std::string out = "\"";
-  for (const char c : s) {
-    switch (c) {
-    case '"':
-      out += "\\\"";
-      break;
-    case '\\':
-      out += "\\\\";
-      break;
-    case '\n':
-      out += "\\n";
-      break;
-    case '\t':
-      out += "\\t";
-      break;
-    default:
-      out += c;
-    }
-  }
-  return out + "\"";
-}
+// Literal spelling (a string literal is quoted with quoted()).
 
 template <class T> consteval std::string integer_text(T value) {
   unsigned long long magnitude = static_cast<unsigned long long>(value);
@@ -531,7 +491,8 @@ consteval bool is_check(m::info call) {
 
 // The text of a check's operand of type `type`, or null for a string literal.
 // The literal binds to the check's reference parameter without converting to
-// a pointer, so literal_text can't evaluate it; the run time value is used.
+// a pointer, so literal_text can't evaluate it; report_failure prints its
+// value instead.
 consteval const char *operand_text(m::info operand, m::info type) {
   if (m::is_array_type(type) && is_plain_literal(strip_casts(operand)))
     return nullptr;
@@ -570,67 +531,32 @@ consteval std::vector<check_site> collect_sites(m::info fn) {
   return out;
 }
 
-inline const check_site *find_site(const std::source_location &loc) {
+// The source text of the operands of the check at `loc`, if it is one of
+// active_sites.
+inline operand_names names_from_sites(const std::source_location &loc) {
   for (const check_site &s : active_sites)
     if (s.line == loc.line() && std::string_view(s.file) == loc.file_name())
-      return &s;
-  return nullptr;
-}
-
-template <class T> std::string operand_text(const char *text, const T &value) {
-  if (text != nullptr)
-    return text;
-  if constexpr (std::is_convertible_v<const T &, std::string_view>)
-    return quoted(value);
-  else
-    return "<expr>";
-}
-
-template <class L, class R>
-void report_failure(const std::source_location &loc, std::string_view op,
-                    const L &lhs, const R &rhs) {
-  std::cout.precision(std::numeric_limits<double>::max_digits10);
-  std::cout << loc.file_name() << ":" << loc.line() << " Failure" << std::endl;
-  if (const check_site *site = find_site(loc))
-    std::cout << "Expected " << operand_text(site->lhs, lhs) << " " << op << " "
-              << operand_text(site->rhs, rhs) << std::endl;
-  else
-    std::cout << "Expected lhs " << op
-              << " rhs (no expression text: the check is not in the body of "
-                 "a function given to reflect_test::run)"
-              << std::endl;
-  increase_error_count();
+      return {s.lhs, s.rhs};
+  return {};
 }
 } // namespace detail
 
-// Number of failed checks so far.
-inline int result() { return detail::error_count; }
-
-// Replaces EXPECT_EQUAL(VAL1, VAL2).
-template <class L, class R>
-void expect_equal(const L &lhs, const R &rhs, std::source_location loc) {
-  if (lhs != rhs)
-    detail::report_failure(loc, "==", lhs, rhs);
-}
-
-// Replaces EXPECT_NOT_EQUAL(VAL1, VAL2).
-template <class L, class R>
-void expect_not_equal(const L &lhs, const R &rhs, std::source_location loc) {
-  if (lhs == rhs)
-    detail::report_failure(loc, "!=", lhs, rhs);
-}
-
-// Runs the test function `Fn` (a `void()` function) and returns result().
-template <std::meta::info Fn> int run() {
+// Runs the test function `Fn` (a `void()` function), its failed checks named
+// by their operands' source text, and returns result().
+template <std::meta::info Fn> int run_with_text() {
   static constexpr auto sites =
       std::define_static_array(detail::collect_sites(Fn));
-  const std::span<const detail::check_site> previous = detail::active_sites;
+  const std::span<const detail::check_site> previous_sites =
+      detail::active_sites;
+  const auto previous_names = detail::operand_names_at;
   detail::active_sites = sites;
+  detail::operand_names_at = &detail::names_from_sites;
   [:Fn:]();
-  detail::active_sites = previous;
+  detail::active_sites = previous_sites;
+  detail::operand_names_at = previous_names;
   return result();
 }
 
 } // namespace reflect_test
 
-#endif // REFLECTION_AD_TESTING_REFLECT_TEST_HPP
+#endif // REFLECTION_AD_TESTING_REFLECT_TEST_EXPRESSIONS_HPP

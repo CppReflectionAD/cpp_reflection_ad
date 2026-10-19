@@ -7,9 +7,9 @@
 // cp_tree_equal when the body has a declaration followed by a `for` loop.
 // Either one alone compiles. Clang accepts the file.
 //
-// This blocks include/testing/clang_only/reflect_test.hpp, which walks a test
-// body that way to find its checks, so that header and its test are
-// clang-only for now.
+// This blocks include/testing/clang_only/reflect_test_expressions.hpp, which
+// walks a test body that way to find its checks, so that header and its test
+// are clang-only for now.
 //
 // tests/CMakeLists.txt builds this file as an ordinary test on clang (see
 // TEST-PASSES-ON above). On GCC it expects the crash recorded in

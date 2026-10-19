@@ -66,9 +66,12 @@ The libraries are header-only, under `include/`:
   `discontinuity_analysis.hpp`, `absolute_normal_form.hpp`).
 - `include/cx_std/` — `constexpr` maths (`exp`, `log`, `sqrt`, `erfc`, `sin`,
   `cos`) for use in constant evaluation.
-- `include/testing/clang_only/` — `reflect_test.hpp`, test checks without
-  macros: the checked expressions' text comes from reflecting the test body.
-  Clang only for now (`tests/known_gap/gcc/statement_reflection_equality.cpp`).
+- `include/testing/` — `reflect_test.hpp`, test checks without macros
+  (`expect_equal`, `expect_not_equal`); a failure prints the values compared.
+- `include/testing/clang_only/` — `reflect_test_expressions.hpp`, an optional
+  layer that also prints the checked expressions' text, from reflecting the
+  test body. Clang only for now
+  (`tests/known_gap/gcc/statement_reflection_equality.cpp`).
 
 Include them by their path under `include/`, e.g. `#include <ad/autograd.h>`.
 In CMake, link `reflection_ad::ad` (or `reflection_ad::cx_std`), which also
