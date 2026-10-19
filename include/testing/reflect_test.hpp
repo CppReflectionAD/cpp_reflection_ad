@@ -46,13 +46,16 @@
 
 namespace reflect_test {
 
+// The number of failed checks at which a test stops (it throws). A test that
+// needs more sets it before its checks run, e.g. at the start of main().
+inline int max_errors = 10;
+
 namespace detail {
 
 inline int error_count = 0;
 
 inline void increase_error_count() {
-  constexpr int limit = 10;
-  if (++error_count == limit) {
+  if (++error_count == max_errors) {
     std::cout << "maximum number of errors exceeded" << std::endl;
     throw std::runtime_error("maximum number of errors exceeded");
   }

@@ -4,6 +4,8 @@
 
 #include <testing/clang_only/reflect_test_expressions.hpp>
 
+// side_by_side_same() fails more checks than the default limit.
+#define TEST_SIMPLE_MAX_ERRORS 100
 #include <test_simple_include.hpp>
 
 #include <cstdlib>
@@ -96,6 +98,7 @@ int compare_side_by_side();
 
 int main() {
   namespace detail = reflect_test::detail;
+  reflect_test::max_errors = 100;
 
   // Passing checks print nothing and count no error.
   const auto passing =
@@ -111,17 +114,17 @@ int main() {
   EXPECT_EQUAL(failing.size(), 3u);
   if (failing.size() == 3) {
     EXPECT_TRUE(
-        ends_with(failing[0][0], "reflect_test_expressions.t.cpp:32 Failure"));
+        ends_with(failing[0][0], "reflect_test_expressions.t.cpp:34 Failure"));
     EXPECT_TRUE(failing[0] ==
                 std::vector<std::string>({failing[0][0], "Expected a != b",
                                           "  a: 1.0", "  b: 1.0"}));
     EXPECT_TRUE(
-        ends_with(failing[1][0], "reflect_test_expressions.t.cpp:34 Failure"));
+        ends_with(failing[1][0], "reflect_test_expressions.t.cpp:36 Failure"));
     EXPECT_TRUE(failing[1] == std::vector<std::string>(
                                   {failing[1][0], "Expected twice(a) != a + b",
                                    "  twice(a): 2.0", "  a + b: 2.0"}));
     EXPECT_TRUE(
-        ends_with(failing[2][0], "reflect_test_expressions.t.cpp:37 Failure"));
+        ends_with(failing[2][0], "reflect_test_expressions.t.cpp:39 Failure"));
     EXPECT_TRUE(failing[2] ==
                 std::vector<std::string>(
                     {failing[2][0], "Expected -i != 0", "  -i: 0"}));
@@ -139,13 +142,13 @@ int main() {
   EXPECT_EQUAL(failing_equal.size(), 3u);
   if (failing_equal.size() == 3) {
     EXPECT_TRUE(ends_with(failing_equal[0][0],
-                          "reflect_test_expressions.t.cpp:55 Failure"));
+                          "reflect_test_expressions.t.cpp:57 Failure"));
     EXPECT_EQUAL(failing_equal[0][1], "Expected a == b");
     EXPECT_TRUE(ends_with(failing_equal[1][0],
-                          "reflect_test_expressions.t.cpp:56 Failure"));
+                          "reflect_test_expressions.t.cpp:58 Failure"));
     EXPECT_EQUAL(failing_equal[1][1], "Expected b != twice(a)");
     EXPECT_TRUE(ends_with(failing_equal[2][0],
-                          "reflect_test_expressions.t.cpp:58 Failure"));
+                          "reflect_test_expressions.t.cpp:60 Failure"));
     EXPECT_EQUAL(failing_equal[2][1], "Expected twice(a) == a + b");
   }
 
@@ -170,13 +173,16 @@ int main() {
 }
 
 // Macros and functions side by side: each EXPECT_* is followed, on the next
-// line, by the same check through reflect_test. All checks fail. At most 9
-// macro checks per body, as the 10th failure throws.
+// line, by the same check through reflect_test. All checks fail.
 
-void side_by_side_same_1() {
+void side_by_side_same() {
   double a = 1.0;
   double b = 2.0;
   double c = 3.0;
+  int i = 1;
+  unsigned n = 2u;
+  std::string s = "abc";
+  std::vector<double> v = {1.0, 2.0};
   EXPECT_EQUAL(a, b);
   reflect_test::expect_equal(a, b);
   EXPECT_EQUAL(a + b, c * b);
@@ -195,13 +201,6 @@ void side_by_side_same_1() {
   reflect_test::expect_equal(a < b, false);
   EXPECT_EQUAL(a < b ? a : b, c);
   reflect_test::expect_equal(a < b ? a : b, c);
-}
-
-void side_by_side_same_2() {
-  int i = 1;
-  unsigned n = 2u;
-  std::string s = "abc";
-  std::vector<double> v = {1.0, 2.0};
   EXPECT_EQUAL(i, 2);
   reflect_test::expect_equal(i, 2);
   EXPECT_EQUAL(n, 3u);
@@ -210,6 +209,8 @@ void side_by_side_same_2() {
   reflect_test::expect_equal(i * (i + 1), 1);
   EXPECT_EQUAL(i, 'b');
   reflect_test::expect_equal(i, 'b');
+  EXPECT_EQUAL(i, '\n');
+  reflect_test::expect_equal(i, '\n');
   EXPECT_EQUAL(s, "abd");
   reflect_test::expect_equal(s, "abd");
   EXPECT_EQUAL(s == "abc", false);
@@ -300,8 +301,7 @@ template <std::meta::info Fn> int side_by_side(const char *title) {
 }
 
 int compare_side_by_side() {
-  const int different = side_by_side<^^side_by_side_same_1>("same text (1)") +
-                        side_by_side<^^side_by_side_same_2>("same text (2)");
+  const int different = side_by_side<^^side_by_side_same>("same text");
   side_by_side<^^side_by_side_different>("different text");
   return different;
 }
