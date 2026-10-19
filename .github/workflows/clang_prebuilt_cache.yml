@@ -6,6 +6,8 @@ on:
   push:
     branches: ["main"]
   pull_request:
+  # The merge queue waits for the required `Clang tests` on each queued change.
+  merge_group:
   workflow_dispatch:
   # Nightly on main, off the hour to avoid GitHub's peak queueing. Restoring
   # the toolchain resets the cache's 7-day eviction clock, or rebuilds it if
@@ -179,6 +181,57 @@ jobs:
         with:
           path: /opt/toolchain-clang
           key: ${{ needs.toolchain-macos.outputs.cache_key }}
+          fail-on-cache-miss: true
+
+      - name: Configure CMake
+        run: |
+          cmake --preset "${{ matrix.preset }}" \
+            -DCMAKE_CXX_COMPILER=/opt/toolchain-clang/bin/clang++
+
+      - name: Build tests
+        run: cmake --build --preset "${{ matrix.preset }}"
+
+      - name: Test AD with CTest
+        run: ctest --preset "${{ matrix.preset }}"
+
+  # The toolchain, test and sanitize legs again on Linux arm64 (#94 C9), on
+  # GitHub's hosted ubuntu-24.04-arm runners, with the same recipe as x86-64.
+  # arm64 always has FMA, so FMA contraction bugs like #95's show here, as on
+  # the group's Macs. runner.arch is in the cache key, so this leg has its own
+  # toolchain. Unlike sanitize, these jobs aren't in the summary job's needs yet.
+  toolchain-arm64:
+    uses: ./.github/workflows/toolchain-cache-clang.yml
+    with:
+      runner: ubuntu-24.04-arm
+
+  test-arm64:
+    name: test (${{ matrix.build_type }}, Linux arm64)
+    needs: toolchain-arm64
+    # The same runner label as toolchain-arm64: the cache key doesn't record
+    # the image.
+    runs-on: ${{ needs.toolchain-arm64.outputs.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - build_type: Release
+            preset: clang-release
+          - build_type: RelWithDebInfo
+            preset: clang-relwithdebinfo
+          - build_type: Debug
+            preset: clang-debug
+          - build_type: ASan+UBSan
+            preset: clang-sanitize
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Restore clang toolchain from cache
+        uses: actions/cache/restore@v6
+        with:
+          path: /opt/toolchain-clang
+          key: ${{ needs.toolchain-arm64.outputs.cache_key }}
           fail-on-cache-miss: true
 
       - name: Configure CMake
