@@ -5,18 +5,19 @@
 // that lambda's call operator. The variables' values are read back from the
 // lambda's captures.
 //
-// my_assert<^^in_range>(x, lo, hi) is a plain function: it is handed the
+// my_assert<^^in_range>(x, lo, hi) uses no macro: it is handed the
 // reflection of the function explicitly, and gets the values as arguments.
 // Without a macro the reflection has to be passed like this: a function
 // called as my_assert(in_range(x, lo, hi)) would only receive a bool.
 //
-// my_assert2<in_range>(x, lo, hi) is the same function without the ^^: it
-// takes the function itself as a template argument and gets the reflection
-// back with reflect_function.
+// my_assert2<in_range>(x, lo, hi) is the same without the ^^: it takes the
+// function itself as a template argument and gets the reflection back with
+// reflect_function.
 //
 // In all three, the expression's tree and its text are built at compile time,
-// and calls are followed into the callee's body. The function forms can only
-// show the callee's parameter names, not the caller's variable names.
+// and calls are followed into the callee's body. The two forms without a macro
+// get the caller's line from a defaulted std::source_location argument, but
+// can only show the callee's parameter names, not the caller's variable names.
 
 #include <algorithm>
 #include <cstdio>
@@ -292,7 +293,8 @@ consteval std::vector<const char *> parameter_names_of(info fn) {
 // Shared by both function forms; `form` is how the heading names the call,
 // e.g. "my_assert<^^" for my_assert<^^in_range>(5, 10, 1).
 template <info Fn, class... Args>
-bool check_call(const char *form, const Args &...args) {
+bool check_call(const char *form, std::source_location where,
+                const Args &...args) {
   static_assert(sizeof...(Args) == m::parameters_of(Fn).size());
   if ([:Fn:](args...))
     return true;
@@ -310,7 +312,8 @@ bool check_call(const char *form, const Args &...args) {
   std::printf("%s%s>(", form, name);
   for (std::size_t i = 0; i < sizeof...(Args); ++i)
     std::printf("%s%g", i ? ", " : "", params[i]);
-  std::printf(") failed\n    inside %s(", name);
+  std::printf(") failed at line %u\n    inside %s(", unsigned(where.line()),
+              name);
   for (std::size_t i = 0; i < sizeof...(Args); ++i)
     std::printf("%s%s = %g", i ? ", " : "", names[i], params[i]);
   std::printf("):\n");
@@ -321,15 +324,27 @@ bool check_call(const char *form, const Args &...args) {
   return false;
 }
 
-template <info Fn, class... Args> bool my_assert(const Args &...args) {
-  return check_call<Fn>("my_assert<^^", args...);
-}
+// The call object behind both function forms. Its parameters are the
+// function's own parameter types (P...), not a deduced pack, so a defaulted
+// std::source_location can follow them and records the caller's line.
+template <info Fn, class Sig> struct asserter;
+template <info Fn, class R, class... P> struct asserter<Fn, R(P...)> {
+  const char *form;
+  bool operator()(P... args, std::source_location where =
+                                 std::source_location::current()) const {
+    return check_call<Fn>(form, where, args...);
+  }
+};
+
+template <info Fn>
+constexpr asserter<Fn, typename[:m::type_of(Fn):]> my_assert{"my_assert<^^"};
 
 // my_assert2<in_range>(args...): the function itself as the template
 // argument; reflect_function turns it back into the reflection.
-template <auto &F, class... Args> bool my_assert2(const Args &...args) {
-  return check_call<m::reflect_function(F)>("my_assert2<", args...);
-}
+template <auto &F>
+constexpr asserter<m::reflect_function(F),
+                   typename[:m::type_of(m::reflect_function(F)):]>
+    my_assert2{"my_assert2<"};
 
 } // namespace pa
 
