@@ -17,6 +17,11 @@ Black-Scholes Monte Carlo model (`mc_sim/`), and helpers for tests that inspect
 reflected function bodies (`reflection/`). Include them as
 `"functions/1-poly.h"` or `"mc_sim/black_scholes.hpp"`.
 
+`install/` isn't one either. It holds the `install_consumer` test: it installs
+the build into a scratch prefix, then builds and runs `install/consumer/`, a
+separate project that uses the library only through
+`find_package(reflection_ad)`. Don't add tests there.
+
 ## Adding a test
 
 - Add a `.cpp` file to the right directory. There is nothing to register:
