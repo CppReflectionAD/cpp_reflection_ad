@@ -8,7 +8,8 @@
 // one, with the same meaning:
 //   - is_id_expression, is_operator_expression, is_conversion,
 //     return_operand_of: renames or combinations of the old predicates.
-//   - operands_of: on a call, the arguments only. GCC lists the callee first.
+//   - operands_of: on a call, the arguments only. GCC lists the callee first,
+//     if the call has one.
 //   - declaration_of: also accepts what GCC's callee_of returns.
 //   - declarators_of / initializers_of: GCC reflects one variable per
 //     declaration statement, so these have one element.
@@ -34,9 +35,31 @@ consteval bool is_operator_expression(info e) {
   return std::meta::is_unary_operator(e) || std::meta::is_binary_operator(e);
 }
 
+namespace detail {
+// Whether the first of a call's GCC operands is its callee. A call to an
+// internal function (e.g. __builtin_launder) has none, so its first operand
+// is an argument, which never has function or member function pointer type.
+// A virtual call's callee has no type at all.
+consteval bool is_callee(info op) {
+  if (std::meta::is_function(op))
+    return true;
+  info t;
+  try {
+    t = std::meta::remove_reference(std::meta::type_of(op));
+  } catch (const std::meta::exception &) {
+    return true;
+  }
+  if (std::meta::is_pointer_type(t))
+    t = std::meta::remove_pointer(t);
+  return std::meta::is_function_type(t) ||
+         std::meta::is_member_function_pointer_type(t);
+}
+} // namespace detail
+
 consteval std::vector<info> operands_of(info e) {
   std::vector<info> ops = std::meta::operands_of(e);
-  if (std::meta::is_function_call(e))
+  if (std::meta::is_function_call(e) && !ops.empty() &&
+      detail::is_callee(ops.front()))
     ops.erase(ops.begin());
   return ops;
 }
