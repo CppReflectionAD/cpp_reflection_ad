@@ -13,18 +13,18 @@
 //
 // Build:
 //   g++     -std=c++2c -freflection -fsyntax-only -I ../fixtures
-//           gcc_logical_operator_reflection.cpp
+//           -I ../../include gcc_logical_operator_reflection.cpp
 //   clang++ -std=c++26 -freflection-latest -stdlib=libc++ -fsyntax-only
-//           -I ../fixtures gcc_logical_operator_reflection.cpp
+//           -I ../fixtures -I ../../include gcc_logical_operator_reflection.cpp
 //   (on macOS, also pass -isysroot "$(xcrun --show-sdk-path)" to clang)
 //
 // Expected: compiles cleanly on both compilers.
 
-#include <meta>
+#include <ad/meta.h>
 
 #include "reflection/return_expr.hpp"
 
-namespace m = std::meta;
+namespace m = ad::meta;
 
 bool f_cmp(double x) { return x > 0.0; }
 bool f_or(double x) { return (x > 0.0) || (x > 1.0); }
@@ -37,7 +37,8 @@ constexpr m::info AND = return_expr(^^f_and);
 constexpr m::info NOT = return_expr(^^f_not);
 
 // Comparison: fine on both compilers.
-static_assert(m::is_operator_expression(CMP) && m::operands_of(CMP).size() == 2);
+static_assert(m::is_operator_expression(CMP) &&
+              m::operands_of(CMP).size() == 2);
 
 // Logical operators: the operator and operands can be queried on GCC too.
 static_assert(m::expression_operator_of(OR) == m::operators::op_pipe_pipe);

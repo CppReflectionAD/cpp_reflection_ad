@@ -12,14 +12,14 @@
 // fails because the file compiles: move it to tests/gcc_only/ (without the
 // flag) and delete the .fail.txt. Then drop the -fno-sanitize= list that
 // REFLECTION_AD_SANITIZE adds for GCC in cmake/reflect_flags.cmake.
-#include <meta>
+#include <ad/meta.h>
 
 inline double f(double x) { return 1.0 / x; }
 
 consteval bool rhs_is_variable_reference() {
-  auto ret = std::meta::statements_of(std::meta::body_of(^^f))[0];
-  auto ops = std::meta::operands_of(std::meta::return_operand_of(ret));
-  return std::meta::is_id_expression(ops[1]);
+  auto ret = ad::meta::statements_of(ad::meta::body_of(^^f))[0];
+  auto ops = ad::meta::operands_of(ad::meta::return_operand_of(ret));
+  return ad::meta::is_id_expression(ops[1]);
 }
 
 static_assert(rhs_is_variable_reference(),
