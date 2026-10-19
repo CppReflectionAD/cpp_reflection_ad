@@ -33,7 +33,7 @@ on:
       runner:
         description: Runner to build on
         type: choice
-        options: [ubuntu-24.04, macos-15]
+        options: [ubuntu-24.04, ubuntu-24.04-arm, macos-15]
         default: ubuntu-24.04
 
 permissions:
