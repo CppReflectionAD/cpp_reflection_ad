@@ -119,7 +119,7 @@ consteval m::info expression_of_statement(m::info s) {
   return {};
 }
 
-// Literal spelling (a string literal is quoted with quoted()).
+// Literal spelling (string and character literals are quoted with quoted()).
 
 template <class T> consteval std::string integer_text(T value) {
   unsigned long long magnitude = static_cast<unsigned long long>(value);
@@ -135,23 +135,6 @@ template <class T> consteval std::string integer_text(T value) {
     magnitude /= 10;
   } while (magnitude != 0);
   return negative ? "-" + s : s;
-}
-
-consteval std::string char_text(char c) {
-  switch (c) {
-  case '\'':
-    return "'\\''";
-  case '\\':
-    return "'\\\\'";
-  case '\n':
-    return "'\\n'";
-  case '\t':
-    return "'\\t'";
-  case '\0':
-    return "'\\0'";
-  default:
-    return std::string("'") + c + "'";
-  }
 }
 
 consteval double power_of_ten(int n) {
@@ -222,8 +205,10 @@ consteval std::string value_text(m::info v) {
   const m::info t = m::dealias(m::remove_cv(m::type_of(v)));
   if (t == ^^bool)
     return m::extract<bool>(v) ? "true" : "false";
-  if (t == ^^char)
-    return char_text(m::extract<char>(v));
+  if (t == ^^char) {
+    const char c = m::extract<char>(v);
+    return quoted(std::string_view(&c, 1), '\'');
+  }
   if (t == ^^int)
     return integer_text(m::extract<int>(v));
   if (t == ^^unsigned)

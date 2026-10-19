@@ -72,27 +72,23 @@ inline operand_names (*operand_names_at)(const std::source_location &) =
 
 // Values as text.
 
-constexpr std::string quoted(std::string_view s) {
-  std::string out = "\"";
+// `s` between `quote`s, escaped as in a C++ literal, so that the text is on
+// one line and blanks show.
+constexpr std::string quoted(std::string_view s, char quote = '"') {
+  std::string out(1, quote);
   for (const char c : s) {
-    switch (c) {
-    case '"':
-      out += "\\\"";
-      break;
-    case '\\':
-      out += "\\\\";
-      break;
-    case '\n':
+    if (c == quote || c == '\\')
+      out += '\\';
+    if (c == '\n')
       out += "\\n";
-      break;
-    case '\t':
+    else if (c == '\t')
       out += "\\t";
-      break;
-    default:
+    else if (c == '\0')
+      out += "\\0";
+    else
       out += c;
-    }
   }
-  return out + "\"";
+  return out + quote;
 }
 
 // The shortest text that reads back as `v`, with a `.0` if it would read as
@@ -149,7 +145,7 @@ template <class T> void write_value(std::ostream &os, const T &v) {
   if constexpr (std::is_same_v<T, bool>) {
     os << (v ? "true" : "false");
   } else if constexpr (std::is_same_v<T, char>) {
-    os << '\'' << v << '\'';
+    os << quoted(std::string_view(&v, 1), '\'');
   } else if constexpr (std::is_floating_point_v<T>) {
     write_floating(os, v);
   } else if constexpr (std::is_null_pointer_v<T>) {

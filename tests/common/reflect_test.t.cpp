@@ -110,6 +110,9 @@ int main() {
   // How values print.
   EXPECT_EQUAL(text(true), "true");
   EXPECT_EQUAL(text('x'), "'x'");
+  EXPECT_EQUAL(text('\n'), "'\\n'");
+  EXPECT_EQUAL(text('\''), "'\\''");
+  EXPECT_EQUAL(text('"'), "'\"'");
   EXPECT_EQUAL(text(-3), "-3");
   EXPECT_EQUAL(text(42u), "42");
   EXPECT_EQUAL(text(2.0), "2.0");
@@ -118,6 +121,8 @@ int main() {
   EXPECT_EQUAL(text(2.5f), "2.5");
   EXPECT_EQUAL(text(std::numeric_limits<double>::infinity()), "inf");
   EXPECT_EQUAL(text(std::string("a\"b")), "\"a\\\"b\"");
+  EXPECT_EQUAL(text(std::string("a'\tb\n")), "\"a'\\tb\\n\"");
+  EXPECT_EQUAL(text(std::string("a\0b", 3)), "\"a\\0b\"");
   EXPECT_EQUAL(text("abc"), "\"abc\"");
   const char *null_string = nullptr;
   EXPECT_EQUAL(text(null_string), "nullptr");
