@@ -1,5 +1,6 @@
 # Makes sure the clang toolchain is in the cache, building it on a miss.
-# Called by clang_prebuilt_cache.yml so tests wait for the toolchain.
+# Called by clang_prebuilt_cache.yml so tests wait for the toolchain, once per
+# runner (Linux x86-64 and macOS arm64).
 # On a hit this job only looks the key up; the test jobs restore the prefix.
 # The cache key is the submodule commit plus a hash of the build script and
 # the recipe it runs, the one `run_tests.py --build-compilers` uses, so edits to
@@ -9,29 +10,47 @@ name: Build Clang Toolchain (Cache)
 
 on:
   workflow_call:
+    inputs:
+      runner:
+        description: Runner to build on, the one the test jobs use
+        type: string
+        default: ubuntu-24.04
     outputs:
       cache_key:
         description: Cache key holding /opt/toolchain-clang
         value: ${{ jobs.clang.outputs.cache_key }}
+      runner:
+        description: Runner label the toolchain was built on, for the test jobs
+        value: ${{ jobs.clang.outputs.runner }}
   workflow_dispatch:
+    inputs:
+      runner:
+        description: Runner to build on
+        type: choice
+        options: [ubuntu-24.04, macos-15]
+        default: ubuntu-24.04
 
 permissions:
   contents: read
 
 jobs:
   clang:
-    # Pinned to match the test jobs in clang_prebuilt_cache.yml: the cache key
+    # Must match the test jobs in clang_prebuilt_cache.yml: the cache key
     # doesn't record the image, so both sides must run on the same one.
-    runs-on: ubuntu-24.04
+    runs-on: ${{ inputs.runner }}
     outputs:
       cache_key: ${{ steps.key.outputs.cache_key }}
+      runner: ${{ inputs.runner }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
       # Reads the submodule commit from the superproject's tree, so the
-      # submodule doesn't need to be cloned on a hit.
+      # submodule doesn't need to be cloned on a hit. Unlike GCC, clang isn't
+      # configured with a sysroot: on macOS CMake passes -isysroot when the
+      # tests are built, so the key doesn't need the Xcode SDK. shasum rather
+      # than sha256sum, which macOS lacks.
       - name: Compute cache key
         id: key
         shell: bash
@@ -39,7 +58,7 @@ jobs:
           set -euo pipefail
           CLANG_SHA="$(git rev-parse HEAD:clang-p2996)"
           BUILD_INPUT_HASH="$(cat .github/scripts/build-clang-toolchain.sh \
-            tools/toolchain/common.py tools/toolchain/clang.py | sha256sum | cut -d' ' -f1)"
+            tools/toolchain/common.py tools/toolchain/clang.py | shasum -a 256 | cut -d' ' -f1)"
           CACHE_KEY="clang-${{ runner.os }}-${{ runner.arch }}-${CLANG_SHA:0:12}-${BUILD_INPUT_HASH:0:12}"
           echo "cache_key=${CACHE_KEY}" >> "$GITHUB_OUTPUT"
 
@@ -61,10 +80,16 @@ jobs:
         if: steps.cache.outputs.cache-hit != 'true'
         run: .github/scripts/build-clang-toolchain.sh clang-p2996 /opt/toolchain-clang
 
+      # On macOS the check's test programs need SDKROOT to find the system
+      # headers, which the tests get from CMake's -isysroot.
       - name: Verify built prefix
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
+          if [ "$RUNNER_OS" = macOS ]; then
+            SDKROOT="$(xcrun --show-sdk-path)"
+            export SDKROOT
+          fi
           ls -lh /opt/toolchain-clang/bin/ /opt/toolchain-clang/lib/
           /opt/toolchain-clang/bin/clang++ --version
           .github/scripts/check-clang-toolchain.sh /opt/toolchain-clang

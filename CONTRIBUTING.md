@@ -293,7 +293,7 @@ requests test the merge with `main`.
 | `GCC tests` | `gcc_prebuilt_cache.yml` | yes | `python3 run_tests.py --compiler gcc --build-type all && python3 run_tests.py --compiler gcc --sanitize` |
 | `sanitize (ASan+UBSan)` | both test workflows | yes, through `Clang tests` and `GCC tests` | `python3 run_tests.py --sanitize` |
 | `test (Release, x86-64-v3)` | both test workflows | not yet | `cmake --preset clang-x86-64-v3 && cmake --build --preset clang-x86-64-v3 && ctest --preset clang-x86-64-v3` (or `gcc-`) |
-| `test (<build type>, macOS arm64)` | `gcc_prebuilt_cache.yml` | not yet ([#94](https://github.com/CppReflectionAD/cpp_reflection_ad/issues/94) C9) | `python3 run_tests.py --compiler gcc --build-type all` and `python3 run_tests.py --compiler gcc --sanitize`, on a Mac |
+| `test (<build type>, macOS arm64)` | both test workflows | not yet ([#94](https://github.com/CppReflectionAD/cpp_reflection_ad/issues/94) C9) | `python3 run_tests.py --build-type all` and `python3 run_tests.py --sanitize`, on a Mac |
 | `GCC pins` | `gcc-pins.yml` | not yet | `.github/scripts/check-gcc-pins.sh` |
 
 `Clang tests` and `GCC tests` are summary jobs. Each passes only when its
@@ -309,6 +309,11 @@ and `tools/toolchain/<compiler>.py`. So a change to one of those files, or a
 pin bump, rebuilds the toolchain, and a change to `common.py` rebuilds both.
 A cache saved by a pull request can't be read from `main`, so the toolchain is
 built again after merging. Workflow YAML isn't in the key.
+
+The clang workflow also builds and caches clang on macOS arm64 in its
+`toolchain-macos` job, under the same key, which records the runner's OS and
+architecture. The macOS prefix isn't stripped, since the recipe's strip step
+uses GNU strip options.
 
 The GCC workflow also builds and caches GCC on macOS arm64, from
 `gcc-darwin-reflect`, in its `toolchain-macos` job. Its key uses that

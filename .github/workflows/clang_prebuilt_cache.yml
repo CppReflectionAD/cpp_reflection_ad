@@ -134,6 +134,64 @@ jobs:
       - name: Test AD with CTest
         run: ctest --preset clang-x86-64-v3
 
+  # The toolchain, test and sanitize legs again on macOS arm64 (#94 C9), where
+  # most of the group works. Unlike the x86-64-v3 leg, this can catch the clang
+  # half of #95. Unlike sanitize, they aren't in the summary job's needs yet.
+  # clang is built only on a cache miss: when the pin, the build script or the
+  # recipe changes, or the cache was evicted after 7 days unused.
+  toolchain-macos:
+    uses: ./.github/workflows/toolchain-cache-clang.yml
+    with:
+      runner: macos-15
+
+  test-macos:
+    name: test (${{ matrix.build_type }}, macOS arm64)
+    needs: toolchain-macos
+    # The same runner label as toolchain-macos. The cache key doesn't record
+    # the image, but the toolchain doesn't depend on the runner's Xcode: CMake
+    # passes -isysroot.
+    runs-on: ${{ needs.toolchain-macos.outputs.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - build_type: Release
+            preset: clang-release
+          - build_type: RelWithDebInfo
+            preset: clang-relwithdebinfo
+          - build_type: Debug
+            preset: clang-debug
+          - build_type: ASan+UBSan
+            preset: clang-sanitize
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      # /opt belongs to root on macOS, so the cache can't create the prefix.
+      - name: Create the toolchain prefix
+        run: |
+          sudo mkdir -p /opt/toolchain-clang
+          sudo chown "$(id -u):$(id -g)" /opt/toolchain-clang
+
+      - name: Restore clang toolchain from cache
+        uses: actions/cache/restore@v6
+        with:
+          path: /opt/toolchain-clang
+          key: ${{ needs.toolchain-macos.outputs.cache_key }}
+          fail-on-cache-miss: true
+
+      - name: Configure CMake
+        run: |
+          cmake --preset "${{ matrix.preset }}" \
+            -DCMAKE_CXX_COMPILER=/opt/toolchain-clang/bin/clang++
+
+      - name: Build tests
+        run: cmake --build --preset "${{ matrix.preset }}"
+
+      - name: Test AD with CTest
+        run: ctest --preset "${{ matrix.preset }}"
+
   # The one check for the ruleset to require (#94 C4), so it names this
   # workflow's result rather than each matrix leg. always() makes it report
   # even when the toolchain fails and the legs are skipped, or the run is
