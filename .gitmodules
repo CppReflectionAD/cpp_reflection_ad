@@ -13,3 +13,7 @@
 	# Our fork of iains/gcc-darwin-arm64: an iains snapshot with gcc-mirror's
 	# reflection commits cherry-picked on top. See "Bumping a compiler pin" in
 	# CONTRIBUTING.md.
+[submodule "gcc"]
+	path = gcc
+	url = git@github.com:CppReflectionAD/gcc.git
+	branch = p4395ci
