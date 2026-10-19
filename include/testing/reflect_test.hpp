@@ -31,6 +31,7 @@
 // text, as EXPECT_EQUAL prints it, in place of `lhs` and `rhs`.
 
 #include <charconv>
+#include <cmath>
 #include <cstddef>
 #include <iostream>
 #include <limits>
@@ -179,27 +180,60 @@ template <class T> std::string value_text(const T &v) {
   return os.str();
 }
 
+// The names a failed check prints for its operands, and their values' text.
+struct operand_texts {
+  std::string lhs_name;
+  std::string lhs_value;
+  std::string rhs_name;
+  std::string rhs_value;
+};
+
+template <class L, class R>
+operand_texts texts_of(const std::source_location &loc, const L &lhs,
+                       const R &rhs) {
+  const operand_names names =
+      operand_names_at != nullptr ? operand_names_at(loc) : operand_names{};
+  operand_texts t{"", value_text(lhs), "", value_text(rhs)};
+  t.lhs_name = names.lhs != nullptr ? names.lhs : t.lhs_value;
+  t.rhs_name = names.rhs != nullptr ? names.rhs : t.rhs_value;
+  return t;
+}
+
+// Prints where a failed check is and what it expected.
+inline void print_failure(const std::source_location &loc,
+                          std::string_view expected) {
+  std::cout << loc.file_name() << ":" << loc.line() << " Failure" << std::endl;
+  std::cout << "Expected " << expected << std::endl;
+}
+
+// Prints a value under its name, unless the name is the value (a literal).
+inline void print_value(std::string_view name, std::string_view value) {
+  if (name != value)
+    std::cout << "  " << name << ": " << value << std::endl;
+}
+
 // Prints, like EXPECT_EQUAL and EXPECT_NOT_EQUAL, where the check is and
 // what it expected, then the value of each operand that isn't a literal.
 template <class L, class R>
 void report_failure(const std::source_location &loc, std::string_view op,
                     const L &lhs, const R &rhs) {
-  const std::string lhs_value = value_text(lhs);
-  const std::string rhs_value = value_text(rhs);
-  const operand_names names =
-      operand_names_at != nullptr ? operand_names_at(loc) : operand_names{};
-  const std::string lhs_name = names.lhs != nullptr ? names.lhs : lhs_value;
-  const std::string rhs_name = names.rhs != nullptr ? names.rhs : rhs_value;
-
-  std::cout << loc.file_name() << ":" << loc.line() << " Failure" << std::endl;
-  std::cout << "Expected " << lhs_name << " " << op << " " << rhs_name
-            << std::endl;
-  if (lhs_name != lhs_value)
-    std::cout << "  " << lhs_name << ": " << lhs_value << std::endl;
-  if (rhs_name != rhs_value)
-    std::cout << "  " << rhs_name << ": " << rhs_value << std::endl;
+  const operand_texts t = texts_of(loc, lhs, rhs);
+  print_failure(loc, t.lhs_name + " " + std::string(op) + " " + t.rhs_name);
+  print_value(t.lhs_name, t.lhs_value);
+  print_value(t.rhs_name, t.rhs_value);
   increase_error_count();
 }
+
+// The floating-point type expect_near_abs compares in: the less precise of
+// its operands' types (double for an integer), so that a float isn't held to
+// a double's precision.
+template <class T>
+using floating_t = std::conditional_t<std::is_floating_point_v<T>, T, double>;
+
+template <class L, class R>
+using near_t = std::conditional_t<(std::numeric_limits<floating_t<L>>::digits <=
+                                   std::numeric_limits<floating_t<R>>::digits),
+                                  floating_t<L>, floating_t<R>>;
 } // namespace detail
 
 // Number of failed checks so far.
@@ -220,6 +254,34 @@ void expect_not_equal(
     std::source_location loc = std::source_location::current()) {
   if (lhs == rhs)
     detail::report_failure(loc, "!=", lhs, rhs);
+}
+
+// Replaces EXPECT_NEAR_ABS(VAL1, VAL2, TOL): passes if |lhs - rhs| <
+// |tolerance|, in the less precise of the operands' floating-point types.
+// A failure prints
+//
+//   Expected |lhs - rhs| < 1e-08
+//     |lhs - rhs|: 0.5
+//     lhs: 2.0
+//     rhs: 2.5
+template <class L, class R, class T>
+  requires std::is_arithmetic_v<L> && std::is_arithmetic_v<R> &&
+           std::is_arithmetic_v<T>
+void expect_near_abs(
+    L lhs, R rhs, T tolerance,
+    std::source_location loc = std::source_location::current()) {
+  using F = detail::near_t<L, R>;
+  const F difference = std::abs(static_cast<F>(lhs) - static_cast<F>(rhs));
+  const F limit = std::abs(static_cast<F>(tolerance));
+  if (difference < limit)
+    return;
+  const detail::operand_texts t = detail::texts_of(loc, lhs, rhs);
+  const std::string distance = "|" + t.lhs_name + " - " + t.rhs_name + "|";
+  detail::print_failure(loc, distance + " < " + detail::value_text(limit));
+  detail::print_value(distance, detail::value_text(difference));
+  detail::print_value(t.lhs_name, t.lhs_value);
+  detail::print_value(t.rhs_name, t.rhs_value);
+  detail::increase_error_count();
 }
 
 } // namespace reflect_test

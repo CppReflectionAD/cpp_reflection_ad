@@ -147,6 +147,36 @@ int main() {
   }
   detail::error_count = 0;
 
+  // expect_near_abs passes within the tolerance, in the less precise type.
+  const auto near = output_of([] {
+    reflect_test::expect_near_abs(1.0, 1.0 + 1e-12, 1e-10);
+    reflect_test::expect_near_abs(1.0, 1.05, -0.1);
+    reflect_test::expect_near_abs(0.1f, 0.1, 1e-9);
+    reflect_test::expect_near_abs(2, 2.5, 1);
+  });
+  EXPECT_EQUAL(near.size(), 0u);
+  EXPECT_EQUAL(reflect_test::result(), 0);
+
+  // A failure prints the difference, the tolerance and both values.
+  const auto far = output_of([] {
+    reflect_test::expect_near_abs(1.0, 1.5, 0.1);
+    reflect_test::expect_near_abs(1.0, 1.1, 0.1);
+    reflect_test::expect_near_abs(std::numeric_limits<double>::quiet_NaN(), 1.0,
+                                  0.1);
+  });
+  EXPECT_EQUAL(reflect_test::result(), 3);
+  EXPECT_EQUAL(far.size(), 15u);
+  if (far.size() == 15) {
+    EXPECT_TRUE(ends_with(far[0], " Failure"));
+    EXPECT_EQUAL(far[1], "Expected |lhs - rhs| < 0.1");
+    EXPECT_EQUAL(far[2], "  |lhs - rhs|: 0.5");
+    EXPECT_EQUAL(far[3], "  lhs: 1.0");
+    EXPECT_EQUAL(far[4], "  rhs: 1.5");
+    EXPECT_EQUAL(far[7], "  |lhs - rhs|: 0.10000000000000009");
+    EXPECT_EQUAL(far[12], "  |lhs - rhs|: nan");
+  }
+  detail::error_count = 0;
+
   for (const std::string &line : failing)
     std::cout << "  | " << line << std::endl;
   TEST_END;

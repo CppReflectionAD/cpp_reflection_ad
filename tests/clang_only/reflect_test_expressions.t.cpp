@@ -61,6 +61,14 @@ void failing_equal_checks() {
   }
 }
 
+void near_checks() {
+  double a = 1.0;
+  double b = 2.0;
+  reflect_test::expect_near_abs(a + a, b, 1e-12);
+  reflect_test::expect_near_abs(twice(a), a, 0.5);
+  reflect_test::expect_near_abs(b, 2.5, 0.1);
+}
+
 // The lines `f` prints to std::cout.
 template <class F> std::vector<std::string> output_of(F f) {
   std::ostringstream captured;
@@ -159,6 +167,25 @@ int main() {
   EXPECT_EQUAL(outside.size(), 4u);
   if (outside.size() == 4)
     EXPECT_EQUAL(outside[1], "Expected lhs != rhs");
+
+  // expect_near_abs names its operands too.
+  const auto near = failures_in(
+      output_of([] { reflect_test::run_with_text<^^near_checks>(); }));
+  EXPECT_EQUAL(reflect_test::result(), 9);
+  EXPECT_EQUAL(near.size(), 2u);
+  if (near.size() == 2) {
+    EXPECT_TRUE(
+        ends_with(near[0][0], "reflect_test_expressions.t.cpp:68 Failure"));
+    EXPECT_TRUE(near[0] ==
+                std::vector<std::string>(
+                    {near[0][0], "Expected |twice(a) - a| < 0.5",
+                     "  |twice(a) - a|: 1.0", "  twice(a): 2.0", "  a: 1.0"}));
+    EXPECT_TRUE(
+        ends_with(near[1][0], "reflect_test_expressions.t.cpp:69 Failure"));
+    EXPECT_TRUE(near[1] == std::vector<std::string>(
+                               {near[1][0], "Expected |b - 2.5| < 0.1",
+                                "  |b - 2.5|: 0.5", "  b: 2.0"}));
+  }
 
   for (const auto &failure : failing)
     for (const std::string &line : failure)

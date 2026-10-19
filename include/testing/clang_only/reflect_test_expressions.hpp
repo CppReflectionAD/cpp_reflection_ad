@@ -471,7 +471,8 @@ consteval bool is_check(m::info call) {
   if (!m::is_function(callee) || !m::has_template_arguments(callee))
     return false;
   const m::info check = m::template_of(callee);
-  return check == ^^expect_equal || check == ^^expect_not_equal;
+  return check == ^^expect_equal || check == ^^expect_not_equal ||
+         check == ^^expect_near_abs;
 }
 
 // The text of a check's operand of type `type`, or null for a string literal.
@@ -488,8 +489,8 @@ consteval const char *operand_text(m::info operand, m::info type) {
 // and line as the std::source_location it passes at run time.
 consteval check_site site_of(m::info call) {
   const std::source_location loc = m::source_location_of(call);
-  const auto ops = m::operands_of(call); // [callee, lhs, rhs, loc]
-  const auto types = m::template_arguments_of(m::callee_of(call)); // [L, R]
+  const auto ops = m::operands_of(call); // [callee, lhs, rhs, ..., loc]
+  const auto types = m::template_arguments_of(m::callee_of(call)); // [L, R...]
   return {std::define_static_string(std::string_view(loc.file_name())),
           static_cast<unsigned>(loc.line()), operand_text(ops[1], types[0]),
           operand_text(ops[2], types[1])};
