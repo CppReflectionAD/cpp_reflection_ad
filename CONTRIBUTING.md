@@ -284,7 +284,11 @@ say why in a comment next to the suppression:
 Every pull request and every push to `main` runs these workflows, and the test
 workflows also run nightly on `main` (03:17 UTC) to keep the toolchain caches
 warm. `GCC pins` runs nightly too, in case a pin stops being fetchable. Pull
-requests test the merge with `main`.
+requests test the merge with `main`. `pre-commit` and the two test workflows
+also run in the merge queue (`merge_group`), on each queued pull request
+combined with `main` and the pull requests queued ahead of it. A queue run
+can't read a toolchain cache saved by its pull request, so a pull request that
+changes a toolchain rebuilds it in the queue too.
 
 | Check | Workflow | Required | Reproduce locally |
 |---|---|---|---|
