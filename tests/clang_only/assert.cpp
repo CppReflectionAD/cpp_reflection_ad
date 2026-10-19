@@ -289,7 +289,10 @@ consteval std::vector<const char *> parameter_names_of(info fn) {
   return names;
 }
 
-template <info Fn, class... Args> bool my_assert(const Args &...args) {
+// Shared by both function forms; `form` is how the heading names the call,
+// e.g. "my_assert<^^" for my_assert<^^in_range>(5, 10, 1).
+template <info Fn, class... Args>
+bool check_call(const char *form, const Args &...args) {
   static_assert(sizeof...(Args) == m::parameters_of(Fn).size());
   if ([:Fn:](args...))
     return true;
@@ -304,7 +307,7 @@ template <info Fn, class... Args> bool my_assert(const Args &...args) {
   const int root = int(t.size()) - 1;
   eval(t, root, nullptr, params, tr);
 
-  std::printf("my_assert<^^%s>(", name);
+  std::printf("%s%s>(", form, name);
   for (std::size_t i = 0; i < sizeof...(Args); ++i)
     std::printf("%s%g", i ? ", " : "", params[i]);
   std::printf(") failed\n    inside %s(", name);
@@ -318,10 +321,14 @@ template <info Fn, class... Args> bool my_assert(const Args &...args) {
   return false;
 }
 
+template <info Fn, class... Args> bool my_assert(const Args &...args) {
+  return check_call<Fn>("my_assert<^^", args...);
+}
+
 // my_assert2<in_range>(args...): the function itself as the template
 // argument; reflect_function turns it back into the reflection.
 template <auto &F, class... Args> bool my_assert2(const Args &...args) {
-  return my_assert<m::reflect_function(F)>(args...);
+  return check_call<m::reflect_function(F)>("my_assert2<", args...);
 }
 
 } // namespace pa
