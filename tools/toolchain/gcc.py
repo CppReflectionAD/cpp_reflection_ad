@@ -38,7 +38,7 @@ from .common import (
 # gcc-darwin-reflect, our fork of iains' Darwin port with gcc-mirror's
 # reflection commits on top (see CONTRIBUTING.md): gcc-mirror doesn't build
 # there. run_tests.py, the CI build script and the CI cache key all use this.
-SOURCE_SUBMODULE = "gcc-darwin-reflect" if sys.platform == "darwin" else "gcc-mirror"
+SOURCE_SUBMODULE = "gcc-darwin-reflect" if sys.platform == "darwin" else "gcc"
 
 
 def macos_sdk_path(verbose: bool) -> str:
