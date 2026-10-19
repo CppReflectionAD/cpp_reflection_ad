@@ -13,6 +13,7 @@ goes is in [tests/README.md](tests/README.md).
 - [Benchmarks](#benchmarks)
 - [Formatting and linting](#formatting-and-linting)
 - [CI checks](#ci-checks)
+- [Merging a pull request](#merging-a-pull-request)
 - [Bumping a compiler pin](#bumping-a-compiler-pin)
 
 ## Prerequisites
@@ -291,6 +292,27 @@ The GCC workflow also builds and caches GCC on macOS arm64, from
 `gcc-darwin-reflect`, in its `toolchain-macos` job. Its key uses that
 submodule's commit and also records the Xcode SDK path, which GCC is configured
 with, so a runner image with another Xcode rebuilds it.
+
+## Merging a pull request
+
+`main` changes only through pull requests, and they are squash-merged. A pull
+request can merge once it has:
+
+- `pre-commit`, `Clang tests` and `GCC tests` passing (see
+  [CI checks](#ci-checks));
+- its branch up to date with `main`. If `main` has moved, merge it in (the
+  "Update branch" button does this), and CI runs again;
+- an approving review from someone other than whoever pushed last. A push
+  dismisses earlier approvals, so updating the branch after an approval can
+  mean asking for another;
+- every review thread resolved.
+
+Nobody can bypass these, admins included. They come from the repository's
+"main" ruleset on the default branch (Settings → Rules → Rulesets), which
+[#94](https://github.com/CppReflectionAD/cpp_reflection_ad/issues/94) C5
+tracks. It applies only to pull requests into `main`, so one stacked on
+another pull request's branch shows as mergeable without a review until it is
+retargeted to `main`.
 
 ## Bumping a compiler pin
 
