@@ -9,6 +9,7 @@ goes is in [tests/README.md](tests/README.md).
 - [Building the compilers](#building-the-compilers)
 - [Building and testing](#building-and-testing)
 - [CMake presets](#cmake-presets)
+- [Using it from another project](#using-it-from-another-project)
 - [Debugging](#debugging)
 - [Benchmarks](#benchmarks)
 - [Formatting and linting](#formatting-and-linting)
@@ -162,6 +163,27 @@ To use a compiler from somewhere else, override it on the configure line
 (`cmake --preset clang-debug -DCMAKE_CXX_COMPILER=/path/to/clang++`, as CI
 does) or in a personal, git-ignored `CMakeUserPresets.json` that inherits from
 these presets.
+
+## Using it from another project
+
+`cmake --install build/cmake/<preset> --prefix <dir>` installs the headers and
+a CMake package. Another project then uses it with:
+
+```cmake
+project(my_project CXX)
+find_package(reflection_ad 0.1 CONFIG REQUIRED)   # -DCMAKE_PREFIX_PATH=<dir>
+target_link_libraries(my_target PRIVATE reflection_ad::ad)
+```
+
+`reflection_ad::ad` is the AD engine and `reflection_ad::cx_std` the constexpr
+maths. The project must be built with one of the reflection forks, and needs
+CMake 3.25 or later. The package stores no compiler paths: `find_package` works
+out the flag profile (the reflection flags and the fork's standard library) for
+the project's own compiler, and checks it can build reflection code. Until
+1.0, a minor version may break the API, so asking for 0.1 accepts any 0.1.x
+and nothing else; the version is in `project()` in `CMakeLists.txt`. The
+`install_consumer` test (`tests/install/`) installs each build and builds a
+small project against it.
 
 ## Debugging
 
