@@ -9,10 +9,12 @@ goes is in [tests/README.md](tests/README.md).
 - [Building the compilers](#building-the-compilers)
 - [Building and testing](#building-and-testing)
 - [CMake presets](#cmake-presets)
+- [Using it from another project](#using-it-from-another-project)
 - [Debugging](#debugging)
 - [Benchmarks](#benchmarks)
 - [Formatting and linting](#formatting-and-linting)
 - [CI checks](#ci-checks)
+- [Merging a pull request](#merging-a-pull-request)
 - [Bumping a compiler pin](#bumping-a-compiler-pin)
 
 ## Prerequisites
@@ -162,6 +164,27 @@ To use a compiler from somewhere else, override it on the configure line
 does) or in a personal, git-ignored `CMakeUserPresets.json` that inherits from
 these presets.
 
+## Using it from another project
+
+`cmake --install build/cmake/<preset> --prefix <dir>` installs the headers and
+a CMake package. Another project then uses it with:
+
+```cmake
+project(my_project CXX)
+find_package(reflection_ad 0.1 CONFIG REQUIRED)   # -DCMAKE_PREFIX_PATH=<dir>
+target_link_libraries(my_target PRIVATE reflection_ad::ad)
+```
+
+`reflection_ad::ad` is the AD engine and `reflection_ad::cx_std` the constexpr
+maths. The project must be built with one of the reflection forks, and needs
+CMake 3.25 or later. The package stores no compiler paths: `find_package` works
+out the flag profile (the reflection flags and the fork's standard library) for
+the project's own compiler, and checks it can build reflection code. Until
+1.0, a minor version may break the API, so asking for 0.1 accepts any 0.1.x
+and nothing else; the version is in `project()` in `CMakeLists.txt`. The
+`install_consumer` test (`tests/install/`) installs each build and builds a
+small project against it.
+
 ## Debugging
 
 The binaries carry an rpath to their compiler's runtime library, so they need
@@ -270,7 +293,7 @@ requests test the merge with `main`.
 | `GCC tests` | `gcc_prebuilt_cache.yml` | yes | `python3 run_tests.py --compiler gcc --build-type all && python3 run_tests.py --compiler gcc --sanitize` |
 | `sanitize (ASan+UBSan)` | both test workflows | yes, through `Clang tests` and `GCC tests` | `python3 run_tests.py --sanitize` |
 | `test (Release, x86-64-v3)` | both test workflows | not yet | `cmake --preset clang-x86-64-v3 && cmake --build --preset clang-x86-64-v3 && ctest --preset clang-x86-64-v3` (or `gcc-`) |
-| `test (<build type>, macOS arm64)` | `gcc_prebuilt_cache.yml` | not yet ([#94](https://github.com/CppReflectionAD/cpp_reflection_ad/issues/94) C9) | `python3 run_tests.py --compiler gcc --build-type all` and `python3 run_tests.py --compiler gcc --sanitize`, on a Mac |
+| `test (<build type>, macOS arm64)` | both test workflows | not yet ([#94](https://github.com/CppReflectionAD/cpp_reflection_ad/issues/94) C9) | `python3 run_tests.py --build-type all` and `python3 run_tests.py --sanitize`, on a Mac |
 | `GCC pins` | `gcc-pins.yml` | not yet | `.github/scripts/check-gcc-pins.sh` |
 
 `Clang tests` and `GCC tests` are summary jobs. Each passes only when its
@@ -287,10 +310,36 @@ pin bump, rebuilds the toolchain, and a change to `common.py` rebuilds both.
 A cache saved by a pull request can't be read from `main`, so the toolchain is
 built again after merging. Workflow YAML isn't in the key.
 
+The clang workflow also builds and caches clang on macOS arm64 in its
+`toolchain-macos` job, under the same key, which records the runner's OS and
+architecture. The macOS prefix isn't stripped, since the recipe's strip step
+uses GNU strip options.
+
 The GCC workflow also builds and caches GCC on macOS arm64, from
 `gcc-darwin-reflect`, in its `toolchain-macos` job. Its key uses that
 submodule's commit and also records the Xcode SDK path, which GCC is configured
 with, so a runner image with another Xcode rebuilds it.
+
+## Merging a pull request
+
+`main` changes only through pull requests, and they are squash-merged. A pull
+request can merge once it has:
+
+- `pre-commit`, `Clang tests` and `GCC tests` passing (see
+  [CI checks](#ci-checks));
+- its branch up to date with `main`. If `main` has moved, merge it in (the
+  "Update branch" button does this), and CI runs again;
+- an approving review from someone other than whoever pushed last. A push
+  dismisses earlier approvals, so updating the branch after an approval can
+  mean asking for another;
+- every review thread resolved.
+
+Nobody can bypass these, admins included. They come from the repository's
+"main" ruleset on the default branch (Settings → Rules → Rulesets), which
+[#94](https://github.com/CppReflectionAD/cpp_reflection_ad/issues/94) C5
+tracks. It applies only to pull requests into `main`, so one stacked on
+another pull request's branch shows as mergeable without a review until it is
+retargeted to `main`.
 
 ## Bumping a compiler pin
 
