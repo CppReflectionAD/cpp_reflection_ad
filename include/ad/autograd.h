@@ -57,9 +57,11 @@
 #include <utility>
 #include <vector>
 
+#include "meta.h"
+
 namespace ad {
 using std::meta::info;
-namespace m = std::meta;
+namespace m = ad::meta;
 
 using namespace std::numbers;
 constexpr double two_over_root_pi = 2. * std::numbers::inv_sqrtpi_v<double>;
@@ -385,7 +387,8 @@ consteval info stripCasts(info e) {
 consteval info probe_callee(info fn) {
   for (info s : m::statements_of(m::body_of(fn)))
     if (m::is_return_statement(s))
-      return m::declaration_of(m::callee_of(stripCasts(m::return_operand_of(s))));
+      return m::declaration_of(
+          m::callee_of(stripCasts(m::return_operand_of(s))));
   throw "reflection AD: probe function has no call to reflect";
 }
 
@@ -484,8 +487,9 @@ consteval std::size_t lower(Ctx &c, info e) {
   }
 
   // is_operator_expression covers both arities; discriminate with
-  // operands_of().size() (1 = unary, 2 = binary), same as expression_operator_of
-  // and operands_of handle built-in vs. overloaded uniformly.
+  // operands_of().size() (1 = unary, 2 = binary), same as
+  // expression_operator_of and operands_of handle built-in vs. overloaded
+  // uniformly.
   if (m::is_operator_expression(e) && m::operands_of(e).size() == 1) {
     m::operators op = m::expression_operator_of(e);
     std::size_t a = lower(c, m::operands_of(e).front());

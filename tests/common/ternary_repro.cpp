@@ -1,6 +1,6 @@
 // ternary_repro.cpp
-#include <meta>
-namespace m = std::meta;
+#include <ad/meta.h>
+namespace m = ad::meta;
 
 double relu(double x) { return x > 0.0 ? x : 0.0; }
 

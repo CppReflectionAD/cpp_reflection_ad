@@ -12,17 +12,11 @@
 // fixes only some of them. clang checks the same asserts in
 // tests/clang_only/logical_operator_reflection.cpp. When GCC fixes the gap,
 // move that file to tests/common/ and delete this one and its .fail.txt.
-//
-// TODO: is_binary_operator/is_unary_operator were replaced by
-// is_operator_expression on the Clang side as part of the reflection API
-// alignment; the recorded logical_operator_reflection.fail.txt below is
-// stale (still the old predicate names) and needs regenerating against an
-// actual GCC build once that fork picks up the same rename.
-#include <meta>
+#include <ad/meta.h>
 
 #include "reflection/return_expr.hpp"
 
-namespace m = std::meta;
+namespace m = ad::meta;
 
 bool f_or(double x) { return (x > 0.0) || (x > 1.0); }
 bool f_and(double x) { return (x > 0.0) && (x > 1.0); }
