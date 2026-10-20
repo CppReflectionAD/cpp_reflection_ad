@@ -21,14 +21,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7
 
-      - name: Resolve image for pinned gcc-mirror
+      - name: Resolve image for pinned gcc
         id: tag
         run: |
           set -euo pipefail
-          sha="$(git rev-parse HEAD:gcc-mirror)"
-          image="ghcr.io/yesmanchyk/gcc-mirror:sha-${sha:0:7}"
+          sha="$(git rev-parse HEAD:gcc)"
+          image="ghcr.io/CppReflectionAD/gcc:sha-${sha:0:7}"
           if ! docker manifest inspect "$image" >/dev/null 2>&1; then
-            echo "::error::No image $image. Push gcc-mirror@${sha:0:7} to a CI branch (e.g. autograd-capable) so it gets published, and make sure the package is public."
+            echo "::error::No image $image. Push gcc@${sha:0:7} to a CI branch (e.g. p4395) so it gets published, and make sure the package is public."
             exit 1
           fi
           echo "image=$image" >> "$GITHUB_OUTPUT"
