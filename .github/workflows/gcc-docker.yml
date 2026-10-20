@@ -1,0 +1,68 @@
+# Tests against the GCC image published by CppReflectionAD/gcc's CI.
+# The image tag is derived from the pinned gcc submodule commit, so the
+# compiler always matches the submodule pin.
+name: Test GCC (Docker)
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.tag.outputs.image }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Resolve image for pinned gcc-mirror
+        id: tag
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse HEAD:gcc-mirror)"
+          image="ghcr.io/yesmanchyk/gcc-mirror:sha-${sha:0:7}"
+          if ! docker manifest inspect "$image" >/dev/null 2>&1; then
+            echo "::error::No image $image. Push gcc-mirror@${sha:0:7} to a CI branch (e.g. autograd-capable) so it gets published, and make sure the package is public."
+            exit 1
+          fi
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+
+  test:
+    name: test (${{ matrix.build_type }})
+    needs: resolve
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ needs.resolve.outputs.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        build_type: [Release, RelWithDebInfo, Debug]
+    env:
+      BUILD_DIR: build/cmake-${{ matrix.build_type }}
+
+    steps:
+      - name: Install build tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends git ca-certificates cmake make python3
+
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Configure CMake
+        run: |
+          cmake -S . -B "$BUILD_DIR" \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            -DCMAKE_CXX_COMPILER=/opt/gcc/bin/g++
+
+      - name: Build tests
+        run: cmake --build "$BUILD_DIR" --parallel
+
+      - name: Test AD with CTest
+        run: ctest --test-dir "$BUILD_DIR" --output-on-failure
