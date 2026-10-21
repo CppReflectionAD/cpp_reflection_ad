@@ -3,8 +3,9 @@
 # runner: on Linux from gcc-mirror, on macOS from gcc-darwin-reflect.
 # On a hit this job only looks the key up; the test jobs restore the prefix.
 # The cache key is the submodule commit plus a hash of the build script and
-# the recipe it runs, the one `run_tests.py --build-compilers` uses, so edits to
-# this file don't invalidate the cache. The build itself is in
+# the recipe it runs, the one `run_tests.py --build-compilers` uses, and on
+# macOS a hash of the runner's SDK and linker (.github/scripts/macos-sdk-id.sh).
+# Edits to this file don't invalidate the cache. The build itself is in
 # .github/scripts/build-gcc-toolchain.sh and tools/toolchain/gcc.py.
 name: Build GCC Toolchain (Cache)
 
@@ -22,6 +23,11 @@ on:
       runner:
         description: Runner the toolchain was built on, for the test jobs
         value: ${{ jobs.gcc.outputs.runner }}
+      macos_sdk:
+        description: >-
+          On macOS, the SDK and linker the toolchain was built with
+          (macos-sdk-id.sh), for the test jobs to compare with their own
+        value: ${{ jobs.gcc.outputs.macos_sdk }}
   workflow_dispatch:
     inputs:
       runner:
@@ -41,6 +47,7 @@ jobs:
     outputs:
       cache_key: ${{ steps.key.outputs.cache_key }}
       runner: ${{ inputs.runner }}
+      macos_sdk: ${{ steps.key.outputs.macos_sdk }}
 
     steps:
       - name: Checkout
@@ -49,17 +56,21 @@ jobs:
       # tools/toolchain/gcc.py picks the submodule for this OS. The key reads
       # its commit from the superproject's tree, so the submodule doesn't need
       # to be cloned on a hit. On macOS, GCC is configured with
-      # --with-sysroot=<Xcode's SDK>, so the key also records the SDK path: a
-      # runner image with another Xcode rebuilds the toolchain.
+      # --with-sysroot=<Xcode's SDK>, so the key also records the SDK and the
+      # linker: a runner image with another Xcode, SDK or linker rebuilds the
+      # toolchain.
       - name: Compute cache key
         id: key
         shell: bash
         run: |
           set -euo pipefail
-          SUBMODULE="$(python3 -c 'from tools.toolchain.gcc import SOURCE_SUBMODULE; print(SOURCE_SUBMODULE)')"
+          SUBMODULE="$(python3 -m tools.toolchain.gcc --print-source-submodule)"
           if [ "$RUNNER_OS" = macOS ]; then
-            SDK_HASH="-$(xcrun --show-sdk-path | shasum -a 256 | cut -c1-8)"
+            MACOS_SDK="$(.github/scripts/macos-sdk-id.sh)"
+            echo "SDK: ${MACOS_SDK}"
+            SDK_HASH="-$(printf '%s' "$MACOS_SDK" | shasum -a 256 | cut -c1-8)"
           else
+            MACOS_SDK=""
             SDK_HASH=""
           fi
           SOURCE_SHA="$(git rev-parse "HEAD:${SUBMODULE}")"
@@ -67,6 +78,7 @@ jobs:
             tools/toolchain/common.py tools/toolchain/gcc.py | shasum -a 256 | cut -d' ' -f1)"
           CACHE_KEY="gcc-${{ runner.os }}-${{ runner.arch }}-${SOURCE_SHA:0:12}-${BUILD_INPUT_HASH:0:12}${SDK_HASH}"
           echo "submodule=${SUBMODULE}" >> "$GITHUB_OUTPUT"
+          echo "macos_sdk=${MACOS_SDK}" >> "$GITHUB_OUTPUT"
           echo "cache_key=${CACHE_KEY}" >> "$GITHUB_OUTPUT"
 
       - name: Check cache
