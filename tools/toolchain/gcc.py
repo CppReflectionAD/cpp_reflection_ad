@@ -8,7 +8,7 @@ with its own build directory and prefix, stripped (except on macOS):
     python3 -m tools.toolchain.gcc --source-dir <submodule> \\
         --build-dir build/<submodule> --prefix /opt/toolchain-gcc --strip
 
-where <submodule> is SOURCE_SUBMODULE.
+where <submodule> is SOURCE_SUBMODULE, which `--print-source-submodule` prints.
 
 The CI cache key hashes this file and common.py, so any change to the recipe
 rebuilds the toolchain.
@@ -37,7 +37,8 @@ from .common import (
 # The GCC checkout to build on this platform. On macOS that's
 # gcc-darwin-reflect, our fork of iains' Darwin port with gcc-mirror's
 # reflection commits on top (see CONTRIBUTING.md): gcc-mirror doesn't build
-# there. run_tests.py, the CI build script and the CI cache key all use this.
+# there. run_tests.py, the CI build script and the CI cache key all use this,
+# the last two through --print-source-submodule.
 SOURCE_SUBMODULE = "gcc-darwin-reflect" if sys.platform == "darwin" else "gcc-mirror"
 
 
@@ -134,7 +135,16 @@ def main() -> int:
     )
     parser.add_argument("--jobs", type=int, default=os.cpu_count() or 1)
     parser.add_argument("--verbose", action="store_true")
+    parser.add_argument(
+        "--print-source-submodule",
+        action="store_true",
+        help="Print the GCC submodule this OS builds from, and exit.",
+    )
     args = parser.parse_args()
+
+    if args.print_source_submodule:
+        print(SOURCE_SUBMODULE)
+        return 0
 
     build_dir = Path(args.build_dir).resolve()
     prefix = Path(args.prefix).resolve() if args.prefix else build_dir / "artifacts"
