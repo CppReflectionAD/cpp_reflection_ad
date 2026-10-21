@@ -322,8 +322,12 @@ uses GNU strip options.
 
 The GCC workflow also builds and caches GCC on macOS arm64, from
 `gcc-darwin-reflect`, in its `toolchain-macos` job. Its key uses that
-submodule's commit and also records the Xcode SDK path, which GCC is configured
-with, so a runner image with another Xcode rebuilds it.
+submodule's commit and also records the runner's SDK (its path, which GCC is
+configured with, and its build version) and linker version, from
+`.github/scripts/macos-sdk-id.sh`. So a runner image with another Xcode, SDK
+or linker rebuilds it. The macOS test legs fail early if their runner's SDK or
+linker differs from the toolchain job's, which can happen while GitHub rolls
+out a new runner image; wait for the rollout to finish, then re-run all jobs.
 
 Both workflows also build and cache their compiler on Linux arm64
 (`ubuntu-24.04-arm`) in a `toolchain-arm64` job, with the same recipe and key
@@ -332,20 +336,27 @@ share an entry.
 
 ## Merging a pull request
 
-`main` changes only through pull requests, and they are squash-merged. A pull
-request can merge once it has:
+`main` changes only through pull requests, and they are squash-merged through
+a merge queue. A pull request can join the queue once it has:
 
 - `pre-commit`, `Clang tests` and `GCC tests` passing (see
   [CI checks](#ci-checks));
-- its branch up to date with `main`. If `main` has moved, merge it in (the
-  "Update branch" button does this), and CI runs again;
 - an approving review from someone other than whoever pushed last. A push
-  dismisses earlier approvals, so updating the branch after an approval can
-  mean asking for another;
+  dismisses earlier approvals;
 - every review thread resolved.
 
-Nobody can bypass these, admins included. They come from the repository's
-"main" ruleset on the default branch (Settings → Rules → Rulesets), which
+Then click "Merge when ready". GitHub runs the required checks again on the
+pull request combined with `main` and the pull requests queued ahead of it,
+and merges it if they pass. If they fail, it leaves the queue and stays open.
+The branch doesn't need updating from `main`, so an approval isn't lost to an
+update push. A queue run that has
+to rebuild a toolchain can take a couple of hours; the queue waits up to 4
+hours for the checks.
+
+Repository admins can dismiss reviews, and can bypass these rules, but only
+through a pull request: nobody pushes to `main` directly. The rules come from
+the repository's "main" ruleset on the default branch (Settings → Rules →
+Rulesets), which
 [#94](https://github.com/CppReflectionAD/cpp_reflection_ad/issues/94) C5
 tracks. It applies only to pull requests into `main`, so one stacked on
 another pull request's branch shows as mergeable without a review until it is
