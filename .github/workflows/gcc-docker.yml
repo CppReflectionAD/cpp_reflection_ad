@@ -37,7 +37,7 @@ jobs:
         run: |
           set -euo pipefail
           sha="$(git rev-parse HEAD:gcc-mirror)"
-          image="ghcr.io/cppreflectionad/gcc:sha-${sha:0:7}"
+          image="ghcr.io/cppreflectionad/gcc:p4395ci"
           if ! docker manifest inspect "$image" >/dev/null 2>&1; then
             echo "::error::No image $image. Push gcc@${sha:0:7} to a CI branch (e.g. p4395) so it gets published, and make sure the package is public."
             exit 1
