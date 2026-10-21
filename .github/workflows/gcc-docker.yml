@@ -32,16 +32,33 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+
       - name: Resolve image for pinned gcc
         id: tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          sha="$(git rev-parse HEAD:gcc-mirror)"
-          image="ghcr.io/cppreflectionad/gcc:p4395ci"
+
+          # 1. Fetch remote branch heads from the GCC repo into local tracking refs
+          GCC_REPO="https://x-access-token:${GH_TOKEN}@github.com/CppReflectionAD/gcc.git"
+          git fetch --no-tags --depth=100 "$GCC_REPO" \
+            +refs/heads/p4395:refs/remotes/gcc/p4395 \
+            +refs/heads/p4395ci:refs/remotes/gcc/p4395ci
+
+          # 2. Compute the merge-base commit SHA between p4395 and p4395ci
+          sha="$(git merge-base gcc/p4395 gcc/p4395ci)"
+          echo "Computed merge-base SHA: $sha"
+
+          # 3. Derive the target image tag (using short SHA or specific tag pattern)
+          image="ghcr.io/cppreflectionad/gcc:sha-${sha:0:7}"
+
+          # 4. Verify Docker image exists in GHCR
           if ! docker manifest inspect "$image" >/dev/null 2>&1; then
-            echo "::error::No image $image. Push gcc@${sha:0:7} to a CI branch (e.g. p4395) so it gets published, and make sure the package is public."
+            echo "::error::No image $image found for commit $sha. Verify that the GCC CI built and published the image."
             exit 1
           fi
+
           echo "image=$image" >> "$GITHUB_OUTPUT"
 
   test:
