@@ -72,11 +72,6 @@ template <class F> std::vector<std::string> output_of(F f) {
   return lines;
 }
 
-bool ends_with(const std::string &line, const std::string &suffix) {
-  return line.size() >= suffix.size() &&
-         line.compare(line.size() - suffix.size(), suffix.size(), suffix) == 0;
-}
-
 // The text a value prints as in a failure.
 template <class T> std::string text(const T &v) {
   return reflect_test::detail::value_text(v);
@@ -110,7 +105,7 @@ int main() {
   EXPECT_EQUAL(reflect_test::result(), 1);
   EXPECT_EQUAL(failing.size(), 4u);
   if (failing.size() == 4) {
-    EXPECT_TRUE(ends_with(failing[0], "reflect_test.t.cpp:109 Failure"));
+    EXPECT_TRUE(failing[0].ends_with("reflect_test.t.cpp:104 Failure"));
     EXPECT_EQUAL(failing[1], "Expected lhs == rhs");
     EXPECT_EQUAL(failing[2], "  lhs: 1.0");
     EXPECT_EQUAL(failing[3], "  rhs: 2");
@@ -124,11 +119,11 @@ int main() {
   EXPECT_EQUAL(reflect_test::result(), 3);
   EXPECT_EQUAL(more.size(), 8u);
   if (more.size() == 8) {
-    EXPECT_TRUE(ends_with(more[0], "reflect_test.t.cpp:121 Failure"));
+    EXPECT_TRUE(more[0].ends_with("reflect_test.t.cpp:116 Failure"));
     EXPECT_EQUAL(more[1], "Expected lhs != rhs");
     EXPECT_EQUAL(more[2], "  lhs: 'a'");
     EXPECT_EQUAL(more[3], "  rhs: 'a'");
-    EXPECT_TRUE(ends_with(more[4], "reflect_test.t.cpp:87 Failure"));
+    EXPECT_TRUE(more[4].ends_with("reflect_test.t.cpp:82 Failure"));
     EXPECT_EQUAL(more[5], "Expected lhs == rhs");
     EXPECT_EQUAL(more[6], "  lhs: 2.0");
     EXPECT_EQUAL(more[7], "  rhs: 3.0");
@@ -205,7 +200,7 @@ int main() {
   EXPECT_EQUAL(reflect_test::result(), 3);
   EXPECT_EQUAL(far.size(), 15u);
   if (far.size() == 15) {
-    EXPECT_TRUE(ends_with(far[0], " Failure"));
+    EXPECT_TRUE(far[0].ends_with(" Failure"));
     EXPECT_EQUAL(far[1], "Expected |lhs - rhs| < 0.1");
     EXPECT_EQUAL(far[2], "  |lhs - rhs|: 0.5");
     EXPECT_EQUAL(far[3], "  lhs: 1.0");

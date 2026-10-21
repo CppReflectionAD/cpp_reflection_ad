@@ -91,19 +91,13 @@ template <class F> std::vector<std::string> output_of(F f) {
   return lines;
 }
 
-// Whether `line` ends with `suffix`.
-bool ends_with(const std::string &line, const std::string &suffix) {
-  return line.size() >= suffix.size() &&
-         line.compare(line.size() - suffix.size(), suffix.size(), suffix) == 0;
-}
-
 // The failures in `lines`, each from its "<file>:<line> Failure" line to the
 // next one.
 std::vector<std::vector<std::string>>
 failures_in(const std::vector<std::string> &lines) {
   std::vector<std::vector<std::string>> failures;
   for (const std::string &line : lines) {
-    if (ends_with(line, " Failure") || failures.empty())
+    if (line.ends_with(" Failure") || failures.empty())
       failures.emplace_back();
     failures.back().push_back(line);
   }
@@ -130,17 +124,17 @@ int main() {
   EXPECT_EQUAL(failing.size(), 3u);
   if (failing.size() == 3) {
     EXPECT_TRUE(
-        ends_with(failing[0][0], "reflect_test_expressions.t.cpp:34 Failure"));
+        failing[0][0].ends_with("reflect_test_expressions.t.cpp:34 Failure"));
     EXPECT_TRUE(failing[0] ==
                 std::vector<std::string>({failing[0][0], "Expected a != b",
                                           "  a: 1.0", "  b: 1.0"}));
     EXPECT_TRUE(
-        ends_with(failing[1][0], "reflect_test_expressions.t.cpp:36 Failure"));
+        failing[1][0].ends_with("reflect_test_expressions.t.cpp:36 Failure"));
     EXPECT_TRUE(failing[1] == std::vector<std::string>(
                                   {failing[1][0], "Expected twice(a) != a + b",
                                    "  twice(a): 2.0", "  a + b: 2.0"}));
     EXPECT_TRUE(
-        ends_with(failing[2][0], "reflect_test_expressions.t.cpp:39 Failure"));
+        failing[2][0].ends_with("reflect_test_expressions.t.cpp:39 Failure"));
     EXPECT_TRUE(failing[2] ==
                 std::vector<std::string>(
                     {failing[2][0], "Expected -i != 0", "  -i: 0"}));
@@ -157,14 +151,14 @@ int main() {
   EXPECT_EQUAL(reflect_test::result(), 6);
   EXPECT_EQUAL(failing_equal.size(), 3u);
   if (failing_equal.size() == 3) {
-    EXPECT_TRUE(ends_with(failing_equal[0][0],
-                          "reflect_test_expressions.t.cpp:57 Failure"));
+    EXPECT_TRUE(failing_equal[0][0].ends_with(
+        "reflect_test_expressions.t.cpp:57 Failure"));
     EXPECT_EQUAL(failing_equal[0][1], "Expected a == b");
-    EXPECT_TRUE(ends_with(failing_equal[1][0],
-                          "reflect_test_expressions.t.cpp:58 Failure"));
+    EXPECT_TRUE(failing_equal[1][0].ends_with(
+        "reflect_test_expressions.t.cpp:58 Failure"));
     EXPECT_EQUAL(failing_equal[1][1], "Expected b != twice(a)");
-    EXPECT_TRUE(ends_with(failing_equal[2][0],
-                          "reflect_test_expressions.t.cpp:60 Failure"));
+    EXPECT_TRUE(failing_equal[2][0].ends_with(
+        "reflect_test_expressions.t.cpp:60 Failure"));
     EXPECT_EQUAL(failing_equal[2][1], "Expected twice(a) == a + b");
   }
 
@@ -183,13 +177,13 @@ int main() {
   EXPECT_EQUAL(near.size(), 2u);
   if (near.size() == 2) {
     EXPECT_TRUE(
-        ends_with(near[0][0], "reflect_test_expressions.t.cpp:68 Failure"));
+        near[0][0].ends_with("reflect_test_expressions.t.cpp:68 Failure"));
     EXPECT_TRUE(near[0] ==
                 std::vector<std::string>(
                     {near[0][0], "Expected |twice(a) - a| < 0.5",
                      "  |twice(a) - a|: 1.0", "  twice(a): 2.0", "  a: 1.0"}));
     EXPECT_TRUE(
-        ends_with(near[1][0], "reflect_test_expressions.t.cpp:69 Failure"));
+        near[1][0].ends_with("reflect_test_expressions.t.cpp:69 Failure"));
     EXPECT_TRUE(near[1] == std::vector<std::string>(
                                {near[1][0], "Expected |b - 2.5| < 0.1",
                                 "  |b - 2.5|: 0.5", "  b: 2.0"}));
