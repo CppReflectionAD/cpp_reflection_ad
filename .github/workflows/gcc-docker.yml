@@ -1,6 +1,4 @@
 # Tests against the GCC image published by CppReflectionAD/gcc's CI.
-# The image tag is derived from the pinned gcc submodule commit, so the
-# compiler always matches the submodule pin.
 name: Test GCC (Docker)
 
 on:
@@ -9,50 +7,15 @@ on:
   pull_request:
   workflow_dispatch:
 
-permissions:
-  contents: read
-
 jobs:
-  resolve:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: read
-    outputs:
-      image: ${{ steps.tag.outputs.image }}
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Resolve image for pinned gcc
-        id: tag
-        run: |
-          set -euo pipefail
-          sha="$(git rev-parse HEAD:gcc-mirror)"
-          image="ghcr.io/cppreflectionad/gcc:p4395ci"
-          if ! docker manifest inspect "$image" >/dev/null 2>&1; then
-            echo "::error::No image $image. Push gcc@${sha:0:7} to a CI branch (e.g. p4395) so it gets published, and make sure the package is public."
-            exit 1
-          fi
-          echo "image=$image" >> "$GITHUB_OUTPUT"
-
   test:
     name: test (${{ matrix.build_type }})
-    needs: resolve
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: read
     container:
-      image: ${{ needs.resolve.outputs.image }}
+      image: ghcr.io/cppreflectionad/gcc:p4395ci
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
