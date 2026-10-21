@@ -1,7 +1,7 @@
-#ifndef REFLECTION_AD_TESTING_REFLECT_TEST_EXPRESSIONS_HPP
-#define REFLECTION_AD_TESTING_REFLECT_TEST_EXPRESSIONS_HPP
+#ifndef REFLECTION_AD_IHM_REFLECT_TEST_EXPRESSIONS_HPP
+#define REFLECTION_AD_IHM_REFLECT_TEST_EXPRESSIONS_HPP
 
-// An optional layer over testing/reflect_test.hpp: a failed check names its
+// An optional layer over ihm/reflect_test.hpp: a failed check names its
 // operands by their source text, which test_simple_include.hpp gets from the
 // preprocessor (`#VAL`), instead of `lhs` and `rhs`. The text is read from
 // the test function's body with statement and expression reflection.
@@ -9,9 +9,9 @@
 //   void my_test() {
 //     double a = 1.0;
 //     double b = 2.0;
-//     reflect_test::expect_equal(a + a, b);
+//     ihm::expect_equal(a + a, b);
 //   }
-//   int main() { return reflect_test::run_with_text<^^my_test>(); }
+//   int main() { return ihm::run_with_text<^^my_test>(); }
 //
 // prints, like EXPECT_EQUAL, then the operands' values,
 //
@@ -40,8 +40,8 @@
 // doesn't have, and the stand-ins in gap.hpp for the parts the clang fork
 // lacks too.
 
-#include <testing/clang_only/gap.hpp>
-#include <testing/reflect_test.hpp>
+#include <ihm/clang_only/gap.hpp>
+#include <ihm/reflect_test.hpp>
 
 #include <cstddef>
 #include <limits>
@@ -53,7 +53,7 @@
 #include <type_traits>
 #include <vector>
 
-namespace reflect_test {
+namespace ihm {
 
 namespace detail {
 namespace m = std::meta;
@@ -245,7 +245,7 @@ consteval std::string literal_text(peeled p) {
 }
 
 // Expression text, with the parentheses that operator precedence needs (see
-// `precedence` in testing/reflect_test.hpp).
+// `precedence` in ihm/reflect_test.hpp).
 
 consteval int binary_precedence(m::operators op) {
   switch (op) {
@@ -488,7 +488,7 @@ consteval check_site site_of(m::info call) {
 consteval void collect_sites(m::info stmt, std::vector<check_site> &out,
                              int depth) {
   if (depth > 64)
-    throw "reflect_test: statements nested too deeply";
+    throw "ihm: statements nested too deeply";
   for (m::info s : m::statements_of(stmt)) {
     if (!m::is_expression_statement(s)) {
       collect_sites(s, out, depth + 1);
@@ -532,6 +532,6 @@ template <std::meta::info Fn> int run_with_text() {
   return result();
 }
 
-} // namespace reflect_test
+} // namespace ihm
 
-#endif // REFLECTION_AD_TESTING_REFLECT_TEST_EXPRESSIONS_HPP
+#endif // REFLECTION_AD_IHM_REFLECT_TEST_EXPRESSIONS_HPP

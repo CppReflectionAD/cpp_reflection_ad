@@ -66,9 +66,10 @@ The libraries are header-only, under `include/`:
   `discontinuity_analysis.hpp`, `absolute_normal_form.hpp`).
 - `include/cx_std/` — `constexpr` maths (`exp`, `log`, `sqrt`, `erfc`, `sin`,
   `cos`) for use in constant evaluation.
-- `include/testing/` — `reflect_test.hpp`, test checks without macros
-  (`expect_equal`, `expect_not_equal`); a failure prints the values compared.
-- `include/testing/clang_only/` — `reflect_test_expressions.hpp`, an optional
+- `include/ihm/` — "I Hate Macros" ([its README](include/ihm/README.md)):
+  `reflect_test.hpp`, test checks without macros (`ihm::expect_equal`,
+  `ihm::expect_not_equal`); a failure prints the values compared.
+- `include/ihm/clang_only/` — `reflect_test_expressions.hpp`, an optional
   layer that also prints the checked expressions' text, from reflecting the
   test body. Clang only: it uses the clang fork's expression reflection, which
   the GCC fork doesn't have. `gap.hpp` stands in for the two parts of it the

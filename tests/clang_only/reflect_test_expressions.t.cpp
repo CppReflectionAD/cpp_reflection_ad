@@ -1,8 +1,8 @@
-// Checks the reflect_test expression-text layer
-// (include/testing/clang_only/reflect_test_expressions.hpp): that a failure
+// Checks the ihm expression-text layer
+// (include/ihm/clang_only/reflect_test_expressions.hpp): that a failure
 // names its operands by their source text. Checked with test_simple's macros.
 
-#include <testing/clang_only/reflect_test_expressions.hpp>
+#include <ihm/clang_only/reflect_test_expressions.hpp>
 
 #include <test_simple_include.hpp>
 
@@ -22,68 +22,68 @@ double scaled(double x, double factor = 2.0) { return factor * x; }
 // a double, so the second literal is 0.1 there).
 constexpr bool wide_long_double = std::numeric_limits<long double>::digits >
                                   std::numeric_limits<double>::digits;
-static_assert(reflect_test::detail::floating_text(0.1L) == "0.1");
-static_assert(reflect_test::detail::floating_text(0.1000000000000000001L) ==
+static_assert(ihm::detail::floating_text(0.1L) == "0.1");
+static_assert(ihm::detail::floating_text(0.1000000000000000001L) ==
               (wide_long_double ? "0.1000000000000000001" : "0.1"));
 
 void passing_checks() {
   double a = 1.0;
   double b = 2.0;
-  reflect_test::expect_not_equal(a, b);
+  ihm::expect_not_equal(a, b);
   if (a < b) {
-    reflect_test::expect_not_equal(a + b, b);
+    ihm::expect_not_equal(a + b, b);
   }
   for (int i = 0; i < 3; ++i)
-    reflect_test::expect_not_equal(i, 3);
+    ihm::expect_not_equal(i, 3);
 }
 
 void failing_checks() {
   double a = 1.0;
   double b = 1.0;
-  reflect_test::expect_not_equal(a, b);
+  ihm::expect_not_equal(a, b);
   if (a == b) {
-    reflect_test::expect_not_equal(twice(a), a + b);
+    ihm::expect_not_equal(twice(a), a + b);
   }
   for (int i = 0; i < 1; ++i)
-    reflect_test::expect_not_equal(-i, 0);
+    ihm::expect_not_equal(-i, 0);
 }
 
 void passing_equal_checks() {
   double a = 1.0;
   double b = 1.0;
-  reflect_test::expect_equal(a, b);
+  ihm::expect_equal(a, b);
   if (a == b) {
-    reflect_test::expect_equal(twice(a), a + b);
+    ihm::expect_equal(twice(a), a + b);
   }
   for (int i = 0; i < 3; ++i)
-    reflect_test::expect_equal(i - i, 0);
+    ihm::expect_equal(i - i, 0);
 }
 
 // Mixes both checks in one body.
 void failing_equal_checks() {
   double a = 1.0;
   double b = 2.0;
-  reflect_test::expect_equal(a, b);
-  reflect_test::expect_not_equal(b, twice(a));
+  ihm::expect_equal(a, b);
+  ihm::expect_not_equal(b, twice(a));
   if (a < b) {
-    reflect_test::expect_equal(twice(a), a + b);
+    ihm::expect_equal(twice(a), a + b);
   }
 }
 
 void near_checks() {
   double a = 1.0;
   double b = 2.0;
-  reflect_test::expect_near_abs(a + a, b, 1e-12);
-  reflect_test::expect_near_abs(twice(a), a, 0.5);
-  reflect_test::expect_near_abs(b, 2.5, 0.1);
+  ihm::expect_near_abs(a + a, b, 1e-12);
+  ihm::expect_near_abs(twice(a), a, 0.5);
+  ihm::expect_near_abs(b, 2.5, 0.1);
 }
 
 // Operands that need parentheses in the message.
 void parenthesised_checks() {
   double a = 1.0;
   double b = 2.0;
-  reflect_test::expect_near_abs(b, a - b, 0.1);
-  reflect_test::expect_equal(a < b, a < b && b < a);
+  ihm::expect_near_abs(b, a - b, 0.1);
+  ihm::expect_equal(a < b, a < b && b < a);
 }
 
 // The failures in `lines`, each from its "<file>:<line> Failure" line to the
@@ -102,22 +102,22 @@ failures_in(const std::vector<std::string> &lines) {
 int compare_side_by_side();
 
 int main() {
-  namespace detail = reflect_test::detail;
+  namespace detail = ihm::detail;
   // side_by_side_same() fails more checks than the default limits.
-  reflect_test::max_errors = 100;
+  ihm::max_errors = 100;
   detail_test::max_errors = 100;
 
   // Passing checks print nothing and count no error.
   const auto passing =
-      output_of([] { reflect_test::run_with_text<^^passing_checks>(); });
+      output_of([] { ihm::run_with_text<^^passing_checks>(); });
   EXPECT_EQUAL(passing.size(), 0u);
-  EXPECT_EQUAL(reflect_test::result(), 0);
+  EXPECT_EQUAL(ihm::result(), 0);
 
   // Each failing check prints where it is, its operands' text and the values
   // of those that aren't literals.
-  const auto failing = failures_in(
-      output_of([] { reflect_test::run_with_text<^^failing_checks>(); }));
-  EXPECT_EQUAL(reflect_test::result(), 3);
+  const auto failing =
+      failures_in(output_of([] { ihm::run_with_text<^^failing_checks>(); }));
+  EXPECT_EQUAL(ihm::result(), 3);
   EXPECT_EQUAL(failing.size(), 3u);
   if (failing.size() == 3) {
     EXPECT_TRUE(
@@ -139,13 +139,13 @@ int main() {
 
   // The same for expect_equal, mixed with expect_not_equal in one body.
   const auto passing_equal =
-      output_of([] { reflect_test::run_with_text<^^passing_equal_checks>(); });
+      output_of([] { ihm::run_with_text<^^passing_equal_checks>(); });
   EXPECT_EQUAL(passing_equal.size(), 0u);
-  EXPECT_EQUAL(reflect_test::result(), 3);
+  EXPECT_EQUAL(ihm::result(), 3);
 
   const auto failing_equal = failures_in(
-      output_of([] { reflect_test::run_with_text<^^failing_equal_checks>(); }));
-  EXPECT_EQUAL(reflect_test::result(), 6);
+      output_of([] { ihm::run_with_text<^^failing_equal_checks>(); }));
+  EXPECT_EQUAL(ihm::result(), 6);
   EXPECT_EQUAL(failing_equal.size(), 3u);
   if (failing_equal.size() == 3) {
     EXPECT_TRUE(failing_equal[0][0].ends_with(
@@ -161,16 +161,16 @@ int main() {
 
   // Outside run_with_text() a check prints `lhs` and `rhs`, as without this
   // layer.
-  const auto outside = output_of([] { reflect_test::expect_not_equal(1, 1); });
-  EXPECT_EQUAL(reflect_test::result(), 7);
+  const auto outside = output_of([] { ihm::expect_not_equal(1, 1); });
+  EXPECT_EQUAL(ihm::result(), 7);
   EXPECT_EQUAL(outside.size(), 4u);
   if (outside.size() == 4)
     EXPECT_EQUAL(outside[1], "Expected lhs != rhs");
 
   // expect_near_abs names its operands too.
-  const auto near = failures_in(
-      output_of([] { reflect_test::run_with_text<^^near_checks>(); }));
-  EXPECT_EQUAL(reflect_test::result(), 9);
+  const auto near =
+      failures_in(output_of([] { ihm::run_with_text<^^near_checks>(); }));
+  EXPECT_EQUAL(ihm::result(), 9);
   EXPECT_EQUAL(near.size(), 2u);
   if (near.size() == 2) {
     EXPECT_TRUE(
@@ -188,8 +188,8 @@ int main() {
 
   // A compound operand is parenthesised where the message needs it.
   const auto parenthesised = failures_in(
-      output_of([] { reflect_test::run_with_text<^^parenthesised_checks>(); }));
-  EXPECT_EQUAL(reflect_test::result(), 11);
+      output_of([] { ihm::run_with_text<^^parenthesised_checks>(); }));
+  EXPECT_EQUAL(ihm::result(), 11);
   EXPECT_EQUAL(parenthesised.size(), 2u);
   if (parenthesised.size() == 2) {
     EXPECT_TRUE(parenthesised[0] ==
@@ -225,45 +225,45 @@ void side_by_side_same() {
   double arr[2] = {1.0, 2.0};
   long double z = 0.2L;
   EXPECT_EQUAL(a, b);
-  reflect_test::expect_equal(a, b);
+  ihm::expect_equal(a, b);
   EXPECT_EQUAL(a + b, c * b);
-  reflect_test::expect_equal(a + b, c * b);
+  ihm::expect_equal(a + b, c * b);
   EXPECT_EQUAL((a + b) * c, a - (b - c));
-  reflect_test::expect_equal((a + b) * c, a - (b - c));
+  ihm::expect_equal((a + b) * c, a - (b - c));
   EXPECT_EQUAL(twice(a), -b);
-  reflect_test::expect_equal(twice(a), -b);
+  ihm::expect_equal(twice(a), -b);
   EXPECT_EQUAL(a, 2.5);
-  reflect_test::expect_equal(a, 2.5);
+  ihm::expect_equal(a, 2.5);
   EXPECT_EQUAL(b, 1e-13);
-  reflect_test::expect_equal(b, 1e-13);
+  ihm::expect_equal(b, 1e-13);
   EXPECT_NOT_EQUAL(c, 3.0);
-  reflect_test::expect_not_equal(c, 3.0);
+  ihm::expect_not_equal(c, 3.0);
   EXPECT_EQUAL(a < b, false);
-  reflect_test::expect_equal(a < b, false);
+  ihm::expect_equal(a < b, false);
   EXPECT_EQUAL(i, 2);
-  reflect_test::expect_equal(i, 2);
+  ihm::expect_equal(i, 2);
   EXPECT_EQUAL(n, 3u);
-  reflect_test::expect_equal(n, 3u);
+  ihm::expect_equal(n, 3u);
   EXPECT_EQUAL(i * (i + 1), 1);
-  reflect_test::expect_equal(i * (i + 1), 1);
+  ihm::expect_equal(i * (i + 1), 1);
   EXPECT_EQUAL(i, 'b');
-  reflect_test::expect_equal(i, 'b');
+  ihm::expect_equal(i, 'b');
   EXPECT_EQUAL(i, '\n');
-  reflect_test::expect_equal(i, '\n');
+  ihm::expect_equal(i, '\n');
   EXPECT_EQUAL(s, "abd");
-  reflect_test::expect_equal(s, "abd");
+  ihm::expect_equal(s, "abd");
   EXPECT_EQUAL(s == "abc", false);
-  reflect_test::expect_equal(s == "abc", false);
+  ihm::expect_equal(s == "abc", false);
   EXPECT_EQUAL("abd" != s, false);
-  reflect_test::expect_equal("abd" != s, false);
+  ihm::expect_equal("abd" != s, false);
   EXPECT_EQUAL(v[0], 2.0);
-  reflect_test::expect_equal(v[0], 2.0);
+  ihm::expect_equal(v[0], 2.0);
   EXPECT_EQUAL(scaled(v[1]), 1.0);
-  reflect_test::expect_equal(scaled(v[1]), 1.0);
+  ihm::expect_equal(scaled(v[1]), 1.0);
   EXPECT_EQUAL(arr[i], 1.0);
-  reflect_test::expect_equal(arr[i], 1.0);
+  ihm::expect_equal(arr[i], 1.0);
   EXPECT_EQUAL(z, 0.1L);
-  reflect_test::expect_equal(z, 0.1L);
+  ihm::expect_equal(z, 0.1L);
 }
 
 // Where the text differs: see the header comment of
@@ -276,19 +276,19 @@ void side_by_side_different() {
   std::string s = "abc";
   std::vector<double> v = {1.0, 2.0};
   EXPECT_EQUAL(a < b ? a : b, c);
-  reflect_test::expect_equal(a < b ? a : b, c);
+  ihm::expect_equal(a < b ? a : b, c);
   EXPECT_EQUAL(std::abs(i - 3), 1);
-  reflect_test::expect_equal(std::abs(i - 3), 1);
+  ihm::expect_equal(std::abs(i - 3), 1);
   EXPECT_EQUAL(v.size(), 3u);
-  reflect_test::expect_equal(v.size(), 3u);
+  ihm::expect_equal(v.size(), 3u);
   EXPECT_EQUAL(static_cast<double>(i), 2.0);
-  reflect_test::expect_equal(static_cast<double>(i), 2.0);
+  ihm::expect_equal(static_cast<double>(i), 2.0);
   EXPECT_EQUAL(0x10, i);
-  reflect_test::expect_equal(0x10, i);
+  ihm::expect_equal(0x10, i);
   EXPECT_EQUAL(1.e3, v[0]);
-  reflect_test::expect_equal(1.e3, v[0]);
+  ihm::expect_equal(1.e3, v[0]);
   EXPECT_NOT_EQUAL(s, std::string("abc"));
-  reflect_test::expect_not_equal(s, std::string("abc"));
+  ihm::expect_not_equal(s, std::string("abc"));
 }
 
 // The file name and line of a "<file>:<line> Failure" line.
@@ -314,16 +314,16 @@ template <std::meta::info Fn> int side_by_side(const char *title) {
   const int macro_errors = detail_test::_result;
   detail_test::_result = 0;
   const auto failures =
-      failures_in(output_of([] { reflect_test::run_with_text<Fn>(); }));
+      failures_in(output_of([] { ihm::run_with_text<Fn>(); }));
   detail_test::_result = macro_errors;
-  reflect_test::detail::error_count = 0;
+  ihm::detail::error_count = 0;
 
   const auto column = [](std::string text) {
     text.resize(std::max<std::size_t>(text.size(), 44), ' ');
     return text;
   };
   std::cout << title << ":\n  " << column("EXPECT_*") << " | "
-            << "reflect_test::expect_*" << std::endl;
+            << "ihm::expect_*" << std::endl;
   int different = 0;
   for (std::size_t i = 0; i + 1 < failures.size(); i += 2) {
     const auto &macro = failures[i];

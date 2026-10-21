@@ -1,8 +1,8 @@
-// Checks reflect_test (include/testing/reflect_test.hpp): that its checks pass
+// Checks ihm (include/ihm/reflect_test.hpp): that its checks pass
 // and fail when they should, and what a failure prints. The output is checked
 // with test_simple's macros.
 
-#include <testing/reflect_test.hpp>
+#include <ihm/reflect_test.hpp>
 
 #include <test_simple_include.hpp>
 
@@ -70,35 +70,35 @@ private:
 
 // The text a value prints as in a failure.
 template <class T> std::string text(const T &v) {
-  return reflect_test::detail::value_text(v);
+  return ihm::detail::value_text(v);
 }
 
 // A check in a helper, called from a lambda.
 void check_twice(double x, double expected) {
-  reflect_test::expect_equal(2 * x, expected);
+  ihm::expect_equal(2 * x, expected);
 }
 
 } // namespace
 
 int main() {
-  namespace detail = reflect_test::detail;
+  namespace detail = ihm::detail;
 
   // Passing checks print nothing and count no error.
   const auto passing = output_of([] {
-    reflect_test::expect_equal(1 + 1, 2);
-    reflect_test::expect_not_equal(1.0, 2.0);
-    reflect_test::expect_equal(std::string("a"), "a");
-    reflect_test::expect_equal(point{1, 2.5}, point{1, 2.5});
-    reflect_test::expect_equal(derived{{1}, 2}, derived{{1}, 2});
-    reflect_test::expect_equal(tagged{1, {2}}, tagged{1, {2}});
+    ihm::expect_equal(1 + 1, 2);
+    ihm::expect_not_equal(1.0, 2.0);
+    ihm::expect_equal(std::string("a"), "a");
+    ihm::expect_equal(point{1, 2.5}, point{1, 2.5});
+    ihm::expect_equal(derived{{1}, 2}, derived{{1}, 2});
+    ihm::expect_equal(tagged{1, {2}}, tagged{1, {2}});
     check_twice(1.5, 3.0);
   });
   EXPECT_EQUAL(passing.size(), 0u);
-  EXPECT_EQUAL(reflect_test::result(), 0);
+  EXPECT_EQUAL(ihm::result(), 0);
 
   // A failure prints where it is, what was expected and both values.
-  const auto failing = output_of([] { reflect_test::expect_equal(1.0, 2); });
-  EXPECT_EQUAL(reflect_test::result(), 1);
+  const auto failing = output_of([] { ihm::expect_equal(1.0, 2); });
+  EXPECT_EQUAL(ihm::result(), 1);
   EXPECT_EQUAL(failing.size(), 4u);
   if (failing.size() == 4) {
     EXPECT_TRUE(failing[0].ends_with("reflect_test.t.cpp:100 Failure"));
@@ -109,10 +109,10 @@ int main() {
 
   // The same for expect_not_equal, and for a check in a helper.
   const auto more = output_of([] {
-    reflect_test::expect_not_equal('a', 'a');
+    ihm::expect_not_equal('a', 'a');
     check_twice(1.0, 3.0);
   });
-  EXPECT_EQUAL(reflect_test::result(), 3);
+  EXPECT_EQUAL(ihm::result(), 3);
   EXPECT_EQUAL(more.size(), 8u);
   if (more.size() == 8) {
     EXPECT_TRUE(more[0].ends_with("reflect_test.t.cpp:112 Failure"));
@@ -192,8 +192,8 @@ int main() {
               widget_text.find("widget") != std::string::npos);
 
   // A failure with values that aren't printable with `<<`.
-  const auto aggregates = output_of(
-      [] { reflect_test::expect_equal(point{1, 2.5}, point{1, 3.0}); });
+  const auto aggregates =
+      output_of([] { ihm::expect_equal(point{1, 2.5}, point{1, 3.0}); });
   EXPECT_EQUAL(aggregates.size(), 4u);
   if (aggregates.size() == 4) {
     EXPECT_EQUAL(aggregates[2], "  lhs: {.x = 1, .y = 2.5}");
@@ -203,22 +203,21 @@ int main() {
 
   // expect_near_abs passes within the tolerance, in the less precise type.
   const auto near = output_of([] {
-    reflect_test::expect_near_abs(1.0, 1.0 + 1e-12, 1e-10);
-    reflect_test::expect_near_abs(1.0, 1.05, -0.1);
-    reflect_test::expect_near_abs(0.1f, 0.1, 1e-9);
-    reflect_test::expect_near_abs(2, 2.5, 1);
+    ihm::expect_near_abs(1.0, 1.0 + 1e-12, 1e-10);
+    ihm::expect_near_abs(1.0, 1.05, -0.1);
+    ihm::expect_near_abs(0.1f, 0.1, 1e-9);
+    ihm::expect_near_abs(2, 2.5, 1);
   });
   EXPECT_EQUAL(near.size(), 0u);
-  EXPECT_EQUAL(reflect_test::result(), 0);
+  EXPECT_EQUAL(ihm::result(), 0);
 
   // A failure prints the difference, the tolerance and both values.
   const auto far = output_of([] {
-    reflect_test::expect_near_abs(1.0, 1.5, 0.1);
-    reflect_test::expect_near_abs(1.0, 1.1, 0.1);
-    reflect_test::expect_near_abs(std::numeric_limits<double>::quiet_NaN(), 1.0,
-                                  0.1);
+    ihm::expect_near_abs(1.0, 1.5, 0.1);
+    ihm::expect_near_abs(1.0, 1.1, 0.1);
+    ihm::expect_near_abs(std::numeric_limits<double>::quiet_NaN(), 1.0, 0.1);
   });
-  EXPECT_EQUAL(reflect_test::result(), 3);
+  EXPECT_EQUAL(ihm::result(), 3);
   EXPECT_EQUAL(far.size(), 15u);
   if (far.size() == 15) {
     EXPECT_TRUE(far[0].ends_with(" Failure"));

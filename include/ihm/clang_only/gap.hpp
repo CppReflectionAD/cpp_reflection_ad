@@ -1,5 +1,5 @@
-#ifndef REFLECTION_AD_TESTING_GAP_HPP
-#define REFLECTION_AD_TESTING_GAP_HPP
+#ifndef REFLECTION_AD_IHM_GAP_HPP
+#define REFLECTION_AD_IHM_GAP_HPP
 
 // Stand-ins for two expression-reflection metafunctions that P4395 proposes
 // but the clang fork doesn't provide yet. Each is built on the fork's private
@@ -16,7 +16,7 @@
 #include <cstddef>
 #include <meta>
 
-namespace reflect_test::gap {
+namespace ihm::gap {
 namespace m = std::meta;
 
 // std::meta::expression_of (P4395 §3.5): the expression of an expression
@@ -63,8 +63,8 @@ consteval bool stand_ins_work() {
 
 static_assert(detail::stand_ins_work(),
               "the clang fork's private expression API changed; update "
-              "include/testing/clang_only/gap.hpp");
+              "include/ihm/clang_only/gap.hpp");
 
-} // namespace reflect_test::gap
+} // namespace ihm::gap
 
-#endif // REFLECTION_AD_TESTING_GAP_HPP
+#endif // REFLECTION_AD_IHM_GAP_HPP

@@ -4,7 +4,7 @@
 // statement `s`. The clang fork implements it (__metafn_expression_of) but its
 // <meta> has no public wrapper, so reflect_test_expressions.hpp calls the
 // private metafunction through gap::expression_of in
-// include/testing/clang_only/gap.hpp.
+// include/ihm/clang_only/gap.hpp.
 //
 // This file expects the error recorded in public_expression_of.fail.txt. When
 // the fork adds std::meta::expression_of, move this file to

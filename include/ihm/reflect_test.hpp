@@ -1,16 +1,16 @@
-#ifndef REFLECTION_AD_TESTING_REFLECT_TEST_HPP
-#define REFLECTION_AD_TESTING_REFLECT_TEST_HPP
+#ifndef REFLECTION_AD_IHM_REFLECT_TEST_HPP
+#define REFLECTION_AD_IHM_REFLECT_TEST_HPP
 
 // Test checks without macros. A failed check prints where it is and the
 // values it compared:
 //
 //   void my_test() {
 //     double a = 1.0;
-//     reflect_test::expect_equal(a + a, 3.0);
+//     ihm::expect_equal(a + a, 3.0);
 //   }
 //   int main() {
 //     my_test();
-//     return reflect_test::result();
+//     return ihm::result();
 //   }
 //
 // prints
@@ -28,7 +28,7 @@
 // aggregates their members (`{.x = 1, .y = 2.5}`, by reflecting the type),
 // and anything else prints its type name (`<widget>`).
 //
-// testing/clang_only/reflect_test_expressions.hpp adds the operands' source
+// ihm/clang_only/reflect_test_expressions.hpp adds the operands' source
 // text, as EXPECT_EQUAL prints it, in place of `lhs` and `rhs`.
 
 #include <algorithm>
@@ -50,7 +50,7 @@
 #include <system_error>
 #include <type_traits>
 
-namespace reflect_test {
+namespace ihm {
 
 // The number of failed checks at which a test stops (it throws). A test that
 // needs more sets it before its checks run, e.g. at the start of main().
@@ -98,7 +98,7 @@ struct operand_names {
 };
 
 // The names of the operands of the check at a source location, if set.
-// testing/clang_only/reflect_test_expressions.hpp sets it.
+// ihm/clang_only/reflect_test_expressions.hpp sets it.
 inline operand_names (*operand_names_at)(const std::source_location &) =
     nullptr;
 
@@ -395,6 +395,6 @@ void expect_near_abs(
   detail::increase_error_count();
 }
 
-} // namespace reflect_test
+} // namespace ihm
 
-#endif // REFLECTION_AD_TESTING_REFLECT_TEST_HPP
+#endif // REFLECTION_AD_IHM_REFLECT_TEST_HPP

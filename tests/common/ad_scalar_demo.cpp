@@ -5,7 +5,7 @@
 //
 // Build/run: `make run-scalar`.
 
-#include <testing/reflect_test.hpp>
+#include <ihm/reflect_test.hpp>
 
 #include <ad/autograd.h>
 #include <ad/forward_derivative.h>
@@ -37,7 +37,7 @@ constexpr double collide_sin(double x) { return myns::sin(x); } // f' = 2x
 inline double exp_neg(double x) { return std::exp(-x); }
 
 int main() {
-  using reflect_test::expect_near_abs;
+  using ihm::expect_near_abs;
 
   // forward mode (one directional derivative)
   {
@@ -213,5 +213,5 @@ int main() {
   static_assert(ad::partial_derivative<^^poly, 0, 0, 0>(4.0) == 0.0);
   static_assert(ad::partial_derivative<^^two_arg, 0, 1>(0.5, 2.0) == 1.0);
 
-  return reflect_test::result();
+  return ihm::result();
 }

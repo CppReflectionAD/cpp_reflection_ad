@@ -7,7 +7,7 @@
 // built-in subscript (ArraySubscriptExpr) gives no operator, and no public
 // predicate recognises it either. reflect_test_expressions.hpp prints such a
 // subscript through gap::expression_operator_of in
-// include/testing/clang_only/gap.hpp, which recognises it by the fork's
+// include/ihm/clang_only/gap.hpp, which recognises it by the fork's
 // private expression kind number.
 //
 // The fix in the fork is one line in expression_operator_of
