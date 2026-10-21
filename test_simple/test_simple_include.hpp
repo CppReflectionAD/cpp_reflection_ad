@@ -7,15 +7,6 @@
 #include <tuple>
 #include <type_traits>
 
-// The number of failed checks at which a test stops (it throws). To change it
-// for one test file, define it before including this header:
-//
-//   #define TEST_SIMPLE_MAX_ERRORS 50
-//   #include <test_simple_include.hpp>
-#ifndef TEST_SIMPLE_MAX_ERRORS
-#define TEST_SIMPLE_MAX_ERRORS 10
-#endif
-
 namespace detail_test {
 
 // Picks the float type with the fewest mantissa bits (lowest precision).
@@ -61,10 +52,13 @@ inline auto expect_near_rel(D1 val1, D2 val2, Tol tol)
 
 static inline int _result = 0;
 
+// The number of failed checks at which a test stops (it throws). A test that
+// needs more sets it before its checks run, e.g. at the start of main().
+inline int max_errors = 10;
+
 inline void increase_error_count() {
-  constexpr int limit = TEST_SIMPLE_MAX_ERRORS;
   _result++;
-  if (_result == limit) {
+  if (_result == max_errors) {
     std::cout << "maximum number of errors exceeded" << std::endl;
     throw std::runtime_error("maximum number of errors exceeded");
   }

@@ -4,8 +4,6 @@
 
 #include <testing/clang_only/reflect_test_expressions.hpp>
 
-// side_by_side_same() fails more checks than the default limit.
-#define TEST_SIMPLE_MAX_ERRORS 100
 #include <test_simple_include.hpp>
 
 #include <cstdlib>
@@ -118,7 +116,9 @@ int compare_side_by_side();
 
 int main() {
   namespace detail = reflect_test::detail;
+  // side_by_side_same() fails more checks than the default limits.
   reflect_test::max_errors = 100;
+  detail_test::max_errors = 100;
 
   // Passing checks print nothing and count no error.
   const auto passing =
@@ -134,17 +134,17 @@ int main() {
   EXPECT_EQUAL(failing.size(), 3u);
   if (failing.size() == 3) {
     EXPECT_TRUE(
-        failing[0][0].ends_with("reflect_test_expressions.t.cpp:44 Failure"));
+        failing[0][0].ends_with("reflect_test_expressions.t.cpp:42 Failure"));
     EXPECT_TRUE(failing[0] ==
                 std::vector<std::string>({failing[0][0], "Expected a != b",
                                           "  a: 1.0", "  b: 1.0"}));
     EXPECT_TRUE(
-        failing[1][0].ends_with("reflect_test_expressions.t.cpp:46 Failure"));
+        failing[1][0].ends_with("reflect_test_expressions.t.cpp:44 Failure"));
     EXPECT_TRUE(failing[1] == std::vector<std::string>(
                                   {failing[1][0], "Expected twice(a) != a + b",
                                    "  twice(a): 2.0", "  a + b: 2.0"}));
     EXPECT_TRUE(
-        failing[2][0].ends_with("reflect_test_expressions.t.cpp:49 Failure"));
+        failing[2][0].ends_with("reflect_test_expressions.t.cpp:47 Failure"));
     EXPECT_TRUE(failing[2] ==
                 std::vector<std::string>(
                     {failing[2][0], "Expected -i != 0", "  -i: 0"}));
@@ -162,13 +162,13 @@ int main() {
   EXPECT_EQUAL(failing_equal.size(), 3u);
   if (failing_equal.size() == 3) {
     EXPECT_TRUE(failing_equal[0][0].ends_with(
-        "reflect_test_expressions.t.cpp:67 Failure"));
+        "reflect_test_expressions.t.cpp:65 Failure"));
     EXPECT_EQUAL(failing_equal[0][1], "Expected a == b");
     EXPECT_TRUE(failing_equal[1][0].ends_with(
-        "reflect_test_expressions.t.cpp:68 Failure"));
+        "reflect_test_expressions.t.cpp:66 Failure"));
     EXPECT_EQUAL(failing_equal[1][1], "Expected b != twice(a)");
     EXPECT_TRUE(failing_equal[2][0].ends_with(
-        "reflect_test_expressions.t.cpp:70 Failure"));
+        "reflect_test_expressions.t.cpp:68 Failure"));
     EXPECT_EQUAL(failing_equal[2][1], "Expected twice(a) == a + b");
   }
 
@@ -187,13 +187,13 @@ int main() {
   EXPECT_EQUAL(near.size(), 2u);
   if (near.size() == 2) {
     EXPECT_TRUE(
-        near[0][0].ends_with("reflect_test_expressions.t.cpp:78 Failure"));
+        near[0][0].ends_with("reflect_test_expressions.t.cpp:76 Failure"));
     EXPECT_TRUE(near[0] ==
                 std::vector<std::string>(
                     {near[0][0], "Expected |twice(a) - a| < 0.5",
                      "  |twice(a) - a|: 1.0", "  twice(a): 2.0", "  a: 1.0"}));
     EXPECT_TRUE(
-        near[1][0].ends_with("reflect_test_expressions.t.cpp:79 Failure"));
+        near[1][0].ends_with("reflect_test_expressions.t.cpp:77 Failure"));
     EXPECT_TRUE(near[1] == std::vector<std::string>(
                                {near[1][0], "Expected |b - 2.5| < 0.1",
                                 "  |b - 2.5|: 0.5", "  b: 2.0"}));
