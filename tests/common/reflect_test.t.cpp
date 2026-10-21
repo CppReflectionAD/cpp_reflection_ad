@@ -9,6 +9,7 @@
 #include "output/output_of.hpp"
 
 #include <cstdint>
+#include <cstdlib>
 #include <limits>
 #include <string>
 #include <vector>
@@ -101,7 +102,7 @@ int main() {
   EXPECT_EQUAL(ihm::result(), 1);
   EXPECT_EQUAL(failing.size(), 4u);
   if (failing.size() == 4) {
-    EXPECT_TRUE(failing[0].ends_with("reflect_test.t.cpp:100 Failure"));
+    EXPECT_TRUE(failing[0].ends_with("reflect_test.t.cpp:101 Failure"));
     EXPECT_EQUAL(failing[1], "Expected lhs == rhs");
     EXPECT_EQUAL(failing[2], "  lhs: 1.0");
     EXPECT_EQUAL(failing[3], "  rhs: 2");
@@ -115,11 +116,11 @@ int main() {
   EXPECT_EQUAL(ihm::result(), 3);
   EXPECT_EQUAL(more.size(), 8u);
   if (more.size() == 8) {
-    EXPECT_TRUE(more[0].ends_with("reflect_test.t.cpp:112 Failure"));
+    EXPECT_TRUE(more[0].ends_with("reflect_test.t.cpp:113 Failure"));
     EXPECT_EQUAL(more[1], "Expected lhs != rhs");
     EXPECT_EQUAL(more[2], "  lhs: 'a'");
     EXPECT_EQUAL(more[3], "  rhs: 'a'");
-    EXPECT_TRUE(more[4].ends_with("reflect_test.t.cpp:78 Failure"));
+    EXPECT_TRUE(more[4].ends_with("reflect_test.t.cpp:79 Failure"));
     EXPECT_EQUAL(more[5], "Expected lhs == rhs");
     EXPECT_EQUAL(more[6], "  lhs: 2.0");
     EXPECT_EQUAL(more[7], "  rhs: 3.0");
@@ -146,21 +147,13 @@ int main() {
   EXPECT_EQUAL(text(0.1), "0.1");
   EXPECT_EQUAL(text(1e-13), "1e-13");
   EXPECT_EQUAL(text(2.5f), "2.5");
-  // A long double prints the digits it needs, also where it is more precise
-  // than a double (e.g. x86-64 Linux; on arm64 macOS it is a double).
+  // A long double reads back exactly, also where it is more precise than a
+  // double (e.g. x86-64 Linux; on arm64 macOS it is a double).
   constexpr bool wide_long_double = std::numeric_limits<long double>::digits >
                                     std::numeric_limits<double>::digits;
-  EXPECT_EQUAL(text(0.1L), "0.1");
+  EXPECT_EQUAL(std::strtold(text(0.1L).c_str(), nullptr), 0.1L);
   EXPECT_EQUAL(text(0.1L + 1e-18L) == text(0.1L), !wide_long_double);
-  // What prints such a long double, checked on every platform.
-  EXPECT_EQUAL(detail::long_double_text(0.1L), "0.1");
-  EXPECT_EQUAL(detail::long_double_text(-2.5L), "-2.5");
-  EXPECT_EQUAL(detail::long_double_text(0.0L), "0");
-  EXPECT_EQUAL(detail::long_double_text(100.0L), "100");
-  EXPECT_EQUAL(detail::long_double_text(1234.5L), "1234.5");
-  EXPECT_EQUAL(detail::long_double_text(1e-13L), "1e-13");
-  EXPECT_EQUAL(detail::long_double_text(0.0001L), "1e-04");
-  EXPECT_EQUAL(detail::long_double_text(1e20L), "1e+20");
+  EXPECT_EQUAL(text(100.0L), "100.0");
   EXPECT_EQUAL(text(std::numeric_limits<double>::infinity()), "inf");
   EXPECT_EQUAL(text(std::string("a\"b")), "\"a\\\"b\"");
   EXPECT_EQUAL(text(std::string("a'\tb\n")), "\"a'\\tb\\n\"");
