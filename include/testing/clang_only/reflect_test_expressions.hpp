@@ -36,10 +36,11 @@
 // type `const char *`; anywhere else it doesn't compile.
 //
 // Clang only: it uses the clang fork's expression-reflection API
-// (is_expression_statement, callee_of, ...) and internals (__metafunction for
-// the expression kind and an expression statement's expression), which the
-// GCC fork's <meta> doesn't have.
+// (is_expression_statement, callee_of, ...), which the GCC fork's <meta>
+// doesn't have, and the stand-ins in gap.hpp for the parts the clang fork
+// lacks too.
 
+#include <testing/clang_only/gap.hpp>
 #include <testing/reflect_test.hpp>
 
 #include <cstddef>
@@ -91,13 +92,6 @@ consteval peeled peel(m::info e) {
 
 consteval m::info strip_casts(m::info e) { return peel(e).expr; }
 
-// The fork's expression kinds that have no public predicate.
-enum expression_kind : std::size_t { member_kind = 5, subscript_kind = 9 };
-
-consteval std::size_t kind_of(m::info e) {
-  return __metafunction(m::detail::__metafn_expression_kind_of, e);
-}
-
 // A literal has kind 0 and no operands. Kind 0 is also the fork's kind for
 // expressions it doesn't classify, such as a rewritten `a != b`.
 consteval bool is_plain_literal(m::info e) {
@@ -114,14 +108,6 @@ consteval bool starts_after(m::info a, m::info b) {
 
 consteval bool same_start(m::info a, m::info b) {
   return !starts_after(a, b) && !starts_after(b, a);
-}
-
-// The expression of an expression statement, or a null reflection. The fork's
-// <meta> has the metafunction for this but no public wrapper for it.
-consteval m::info expression_of_statement(m::info s) {
-  if (m::is_expression_statement(s))
-    return __metafunction(m::detail::__metafn_expression_of, s);
-  return {};
 }
 
 // Literal spelling (string and character literals are quoted with quoted()).
@@ -440,7 +426,7 @@ consteval expr_text print(m::info e) {
                 print_at(m::true_expression_of(e), comma_prec + 1) + " : " +
                 print_at(m::false_expression_of(e), assignment_prec),
             assignment_prec};
-  if (kind_of(e) == subscript_kind) {
+  if (gap::expression_operator_of(e) == m::op_square_brackets) {
     const std::vector<m::info> ops = m::operands_of(e);
     return {print_at(ops[0], postfix_prec) + "[" + print(ops[1]).text + "]",
             postfix_prec};
@@ -503,7 +489,7 @@ consteval void collect_sites(m::info stmt, std::vector<check_site> &out,
       collect_sites(s, out, depth + 1);
       continue;
     }
-    const m::info e = strip_casts(expression_of_statement(s));
+    const m::info e = strip_casts(gap::expression_of(s));
     if (m::is_function_call(e) && is_check(e))
       out.push_back(site_of(e));
   }

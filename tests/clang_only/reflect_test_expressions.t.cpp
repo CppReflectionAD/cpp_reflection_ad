@@ -231,6 +231,7 @@ void side_by_side_same() {
   unsigned n = 2u;
   std::string s = "abc";
   std::vector<double> v = {1.0, 2.0};
+  double arr[2] = {1.0, 2.0};
   EXPECT_EQUAL(a, b);
   reflect_test::expect_equal(a, b);
   EXPECT_EQUAL(a + b, c * b);
@@ -267,6 +268,8 @@ void side_by_side_same() {
   reflect_test::expect_equal(v[0], 2.0);
   EXPECT_EQUAL(scaled(v[1]), 1.0);
   reflect_test::expect_equal(scaled(v[1]), 1.0);
+  EXPECT_EQUAL(arr[i], 1.0);
+  reflect_test::expect_equal(arr[i], 1.0);
 }
 
 // Where the text differs: see the header comment of
