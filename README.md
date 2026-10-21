@@ -70,8 +70,9 @@ The libraries are header-only, under `include/`:
   (`expect_equal`, `expect_not_equal`); a failure prints the values compared.
 - `include/testing/clang_only/` — `reflect_test_expressions.hpp`, an optional
   layer that also prints the checked expressions' text, from reflecting the
-  test body. Clang only for now
-  (`tests/known_gap/gcc/statement_reflection_equality.cpp`).
+  test body. Clang only: it uses the clang fork's expression reflection, which
+  the GCC fork doesn't have. `gap.hpp` stands in for the two parts of it the
+  clang fork lacks too (`tests/known_gap/clang/`).
 
 Include them by their path under `include/`, e.g. `#include <ad/autograd.h>`.
 In CMake, link `reflection_ad::ad` (or `reflection_ad::cx_std`), which also
