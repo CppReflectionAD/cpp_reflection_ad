@@ -50,8 +50,10 @@ first applies LLVM's fix for the sanitizers hanging at startup on macOS 26
 (`tools/toolchain/patches/`) to the submodule, which then shows as modified in
 `git status`.
 
-GCC comes from the `gcc-mirror` submodule into `build/gcc-p2996`. On macOS it
-is built from `gcc-darwin-reflect` instead: the `p4395` branch of
+GCC comes from the `gcc-mirror` submodule, the `p4395` branch of
+[CppReflectionAD/gcc](https://github.com/CppReflectionAD/gcc), into
+`build/gcc-p2996`. On macOS it is built from `gcc-darwin-reflect` instead: the
+`p4395` branch of
 [CppReflectionAD/gcc-darwin-arm64](https://github.com/CppReflectionAD/gcc-darwin-arm64),
 our fork of iains' Darwin port. That branch is an iains snapshot with
 `gcc-mirror`'s reflection commits cherry-picked on top (see
@@ -64,16 +66,27 @@ and may hold commits from the old replay. Update them once, after pulling:
 git submodule sync gcc-darwin-reflect && git submodule update gcc-darwin-reflect
 ```
 
+Likewise, `gcc-mirror` moved from `yesmanchyk/gcc-mirror` (branch
+`autograd-capable`) to `CppReflectionAD/gcc` (branch `p4395`), and clones made
+before the move still fetch it from the old repository. Update them once,
+after pulling:
+
+```bash
+git submodule sync gcc-mirror && git submodule update gcc-mirror
+```
+
 To work on GCC on a Mac, branch from `p4395` in `gcc-darwin-reflect`:
 `--build-compilers` builds whatever is checked out there. Then move the
-commits to `gcc-mirror` and open the pull request there, which Linux CI tests:
+commits to `gcc-mirror` and open the pull request against `p4395` in
+CppReflectionAD/gcc, which Linux CI tests:
 
 ```bash
 git -C gcc-mirror fetch ../gcc-darwin-reflect <branch>
 git -C gcc-mirror cherry-pick <commits>
 ```
 
-Once `gcc-mirror` has them, they reach `p4395` with the next pin bump.
+Once `gcc-mirror` has them, they reach `gcc-darwin-reflect`'s `p4395` with the
+next pin bump.
 
 The recipes live in `tools/toolchain/`, and CI's toolchain cache runs the same
 ones (`.github/scripts/build-*-toolchain.sh`), so a local build matches CI's.
@@ -365,8 +378,8 @@ retargeted to `main`.
 ## Bumping a compiler pin
 
 The compilers are the submodules `clang-p2996` (the `expr-reflect` branch of
-`siqiyyyy/clang-p2996`), `gcc-mirror` (the `autograd-capable` branch of
-`yesmanchyk/gcc-mirror`) and, on macOS only, `gcc-darwin-reflect`. A bump is
+`siqiyyyy/clang-p2996`), `gcc-mirror` (the `p4395` branch of
+`CppReflectionAD/gcc`) and, on macOS only, `gcc-darwin-reflect`. A bump is
 its own pull request. For `clang-p2996` or `gcc-mirror`:
 
 ```bash
