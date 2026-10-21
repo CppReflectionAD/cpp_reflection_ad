@@ -1,6 +1,7 @@
 # I Hate Macros (`ihm`)
 
-A test framework without macros, built on C++26 reflection. Its spirit:
+A C++ testing framework without macros, built on C++26 reflection (P2996) and
+on the expression reflection proposed in P4395. Its spirit:
 
 - as close as possible to GoogleTest (`ihm::expect_equal` for `EXPECT_EQ`, ...)
 - header-only
@@ -20,6 +21,6 @@ int main() {
 }
 ```
 
-`reflect_test.hpp` works with both forks. `clang_only/reflect_test_expressions.hpp`
-also prints the checked expressions' text, by reflecting the test's body
-(clang fork only).
+`reflect_test.hpp` needs only C++26 and works with both forks.
+`clang_only/reflect_test_expressions.hpp` also prints the checked expressions'
+text, by reflecting the test's body with P4395 (clang fork only).
