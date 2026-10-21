@@ -32,7 +32,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-
       - name: Resolve image for pinned gcc
         id: tag
         env:
@@ -40,22 +39,24 @@ jobs:
         run: |
           set -euo pipefail
 
-          # 1. Fetch remote branch heads from the GCC repo into local tracking refs
+          # 1. Extract the pinned submodule commit SHA from the repository tree
+          submodule_sha="$(git rev-parse HEAD:gcc-mirror)"
+          echo "Pinned gcc-mirror commit: $submodule_sha"
+
+          # 2. Fetch the p4395ci branch ref and the pinned submodule commit
           GCC_REPO="https://x-access-token:${GH_TOKEN}@github.com/CppReflectionAD/gcc.git"
           git fetch --no-tags --depth=100 "$GCC_REPO" \
-            +refs/heads/p4395:refs/remotes/gcc/p4395 \
-            +refs/heads/p4395ci:refs/remotes/gcc/p4395ci
+            +refs/heads/p4395ci:refs/remotes/gcc/p4395ci \
+            "$submodule_sha"
 
-          # 2. Compute the merge-base commit SHA between p4395 and p4395ci
-          sha="$(git merge-base gcc/p4395 gcc/p4395ci)"
+          # 3. Compute the merge base between the pinned commit and p4395ci
+          sha="$(git merge-base "$submodule_sha" gcc/p4395ci)"
           echo "Computed merge-base SHA: $sha"
 
-          # 3. Derive the target image tag (using short SHA or specific tag pattern)
+          # 4. Construct image tag and verify GHCR artifact
           image="ghcr.io/cppreflectionad/gcc:sha-${sha:0:7}"
-
-          # 4. Verify Docker image exists in GHCR
           if ! docker manifest inspect "$image" >/dev/null 2>&1; then
-            echo "::error::No image $image found for commit $sha. Verify that the GCC CI built and published the image."
+            echo "::error::No image $image found for commit $sha."
             exit 1
           fi
 
