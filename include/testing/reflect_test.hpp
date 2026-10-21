@@ -132,14 +132,29 @@ template <class R> void write_range(std::ostream &os, const R &range) {
   os << '}';
 }
 
+// An aggregate as its initializer: its bases first, as `{...}`, then its
+// members, as `.name = value`. An anonymous union has no name and its active
+// member isn't known, so it prints as `<anonymous union>`.
 template <class T> void write_members(std::ostream &os, const T &v) {
+  constexpr auto unchecked = std::meta::access_context::unchecked();
   os << '{';
   std::string_view separator;
-  template for (constexpr std::meta::info member :
-                std::define_static_array(std::meta::nonstatic_data_members_of(
-                    ^^T, std::meta::access_context::unchecked()))) {
-    os << separator << '.' << std::meta::identifier_of(member) << " = ";
-    write_value(os, v.[:member:]);
+  template for (constexpr std::meta::info base :
+                std::define_static_array(std::meta::bases_of(^^T, unchecked))) {
+    os << separator;
+    write_value(os,
+                static_cast<const typename[:std::meta::type_of(base):] &>(v));
+    separator = ", ";
+  }
+  template for (constexpr std::meta::info member : std::define_static_array(
+                    std::meta::nonstatic_data_members_of(^^T, unchecked))) {
+    os << separator;
+    if constexpr (std::meta::has_identifier(member)) {
+      os << '.' << std::meta::identifier_of(member) << " = ";
+      write_value(os, v.[:member:]);
+    } else {
+      os << "<anonymous union>";
+    }
     separator = ", ";
   }
   os << '}';

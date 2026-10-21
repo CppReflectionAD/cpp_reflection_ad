@@ -22,6 +22,31 @@ bool operator==(const point &a, const point &b) {
   return a.x == b.x && a.y == b.y;
 }
 
+// An aggregate with a base.
+struct base {
+  int x;
+};
+struct derived : base {
+  int y;
+};
+
+bool operator==(const derived &a, const derived &b) {
+  return a.x == b.x && a.y == b.y;
+}
+
+// An aggregate with an anonymous union.
+struct tagged {
+  int kind;
+  union {
+    int i;
+    float f;
+  };
+};
+
+bool operator==(const tagged &a, const tagged &b) {
+  return a.kind == b.kind && a.i == b.i;
+}
+
 // Not an aggregate (it has a constructor), not printable and not a range.
 class widget {
 public:
@@ -72,6 +97,8 @@ int main() {
     reflect_test::expect_not_equal(1.0, 2.0);
     reflect_test::expect_equal(std::string("a"), "a");
     reflect_test::expect_equal(point{1, 2.5}, point{1, 2.5});
+    reflect_test::expect_equal(derived{{1}, 2}, derived{{1}, 2});
+    reflect_test::expect_equal(tagged{1, {2}}, tagged{1, {2}});
     check_twice(1.5, 3.0);
   });
   EXPECT_EQUAL(passing.size(), 0u);
@@ -82,7 +109,7 @@ int main() {
   EXPECT_EQUAL(reflect_test::result(), 1);
   EXPECT_EQUAL(failing.size(), 4u);
   if (failing.size() == 4) {
-    EXPECT_TRUE(ends_with(failing[0], "reflect_test.t.cpp:81 Failure"));
+    EXPECT_TRUE(ends_with(failing[0], "reflect_test.t.cpp:108 Failure"));
     EXPECT_EQUAL(failing[1], "Expected lhs == rhs");
     EXPECT_EQUAL(failing[2], "  lhs: 1.0");
     EXPECT_EQUAL(failing[3], "  rhs: 2");
@@ -96,11 +123,11 @@ int main() {
   EXPECT_EQUAL(reflect_test::result(), 3);
   EXPECT_EQUAL(more.size(), 8u);
   if (more.size() == 8) {
-    EXPECT_TRUE(ends_with(more[0], "reflect_test.t.cpp:93 Failure"));
+    EXPECT_TRUE(ends_with(more[0], "reflect_test.t.cpp:120 Failure"));
     EXPECT_EQUAL(more[1], "Expected lhs != rhs");
     EXPECT_EQUAL(more[2], "  lhs: 'a'");
     EXPECT_EQUAL(more[3], "  rhs: 'a'");
-    EXPECT_TRUE(ends_with(more[4], "reflect_test.t.cpp:61 Failure"));
+    EXPECT_TRUE(ends_with(more[4], "reflect_test.t.cpp:86 Failure"));
     EXPECT_EQUAL(more[5], "Expected lhs == rhs");
     EXPECT_EQUAL(more[6], "  lhs: 2.0");
     EXPECT_EQUAL(more[7], "  rhs: 3.0");
@@ -133,6 +160,8 @@ int main() {
   EXPECT_EQUAL(text(std::vector<std::string>{"a", "b"}), "{\"a\", \"b\"}");
   EXPECT_EQUAL(text(point{1, 2.5}), "{.x = 1, .y = 2.5}");
   EXPECT_EQUAL(text(std::vector<point>{{1, 0.5}}), "{{.x = 1, .y = 0.5}}");
+  EXPECT_EQUAL(text(derived{{1}, 2}), "{{.x = 1}, .y = 2}");
+  EXPECT_EQUAL(text(tagged{1, {2}}), "{.kind = 1, <anonymous union>}");
   const std::string widget_text = text(widget(1));
   EXPECT_TRUE(widget_text.starts_with("<") && widget_text.ends_with(">") &&
               widget_text.find("widget") != std::string::npos);
