@@ -31,7 +31,8 @@
 // operators' precedence needs, literals are respelled (`0x10` prints as `16`,
 // `1.e3` as `1000.0`), names lose their qualification (`std::abs(x)` prints as
 // `abs(x)`), casts are dropped, and member accesses and member function calls
-// print as `<expr>` (the reflection gives no member names). A string literal
+// print as `<expr>` (the reflection gives no member names; known gap
+// tests/known_gap/clang/member_access_declaration.cpp). A string literal
 // is only supported as a whole operand of a check, or passed to a parameter of
 // type `const char *`; anywhere else it doesn't compile.
 //
