@@ -137,10 +137,10 @@ jobs:
         run: ctest --preset gcc-x86-64-v3
 
   # The toolchain, test and sanitize legs again on macOS arm64 (#94 C9), with
-  # GCC built from gcc-darwin-reflect. The sanitize leg catches macOS-only
-  # sanitizer regressions such as #132's ASan startup hang. Like the Linux
-  # sanitize job, they aren't in the summary job's needs yet. GCC is built
-  # only on a cache miss: when the pin, the Xcode SDK, the build script or the
+  # GCC built from gcc-darwin-reflect. The sanitize leg runs the tests under
+  # GCC's own libasan and libubsan on macos-15. Unlike the Linux sanitize job,
+  # they aren't in the summary job's needs yet. GCC is built only on a cache
+  # miss: when the pin, the runner's SDK or linker, the build script or the
   # recipe changes, or the cache was evicted after 7 days unused.
   toolchain-macos:
     uses: ./.github/workflows/toolchain-cache-gcc.yml
@@ -151,7 +151,7 @@ jobs:
     name: test (${{ matrix.build_type }}, macOS arm64)
     needs: toolchain-macos
     # Same label as toolchain-macos, not necessarily the same image. The cache
-    # key doesn't record the image; the SDK check below catches a mismatch.
+    # key records only the SDK and linker; the check below compares them.
     runs-on: ${{ needs.toolchain-macos.outputs.runner }}
     strategy:
       fail-fast: false
@@ -184,17 +184,20 @@ jobs:
           fail-on-cache-miss: true
 
       # The restored g++ finds the macOS headers only through the SDK path it
-      # was configured with on the toolchain runner. During a runner image
-      # rollout this runner can have another Xcode, so check that the path
-      # exists here instead of failing later with missing headers.
-      - name: Check the toolchain's SDK is on this runner
+      # was configured with on the toolchain runner, and links with this
+      # runner's linker. During a runner image rollout this runner can have
+      # another Xcode, SDK or linker, so check here instead of failing later
+      # with missing headers or link errors.
+      - name: Check this runner has the toolchain's SDK and linker
+        env:
+          TOOLCHAIN_SDK: ${{ needs.toolchain-macos.outputs.macos_sdk }}
         run: |
-          SYSROOT="$(/opt/toolchain-gcc/bin/g++ -print-sysroot)"
-          if [ ! -d "$SYSROOT/usr/include" ]; then
-            echo "::error::The cached g++ was built against the SDK at '$SYSROOT', which this runner doesn't have (its SDK is '$(xcrun --show-sdk-path)'). The toolchain and test jobs ran on different runner images; re-run all jobs."
+          RUNNER_SDK="$(.github/scripts/macos-sdk-id.sh)"
+          if [ "$RUNNER_SDK" != "$TOOLCHAIN_SDK" ]; then
+            echo "::error::The cached g++ was built with '$TOOLCHAIN_SDK', but this runner has '$RUNNER_SDK'. The toolchain and test jobs ran on different runner images, which happens while GitHub rolls out a new image. Re-running can land on the same pair of images, so the reliable fix is to wait until the rollout finishes (see actions/runner-images) and then re-run all jobs."
             exit 1
           fi
-          echo "SDK found: $SYSROOT"
+          echo "SDK and linker match: $RUNNER_SDK"
 
       - name: Configure CMake
         run: |
