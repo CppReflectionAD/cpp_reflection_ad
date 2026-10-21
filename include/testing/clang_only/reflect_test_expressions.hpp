@@ -35,8 +35,10 @@
 // is only supported as a whole operand of a check, or passed to a parameter of
 // type `const char *`; anywhere else it doesn't compile.
 //
-// Clang only: GCC crashes walking the test body
-// (tests/known_gap/gcc/statement_reflection_equality.cpp).
+// Clang only: it uses the clang fork's expression-reflection API
+// (is_expression_statement, callee_of, ...) and internals (__metafunction for
+// the expression kind and an expression statement's expression), which the
+// GCC fork's <meta> doesn't have.
 
 #include <testing/reflect_test.hpp>
 

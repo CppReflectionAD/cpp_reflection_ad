@@ -1,4 +1,4 @@
 === GCC ===
-tests/known_gap/gcc/statement_reflection_equality.cpp:32:11: internal compiler error: in cp_tree_equal, at cp/tree.cc:4577
-   32 |     if (s != stmt && m::is_statement(s))
+tests/known_gap/gcc/statement_reflection_equality.cpp:28:11: internal compiler error: in cp_tree_equal, at cp/tree.cc:4577
+   28 |     if (s != stmt && m::is_statement(s))
       |         ~~^~~~~~~
