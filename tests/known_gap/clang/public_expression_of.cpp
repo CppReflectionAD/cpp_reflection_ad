@@ -2,7 +2,7 @@
 //
 // P4395 §3.5 proposes expression_of(s), the expression of an expression
 // statement `s`. The clang fork implements it (__metafn_expression_of) but its
-// <meta> has no public wrapper, so reflect_test_expressions.hpp calls the
+// <meta> has no public wrapper, so ihm_expressions.hpp calls the
 // private metafunction through gap::expression_of in
 // include/ihm/clang_only/gap.hpp.
 //

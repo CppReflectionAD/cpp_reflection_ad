@@ -1,8 +1,8 @@
 // Checks the ihm expression-text layer
-// (include/ihm/clang_only/reflect_test_expressions.hpp): that a failure
+// (include/ihm/clang_only/ihm_expressions.hpp): that a failure
 // names its operands by their source text. Checked with test_simple's macros.
 
-#include <ihm/clang_only/reflect_test_expressions.hpp>
+#include <ihm/clang_only/ihm_expressions.hpp>
 
 #include <test_simple_include.hpp>
 
@@ -120,18 +120,15 @@ int main() {
   EXPECT_EQUAL(ihm::result(), 3);
   EXPECT_EQUAL(failing.size(), 3u);
   if (failing.size() == 3) {
-    EXPECT_TRUE(
-        failing[0][0].ends_with("reflect_test_expressions.t.cpp:43 Failure"));
+    EXPECT_TRUE(failing[0][0].ends_with("ihm_expressions.t.cpp:43 Failure"));
     EXPECT_TRUE(failing[0] ==
                 std::vector<std::string>({failing[0][0], "Expected a != b",
                                           "  a: 1.0", "  b: 1.0"}));
-    EXPECT_TRUE(
-        failing[1][0].ends_with("reflect_test_expressions.t.cpp:45 Failure"));
+    EXPECT_TRUE(failing[1][0].ends_with("ihm_expressions.t.cpp:45 Failure"));
     EXPECT_TRUE(failing[1] == std::vector<std::string>(
                                   {failing[1][0], "Expected twice(a) != a + b",
                                    "  twice(a): 2.0", "  a + b: 2.0"}));
-    EXPECT_TRUE(
-        failing[2][0].ends_with("reflect_test_expressions.t.cpp:48 Failure"));
+    EXPECT_TRUE(failing[2][0].ends_with("ihm_expressions.t.cpp:48 Failure"));
     EXPECT_TRUE(failing[2] ==
                 std::vector<std::string>(
                     {failing[2][0], "Expected -i != 0", "  -i: 0"}));
@@ -148,14 +145,14 @@ int main() {
   EXPECT_EQUAL(ihm::result(), 6);
   EXPECT_EQUAL(failing_equal.size(), 3u);
   if (failing_equal.size() == 3) {
-    EXPECT_TRUE(failing_equal[0][0].ends_with(
-        "reflect_test_expressions.t.cpp:66 Failure"));
+    EXPECT_TRUE(
+        failing_equal[0][0].ends_with("ihm_expressions.t.cpp:66 Failure"));
     EXPECT_EQUAL(failing_equal[0][1], "Expected a == b");
-    EXPECT_TRUE(failing_equal[1][0].ends_with(
-        "reflect_test_expressions.t.cpp:67 Failure"));
+    EXPECT_TRUE(
+        failing_equal[1][0].ends_with("ihm_expressions.t.cpp:67 Failure"));
     EXPECT_EQUAL(failing_equal[1][1], "Expected b != twice(a)");
-    EXPECT_TRUE(failing_equal[2][0].ends_with(
-        "reflect_test_expressions.t.cpp:69 Failure"));
+    EXPECT_TRUE(
+        failing_equal[2][0].ends_with("ihm_expressions.t.cpp:69 Failure"));
     EXPECT_EQUAL(failing_equal[2][1], "Expected twice(a) == a + b");
   }
 
@@ -173,14 +170,12 @@ int main() {
   EXPECT_EQUAL(ihm::result(), 9);
   EXPECT_EQUAL(near.size(), 2u);
   if (near.size() == 2) {
-    EXPECT_TRUE(
-        near[0][0].ends_with("reflect_test_expressions.t.cpp:77 Failure"));
+    EXPECT_TRUE(near[0][0].ends_with("ihm_expressions.t.cpp:77 Failure"));
     EXPECT_TRUE(near[0] ==
                 std::vector<std::string>(
                     {near[0][0], "Expected |twice(a) - a| < 0.5",
                      "  |twice(a) - a|: 1.0", "  twice(a): 2.0", "  a: 1.0"}));
-    EXPECT_TRUE(
-        near[1][0].ends_with("reflect_test_expressions.t.cpp:78 Failure"));
+    EXPECT_TRUE(near[1][0].ends_with("ihm_expressions.t.cpp:78 Failure"));
     EXPECT_TRUE(near[1] == std::vector<std::string>(
                                {near[1][0], "Expected |b - 2.5| < 0.1",
                                 "  |b - 2.5|: 0.5", "  b: 2.0"}));
@@ -212,7 +207,7 @@ int main() {
 }
 
 // Macros and functions side by side: each EXPECT_* is followed, on the next
-// line, by the same check through reflect_test. All checks fail.
+// line, by the same check through ihm. All checks fail.
 
 void side_by_side_same() {
   double a = 1.0;
@@ -267,7 +262,7 @@ void side_by_side_same() {
 }
 
 // Where the text differs: see the header comment of
-// reflect_test_expressions.hpp.
+// ihm_expressions.hpp.
 void side_by_side_different() {
   double a = 1.0;
   double b = 2.0;

@@ -1,8 +1,10 @@
-#ifndef REFLECTION_AD_IHM_REFLECT_TEST_HPP
-#define REFLECTION_AD_IHM_REFLECT_TEST_HPP
+#ifndef REFLECTION_AD_IHM_IHM_HPP
+#define REFLECTION_AD_IHM_IHM_HPP
 
-// Test checks without macros. A failed check prints where it is and the
-// values it compared:
+// I Hate Macros (ihm): a C++ test framework without macros, built on C++26
+// reflection (see include/ihm/README.md). Its checks are plain functions
+// that replace test_simple's macros: ihm::expect_equal for EXPECT_EQUAL, and
+// so on. A failed check prints where it is and the values it compared:
 //
 //   void my_test() {
 //     double a = 1.0;
@@ -20,15 +22,16 @@
 //     lhs: 2.0
 //     rhs: 3.0
 //
-// The checks are plain function templates, so they work anywhere: in helpers,
-// lambdas, templates and loops, several to a line. A value prints with `<<`
-// if it can. Strings and char arrays are quoted, floating-point values print
-// in the shortest form that reads back exactly, ranges and other arrays print
-// their elements (`{1, 2}`),
-// aggregates their members (`{.x = 1, .y = 2.5}`, by reflecting the type),
-// and anything else prints its type name (`<widget>`).
+// Being function templates, the checks work anywhere: in helpers, lambdas,
+// templates and loops, several to a line. They find where they are
+// with std::source_location, and print values by reflection: with `<<` if a
+// value has it; strings and char arrays quoted; floating-point values in the
+// shortest form that reads back exactly (a long double wider than a double
+// with all the digits it may need); ranges and other arrays as their elements
+// (`{1, 2}`); aggregates as their members (`{.x = 1, .y = 2.5}`); and anything
+// else as its type name (`<widget>`).
 //
-// ihm/clang_only/reflect_test_expressions.hpp adds the operands' source
+// ihm/clang_only/ihm_expressions.hpp adds the operands' source
 // text, as EXPECT_EQUAL prints it, in place of `lhs` and `rhs`.
 
 #include <charconv>
@@ -93,7 +96,7 @@ struct operand_names {
 };
 
 // The names of the operands of the check at a source location, if set.
-// ihm/clang_only/reflect_test_expressions.hpp sets it.
+// ihm/clang_only/ihm_expressions.hpp sets it.
 inline operand_names (*operand_names_at)(const std::source_location &) =
     nullptr;
 
@@ -368,4 +371,4 @@ void expect_near_abs(
 
 } // namespace ihm
 
-#endif // REFLECTION_AD_IHM_REFLECT_TEST_HPP
+#endif // REFLECTION_AD_IHM_IHM_HPP

@@ -1,7 +1,7 @@
 #ifndef REFLECTION_AD_IHM_REFLECT_TEST_EXPRESSIONS_HPP
 #define REFLECTION_AD_IHM_REFLECT_TEST_EXPRESSIONS_HPP
 
-// An optional layer over ihm/reflect_test.hpp: a failed check names its
+// An optional layer over ihm/ihm.hpp: a failed check names its
 // operands by their source text, which test_simple_include.hpp gets from the
 // preprocessor (`#VAL`), instead of `lhs` and `rhs`. The text is read from
 // the test function's body with statement and expression reflection.
@@ -41,7 +41,7 @@
 // lacks too.
 
 #include <ihm/clang_only/gap.hpp>
-#include <ihm/reflect_test.hpp>
+#include <ihm/ihm.hpp>
 
 #include <cstddef>
 #include <limits>
@@ -245,7 +245,7 @@ consteval std::string literal_text(peeled p) {
 }
 
 // Expression text, with the parentheses that operator precedence needs (see
-// `precedence` in ihm/reflect_test.hpp).
+// `precedence` in ihm/ihm.hpp).
 
 consteval int binary_precedence(m::operators op) {
   switch (op) {

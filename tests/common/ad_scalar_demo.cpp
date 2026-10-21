@@ -5,7 +5,7 @@
 //
 // Build/run: `make run-scalar`.
 
-#include <ihm/reflect_test.hpp>
+#include <ihm/ihm.hpp>
 
 #include <ad/autograd.h>
 #include <ad/forward_derivative.h>

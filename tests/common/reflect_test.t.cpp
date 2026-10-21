@@ -1,8 +1,8 @@
-// Checks ihm (include/ihm/reflect_test.hpp): that its checks pass
+// Checks ihm (include/ihm/ihm.hpp): that its checks pass
 // and fail when they should, and what a failure prints. The output is checked
 // with test_simple's macros.
 
-#include <ihm/reflect_test.hpp>
+#include <ihm/ihm.hpp>
 
 #include <test_simple_include.hpp>
 

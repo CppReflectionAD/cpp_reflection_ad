@@ -5,7 +5,7 @@
 // op_square_brackets. The clang fork's expression_operator_of only maps
 // built-in unary and binary operators (UnaryOperator, BinaryOperator), so a
 // built-in subscript (ArraySubscriptExpr) gives no operator, and no public
-// predicate recognises it either. reflect_test_expressions.hpp prints such a
+// predicate recognises it either. ihm_expressions.hpp prints such a
 // subscript through gap::expression_operator_of in
 // include/ihm/clang_only/gap.hpp, which recognises it by the fork's
 // private expression kind number.
