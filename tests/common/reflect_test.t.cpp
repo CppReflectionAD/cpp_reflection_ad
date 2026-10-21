@@ -48,6 +48,15 @@ bool operator==(const tagged &a, const tagged &b) {
   return a.kind == b.kind && a.i == b.i;
 }
 
+// Aggregates with array members.
+struct with_array {
+  int a[3];
+};
+struct with_tag {
+  char tag[4];
+  int after;
+};
+
 // Not an aggregate (it has a constructor), not printable and not a range.
 class widget {
 public:
@@ -105,7 +114,7 @@ int main() {
   EXPECT_EQUAL(reflect_test::result(), 1);
   EXPECT_EQUAL(failing.size(), 4u);
   if (failing.size() == 4) {
-    EXPECT_TRUE(failing[0].ends_with("reflect_test.t.cpp:104 Failure"));
+    EXPECT_TRUE(failing[0].ends_with("reflect_test.t.cpp:113 Failure"));
     EXPECT_EQUAL(failing[1], "Expected lhs == rhs");
     EXPECT_EQUAL(failing[2], "  lhs: 1.0");
     EXPECT_EQUAL(failing[3], "  rhs: 2");
@@ -119,11 +128,11 @@ int main() {
   EXPECT_EQUAL(reflect_test::result(), 3);
   EXPECT_EQUAL(more.size(), 8u);
   if (more.size() == 8) {
-    EXPECT_TRUE(more[0].ends_with("reflect_test.t.cpp:116 Failure"));
+    EXPECT_TRUE(more[0].ends_with("reflect_test.t.cpp:125 Failure"));
     EXPECT_EQUAL(more[1], "Expected lhs != rhs");
     EXPECT_EQUAL(more[2], "  lhs: 'a'");
     EXPECT_EQUAL(more[3], "  rhs: 'a'");
-    EXPECT_TRUE(more[4].ends_with("reflect_test.t.cpp:82 Failure"));
+    EXPECT_TRUE(more[4].ends_with("reflect_test.t.cpp:91 Failure"));
     EXPECT_EQUAL(more[5], "Expected lhs == rhs");
     EXPECT_EQUAL(more[6], "  lhs: 2.0");
     EXPECT_EQUAL(more[7], "  rhs: 3.0");
@@ -166,6 +175,16 @@ int main() {
   EXPECT_EQUAL(text(std::vector<point>{{1, 0.5}}), "{{.x = 1, .y = 0.5}}");
   EXPECT_EQUAL(text(derived{{1}, 2}), "{{.x = 1}, .y = 2}");
   EXPECT_EQUAL(text(tagged{1, {2}}), "{.kind = 1, <anonymous union>}");
+  // Arrays print their elements, not their address; a char array prints up
+  // to its first NUL, and no further than its end without one.
+  EXPECT_EQUAL(text(with_array{{1, 2, 3}}), "{.a = {1, 2, 3}}");
+  const int grid[2][2] = {{1, 2}, {3, 4}};
+  EXPECT_EQUAL(text(grid), "{{1, 2}, {3, 4}}");
+  EXPECT_EQUAL(text(with_tag{{'a', 'b', 'c', 'd'}, 1}),
+               "{.tag = \"abcd\", .after = 1}");
+  EXPECT_EQUAL(text(with_tag{{'a', 'b'}, 1}), "{.tag = \"ab\", .after = 1}");
+  const char buffer[4] = {'a', '\0', 'b', '\0'};
+  EXPECT_EQUAL(text(buffer), "\"a\"");
   const std::string widget_text = text(widget(1));
   EXPECT_TRUE(widget_text.starts_with("<") && widget_text.ends_with(">") &&
               widget_text.find("widget") != std::string::npos);

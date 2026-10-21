@@ -22,8 +22,9 @@
 //
 // The checks are plain function templates, so they work anywhere: in helpers,
 // lambdas, templates and loops, several to a line. A value prints with `<<`
-// if it can. Strings are quoted, floating-point values print in the shortest
-// form that reads back exactly, ranges print their elements (`{1, 2}`),
+// if it can. Strings and char arrays are quoted, floating-point values print
+// in the shortest form that reads back exactly, ranges and other arrays print
+// their elements (`{1, 2}`),
 // aggregates their members (`{.x = 1, .y = 2.5}`, by reflecting the type),
 // and anything else prints its type name (`<widget>`).
 //
@@ -204,6 +205,17 @@ template <class T> void write_value(std::ostream &os, const T &v) {
     write_floating(os, v);
   } else if constexpr (std::is_null_pointer_v<T>) {
     os << "nullptr";
+  } else if constexpr (std::is_array_v<T>) {
+    // Before the `<<` branch, where an array would decay to a pointer.
+    if constexpr (std::is_same_v<std::remove_cv_t<std::remove_extent_t<T>>,
+                                 char>) {
+      // Up to the first NUL, if any: a string literal prints as written, and
+      // a char buffer without one isn't read past its end.
+      const std::string_view s(v, std::extent_v<T>);
+      os << quoted(s.substr(0, s.find('\0')));
+    } else {
+      write_range(os, v);
+    }
   } else if constexpr (std::is_convertible_v<const T &, std::string_view>) {
     if constexpr (std::is_pointer_v<T>) {
       if (v == nullptr) {
