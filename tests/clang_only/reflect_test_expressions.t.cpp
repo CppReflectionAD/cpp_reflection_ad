@@ -69,6 +69,14 @@ void near_checks() {
   reflect_test::expect_near_abs(b, 2.5, 0.1);
 }
 
+// Operands that need parentheses in the message.
+void parenthesised_checks() {
+  double a = 1.0;
+  double b = 2.0;
+  reflect_test::expect_near_abs(b, a - b, 0.1);
+  reflect_test::expect_equal(a < b, a < b && b < a);
+}
+
 // The lines `f` prints to std::cout.
 template <class F> std::vector<std::string> output_of(F f) {
   std::ostringstream captured;
@@ -187,6 +195,19 @@ int main() {
                                 "  |b - 2.5|: 0.5", "  b: 2.0"}));
   }
 
+  // A compound operand is parenthesised where the message needs it.
+  const auto parenthesised = failures_in(
+      output_of([] { reflect_test::run_with_text<^^parenthesised_checks>(); }));
+  EXPECT_EQUAL(reflect_test::result(), 11);
+  EXPECT_EQUAL(parenthesised.size(), 2u);
+  if (parenthesised.size() == 2) {
+    EXPECT_TRUE(parenthesised[0] ==
+                std::vector<std::string>(
+                    {parenthesised[0][0], "Expected |b - (a - b)| < 0.1",
+                     "  |b - (a - b)|: 3.0", "  b: 2.0", "  a - b: -1.0"}));
+    EXPECT_EQUAL(parenthesised[1][1], "Expected a < b == (a < b && b < a)");
+  }
+
   for (const auto &failure : failing)
     for (const std::string &line : failure)
       std::cout << "  | " << line << std::endl;
@@ -226,8 +247,6 @@ void side_by_side_same() {
   reflect_test::expect_not_equal(c, 3.0);
   EXPECT_EQUAL(a < b, false);
   reflect_test::expect_equal(a < b, false);
-  EXPECT_EQUAL(a < b ? a : b, c);
-  reflect_test::expect_equal(a < b ? a : b, c);
   EXPECT_EQUAL(i, 2);
   reflect_test::expect_equal(i, 2);
   EXPECT_EQUAL(n, 3u);
@@ -253,9 +272,14 @@ void side_by_side_same() {
 // Where the text differs: see the header comment of
 // reflect_test_expressions.hpp.
 void side_by_side_different() {
+  double a = 1.0;
+  double b = 2.0;
+  double c = 3.0;
   int i = 1;
   std::string s = "abc";
   std::vector<double> v = {1.0, 2.0};
+  EXPECT_EQUAL(a < b ? a : b, c);
+  reflect_test::expect_equal(a < b ? a : b, c);
   EXPECT_EQUAL(std::abs(i - 3), 1);
   reflect_test::expect_equal(std::abs(i - 3), 1);
   EXPECT_EQUAL(v.size(), 3u);

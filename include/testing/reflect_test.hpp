@@ -62,11 +62,34 @@ inline void increase_error_count() {
   }
 }
 
-// What a failed check calls its operands. A null name stands for the
-// operand's value, as for a literal.
+// C++ operator precedence, higher binds tighter.
+enum precedence : int {
+  comma_prec = 1,
+  assignment_prec, // also the conditional operator
+  or_prec,
+  and_prec,
+  bitor_prec,
+  xor_prec,
+  bitand_prec,
+  equality_prec,
+  relational_prec,
+  spaceship_prec,
+  shift_prec,
+  additive_prec,
+  multiplicative_prec,
+  unary_prec,
+  postfix_prec,
+  primary_prec
+};
+
+// What a failed check calls its operands, and the precedence of each name's
+// outermost operator, so that a message can parenthesise it. A null name
+// stands for the operand's value, as for a literal.
 struct operand_names {
   const char *lhs = "lhs";
   const char *rhs = "rhs";
+  int lhs_prec = primary_prec;
+  int rhs_prec = primary_prec;
 };
 
 // The names of the operands of the check at a source location, if set.
@@ -207,12 +230,25 @@ template <class T> std::string value_text(const T &v) {
   return os.str();
 }
 
-// The names a failed check prints for its operands, and their values' text.
+// The names a failed check prints for its operands, their precedence, and
+// their values' text.
 struct operand_texts {
   std::string lhs_name;
   std::string lhs_value;
   std::string rhs_name;
   std::string rhs_value;
+  int lhs_prec;
+  int rhs_prec;
+
+  // `lhs op rhs`, with the parentheses that a left-associative operator of
+  // precedence `prec` needs around the operands.
+  std::string joined(std::string_view op, int prec) const {
+    const auto at = [](const std::string &name, int name_prec, int min_prec) {
+      return name_prec < min_prec ? "(" + name + ")" : name;
+    };
+    return at(lhs_name, lhs_prec, prec) + " " + std::string(op) + " " +
+           at(rhs_name, rhs_prec, prec + 1);
+  }
 };
 
 template <class L, class R>
@@ -220,7 +256,8 @@ operand_texts texts_of(const std::source_location &loc, const L &lhs,
                        const R &rhs) {
   const operand_names names =
       operand_names_at != nullptr ? operand_names_at(loc) : operand_names{};
-  operand_texts t{"", value_text(lhs), "", value_text(rhs)};
+  operand_texts t{
+      "", value_text(lhs), "", value_text(rhs), names.lhs_prec, names.rhs_prec};
   t.lhs_name = names.lhs != nullptr ? names.lhs : t.lhs_value;
   t.rhs_name = names.rhs != nullptr ? names.rhs : t.rhs_value;
   return t;
@@ -245,7 +282,7 @@ template <class L, class R>
 void report_failure(const std::source_location &loc, std::string_view op,
                     const L &lhs, const R &rhs) {
   const operand_texts t = texts_of(loc, lhs, rhs);
-  print_failure(loc, t.lhs_name + " " + std::string(op) + " " + t.rhs_name);
+  print_failure(loc, t.joined(op, equality_prec));
   print_value(t.lhs_name, t.lhs_value);
   print_value(t.rhs_name, t.rhs_value);
   increase_error_count();
@@ -303,7 +340,7 @@ void expect_near_abs(
   if (difference < limit)
     return;
   const detail::operand_texts t = detail::texts_of(loc, lhs, rhs);
-  const std::string distance = "|" + t.lhs_name + " - " + t.rhs_name + "|";
+  const std::string distance = "|" + t.joined("-", detail::additive_prec) + "|";
   detail::print_failure(loc, distance + " < " + detail::value_text(limit));
   detail::print_value(distance, detail::value_text(difference));
   detail::print_value(t.lhs_name, t.lhs_value);

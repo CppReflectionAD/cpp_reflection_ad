@@ -56,13 +56,16 @@ namespace reflect_test {
 namespace detail {
 namespace m = std::meta;
 
-// One check call found in a test body, with its operands' source text. A null
-// text marks a string literal operand, whose text is its value.
+// One check call found in a test body, with its operands' source text and
+// the precedence of their outermost operators. A null text marks a string
+// literal operand, whose text is its value.
 struct check_site {
   const char *file;
   unsigned line;
   const char *lhs;
   const char *rhs;
+  int lhs_prec;
+  int rhs_prec;
 };
 
 // The checks of the test body run_with_text() is running.
@@ -250,27 +253,8 @@ consteval std::string literal_text(peeled p) {
   return value_text(m::constant_of(p.expr));
 }
 
-// Expression text, with the parentheses that operator precedence needs.
-
-// C++ operator precedence, higher binds tighter.
-enum precedence : int {
-  comma_prec = 1,
-  assignment_prec, // also the conditional operator
-  or_prec,
-  and_prec,
-  bitor_prec,
-  xor_prec,
-  bitand_prec,
-  equality_prec,
-  relational_prec,
-  spaceship_prec,
-  shift_prec,
-  additive_prec,
-  multiplicative_prec,
-  unary_prec,
-  postfix_prec,
-  primary_prec
-};
+// Expression text, with the parentheses that operator precedence needs (see
+// `precedence` in testing/reflect_test.hpp).
 
 consteval int binary_precedence(m::operators op) {
   switch (op) {
@@ -477,14 +461,23 @@ consteval bool is_check(m::info call) {
          check == ^^expect_near_abs;
 }
 
+consteval bool is_string_literal(m::info operand, m::info type) {
+  return m::is_array_type(type) && is_plain_literal(strip_casts(operand));
+}
+
 // The text of a check's operand of type `type`, or null for a string literal.
 // The literal binds to the check's reference parameter without converting to
 // a pointer, so literal_text can't evaluate it; report_failure prints its
 // value instead.
 consteval const char *operand_text(m::info operand, m::info type) {
-  if (m::is_array_type(type) && is_plain_literal(strip_casts(operand)))
+  if (is_string_literal(operand, type))
     return nullptr;
   return std::define_static_string(text_of(operand));
+}
+
+// The precedence of the outermost operator in operand_text().
+consteval int operand_precedence(m::info operand, m::info type) {
+  return is_string_literal(operand, type) ? primary_prec : print(operand).prec;
 }
 
 // The text of a check call's operands, and where the call is: the same file
@@ -494,8 +487,11 @@ consteval check_site site_of(m::info call) {
   const auto ops = m::operands_of(call); // [callee, lhs, rhs, ..., loc]
   const auto types = m::template_arguments_of(m::callee_of(call)); // [L, R...]
   return {std::define_static_string(std::string_view(loc.file_name())),
-          static_cast<unsigned>(loc.line()), operand_text(ops[1], types[0]),
-          operand_text(ops[2], types[1])};
+          static_cast<unsigned>(loc.line()),
+          operand_text(ops[1], types[0]),
+          operand_text(ops[2], types[1]),
+          operand_precedence(ops[1], types[0]),
+          operand_precedence(ops[2], types[1])};
 }
 
 consteval void collect_sites(m::info stmt, std::vector<check_site> &out,
@@ -524,7 +520,7 @@ consteval std::vector<check_site> collect_sites(m::info fn) {
 inline operand_names names_from_sites(const std::source_location &loc) {
   for (const check_site &s : active_sites)
     if (s.line == loc.line() && std::string_view(s.file) == loc.file_name())
-      return {s.lhs, s.rhs};
+      return {s.lhs, s.rhs, s.lhs_prec, s.rhs_prec};
   return {};
 }
 } // namespace detail
