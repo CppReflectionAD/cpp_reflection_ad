@@ -6,6 +6,7 @@
 
 #include <test_simple_include.hpp>
 
+#include <cstdint>
 #include <limits>
 #include <sstream>
 #include <string>
@@ -109,7 +110,7 @@ int main() {
   EXPECT_EQUAL(reflect_test::result(), 1);
   EXPECT_EQUAL(failing.size(), 4u);
   if (failing.size() == 4) {
-    EXPECT_TRUE(ends_with(failing[0], "reflect_test.t.cpp:108 Failure"));
+    EXPECT_TRUE(ends_with(failing[0], "reflect_test.t.cpp:109 Failure"));
     EXPECT_EQUAL(failing[1], "Expected lhs == rhs");
     EXPECT_EQUAL(failing[2], "  lhs: 1.0");
     EXPECT_EQUAL(failing[3], "  rhs: 2");
@@ -123,11 +124,11 @@ int main() {
   EXPECT_EQUAL(reflect_test::result(), 3);
   EXPECT_EQUAL(more.size(), 8u);
   if (more.size() == 8) {
-    EXPECT_TRUE(ends_with(more[0], "reflect_test.t.cpp:120 Failure"));
+    EXPECT_TRUE(ends_with(more[0], "reflect_test.t.cpp:121 Failure"));
     EXPECT_EQUAL(more[1], "Expected lhs != rhs");
     EXPECT_EQUAL(more[2], "  lhs: 'a'");
     EXPECT_EQUAL(more[3], "  rhs: 'a'");
-    EXPECT_TRUE(ends_with(more[4], "reflect_test.t.cpp:86 Failure"));
+    EXPECT_TRUE(ends_with(more[4], "reflect_test.t.cpp:87 Failure"));
     EXPECT_EQUAL(more[5], "Expected lhs == rhs");
     EXPECT_EQUAL(more[6], "  lhs: 2.0");
     EXPECT_EQUAL(more[7], "  rhs: 3.0");
@@ -140,6 +141,14 @@ int main() {
   EXPECT_EQUAL(text('\n'), "'\\n'");
   EXPECT_EQUAL(text('\''), "'\\''");
   EXPECT_EQUAL(text('"'), "'\"'");
+  EXPECT_EQUAL(text('\r'), "'\\r'");
+  EXPECT_EQUAL(text('\x01'), "'\\x01'");
+  EXPECT_EQUAL(text('\x7f'), "'\\x7f'");
+  EXPECT_EQUAL(text(std::string("a\x1b[0m")), "\"a\\x1b[0m\"");
+  EXPECT_EQUAL(text(std::string("\xc3\xa9")), "\"\xc3\xa9\""); // UTF-8 é
+  EXPECT_EQUAL(text(std::uint8_t{0}), "0");
+  EXPECT_EQUAL(text(std::uint8_t{10}), "10");
+  EXPECT_EQUAL(text(std::int8_t{-65}), "-65");
   EXPECT_EQUAL(text(-3), "-3");
   EXPECT_EQUAL(text(42u), "42");
   EXPECT_EQUAL(text(2.0), "2.0");

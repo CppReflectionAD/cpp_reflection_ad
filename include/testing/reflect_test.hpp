@@ -77,19 +77,28 @@ inline operand_names (*operand_names_at)(const std::source_location &) =
 // Values as text.
 
 // `s` between `quote`s, escaped as in a C++ literal, so that the text is on
-// one line and blanks show.
+// one line and blanks and control characters show. Other control characters
+// print as `\xNN`.
 constexpr std::string quoted(std::string_view s, char quote = '"') {
+  constexpr std::string_view hex = "0123456789abcdef";
   std::string out(1, quote);
   for (const char c : s) {
+    const auto byte = static_cast<unsigned char>(c);
     if (c == quote || c == '\\')
       out += '\\';
     if (c == '\n')
       out += "\\n";
     else if (c == '\t')
       out += "\\t";
+    else if (c == '\r')
+      out += "\\r";
     else if (c == '\0')
       out += "\\0";
-    else
+    else if (byte < 0x20 || byte == 0x7f) {
+      out += "\\x";
+      out += hex[byte / 16];
+      out += hex[byte % 16];
+    } else
       out += c;
   }
   return out + quote;
@@ -165,6 +174,9 @@ template <class T> void write_value(std::ostream &os, const T &v) {
     os << (v ? "true" : "false");
   } else if constexpr (std::is_same_v<T, char>) {
     os << quoted(std::string_view(&v, 1), '\'');
+  } else if constexpr (std::is_same_v<T, signed char> ||
+                       std::is_same_v<T, unsigned char>) {
+    os << +v; // a number (std::int8_t, std::uint8_t), not a character
   } else if constexpr (std::is_floating_point_v<T>) {
     write_floating(os, v);
   } else if constexpr (std::is_null_pointer_v<T>) {
