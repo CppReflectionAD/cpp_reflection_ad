@@ -44,6 +44,7 @@
 #include <testing/reflect_test.hpp>
 
 #include <cstddef>
+#include <limits>
 #include <meta>
 #include <source_location>
 #include <span>
@@ -128,10 +129,10 @@ template <class T> consteval std::string integer_text(T value) {
   return negative ? "-" + s : s;
 }
 
-consteval double power_of_ten(int n) {
-  double p = 1.0;
+template <class F> consteval F power_of_ten(int n) {
+  F p = 1;
   for (int i = 0; i < n; ++i)
-    p *= 10.0;
+    p *= 10;
   return p;
 }
 
@@ -161,30 +162,34 @@ consteval std::string decimal_text(unsigned long long digits, int exponent) {
   return "0." + std::string(static_cast<std::size_t>(-point), '0') + d;
 }
 
-// The shortest decimal that reads back as `value`.
+// The shortest decimal that reads back as `value`, searched in double, or in
+// long double for a long double, which can be more precise. Up to 19
+// significant digits.
 template <class T> consteval std::string floating_text(T value) {
+  using F = std::common_type_t<T, double>;
   if (value == 0)
     return "0.0";
   const bool negative = value < 0;
   const T magnitude = negative ? -value : value;
-  const double x = static_cast<double>(magnitude);
+  const F x = magnitude;
   int leading = 0;
-  for (double y = x; y >= 10.0; y /= 10.0)
+  for (F y = x; y >= 10; y /= 10)
     ++leading;
-  for (double y = x; y < 1.0; y *= 10.0)
+  for (F y = x; y < 1; y *= 10)
     --leading;
-  for (int precision = 1; precision <= 17; ++precision) {
+  for (int precision = 1; precision <= std::numeric_limits<F>::max_digits10;
+       ++precision) {
     const int exponent = leading - precision + 1;
     if (exponent > 300 || exponent < -300)
       break;
-    const double scale = power_of_ten(exponent < 0 ? -exponent : exponent);
-    const double scaled = exponent < 0 ? x * scale : x / scale;
+    const F scale = power_of_ten<F>(exponent < 0 ? -exponent : exponent);
+    const F scaled = exponent < 0 ? x * scale : x / scale;
     if (!(scaled < 1e19))
       break;
     const unsigned long long digits =
-        static_cast<unsigned long long>(scaled + 0.5);
-    const double back = exponent < 0 ? static_cast<double>(digits) / scale
-                                     : static_cast<double>(digits) * scale;
+        static_cast<unsigned long long>(scaled + F(0.5));
+    const F back = exponent < 0 ? static_cast<F>(digits) / scale
+                                : static_cast<F>(digits) * scale;
     if (static_cast<T>(back) == magnitude)
       return (negative ? "-" : "") + decimal_text(digits, exponent);
   }

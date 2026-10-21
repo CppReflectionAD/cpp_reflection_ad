@@ -31,9 +31,13 @@
 // testing/clang_only/reflect_test_expressions.hpp adds the operands' source
 // text, as EXPECT_EQUAL prints it, in place of `lhs` and `rhs`.
 
+#include <algorithm>
 #include <charconv>
 #include <cmath>
 #include <cstddef>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <iostream>
 #include <limits>
 #include <meta>
@@ -128,18 +132,49 @@ constexpr std::string quoted(std::string_view s, char quote = '"') {
   return out + quote;
 }
 
+// The shortest text that reads back as the finite `v`, in fixed or scientific
+// notation, whichever is shorter, as std::to_chars gives it. libc++'s
+// to_chars converts a long double to double first, so where long double is
+// more precise, two that differ beyond a double's precision would print
+// alike.
+inline std::string long_double_text(long double v) {
+  char scientific[64];
+  int digits = 1;
+  int scientific_size = 0;
+  for (;; ++digits) {
+    scientific_size =
+        std::snprintf(scientific, sizeof scientific, "%.*Le", digits - 1, v);
+    if (digits == std::numeric_limits<long double>::max_digits10 ||
+        std::strtold(scientific, nullptr) == v)
+      break;
+  }
+  const int exponent = std::atoi(std::strchr(scientific, 'e') + 1);
+  char fixed[64];
+  const int fixed_size = std::snprintf(fixed, sizeof fixed, "%.*Lf",
+                                       std::max(0, digits - 1 - exponent), v);
+  return fixed_size <= scientific_size ? fixed : scientific;
+}
+
 // The shortest text that reads back as `v`, with a `.0` if it would read as
 // an integer.
 template <class T> void write_floating(std::ostream &os, T v) {
-  char buffer[64];
-  const auto [end, error] = std::to_chars(buffer, buffer + sizeof buffer, v);
-  if (error != std::errc{}) {
-    os << v;
-    return;
+  std::string text;
+  if constexpr (std::numeric_limits<T>::digits >
+                std::numeric_limits<double>::digits) {
+    if (std::isfinite(v))
+      text = long_double_text(v);
   }
-  const std::string_view text(buffer, static_cast<std::size_t>(end - buffer));
+  if (text.empty()) {
+    char buffer[64];
+    const auto [end, error] = std::to_chars(buffer, buffer + sizeof buffer, v);
+    if (error != std::errc{}) {
+      os << v;
+      return;
+    }
+    text.assign(buffer, end);
+  }
   os << text;
-  if (text.find_first_of(".en") == std::string_view::npos) // e, inf, nan
+  if (text.find_first_of(".en") == std::string::npos) // e, inf, nan
     os << ".0";
 }
 

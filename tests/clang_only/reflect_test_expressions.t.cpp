@@ -9,6 +9,7 @@
 #include <test_simple_include.hpp>
 
 #include <cstdlib>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -16,6 +17,15 @@
 double twice(double x) { return 2 * x; }
 
 double scaled(double x, double factor = 2.0) { return factor * x; }
+
+// A long double literal is spelled with the digits it needs, also where long
+// double is more precise than double (e.g. x86-64 Linux; on arm64 macOS it is
+// a double, so the second literal is 0.1 there).
+constexpr bool wide_long_double = std::numeric_limits<long double>::digits >
+                                  std::numeric_limits<double>::digits;
+static_assert(reflect_test::detail::floating_text(0.1L) == "0.1");
+static_assert(reflect_test::detail::floating_text(0.1000000000000000001L) ==
+              (wide_long_double ? "0.1000000000000000001" : "0.1"));
 
 void passing_checks() {
   double a = 1.0;
@@ -124,17 +134,17 @@ int main() {
   EXPECT_EQUAL(failing.size(), 3u);
   if (failing.size() == 3) {
     EXPECT_TRUE(
-        failing[0][0].ends_with("reflect_test_expressions.t.cpp:34 Failure"));
+        failing[0][0].ends_with("reflect_test_expressions.t.cpp:44 Failure"));
     EXPECT_TRUE(failing[0] ==
                 std::vector<std::string>({failing[0][0], "Expected a != b",
                                           "  a: 1.0", "  b: 1.0"}));
     EXPECT_TRUE(
-        failing[1][0].ends_with("reflect_test_expressions.t.cpp:36 Failure"));
+        failing[1][0].ends_with("reflect_test_expressions.t.cpp:46 Failure"));
     EXPECT_TRUE(failing[1] == std::vector<std::string>(
                                   {failing[1][0], "Expected twice(a) != a + b",
                                    "  twice(a): 2.0", "  a + b: 2.0"}));
     EXPECT_TRUE(
-        failing[2][0].ends_with("reflect_test_expressions.t.cpp:39 Failure"));
+        failing[2][0].ends_with("reflect_test_expressions.t.cpp:49 Failure"));
     EXPECT_TRUE(failing[2] ==
                 std::vector<std::string>(
                     {failing[2][0], "Expected -i != 0", "  -i: 0"}));
@@ -152,13 +162,13 @@ int main() {
   EXPECT_EQUAL(failing_equal.size(), 3u);
   if (failing_equal.size() == 3) {
     EXPECT_TRUE(failing_equal[0][0].ends_with(
-        "reflect_test_expressions.t.cpp:57 Failure"));
+        "reflect_test_expressions.t.cpp:67 Failure"));
     EXPECT_EQUAL(failing_equal[0][1], "Expected a == b");
     EXPECT_TRUE(failing_equal[1][0].ends_with(
-        "reflect_test_expressions.t.cpp:58 Failure"));
+        "reflect_test_expressions.t.cpp:68 Failure"));
     EXPECT_EQUAL(failing_equal[1][1], "Expected b != twice(a)");
     EXPECT_TRUE(failing_equal[2][0].ends_with(
-        "reflect_test_expressions.t.cpp:60 Failure"));
+        "reflect_test_expressions.t.cpp:70 Failure"));
     EXPECT_EQUAL(failing_equal[2][1], "Expected twice(a) == a + b");
   }
 
@@ -177,13 +187,13 @@ int main() {
   EXPECT_EQUAL(near.size(), 2u);
   if (near.size() == 2) {
     EXPECT_TRUE(
-        near[0][0].ends_with("reflect_test_expressions.t.cpp:68 Failure"));
+        near[0][0].ends_with("reflect_test_expressions.t.cpp:78 Failure"));
     EXPECT_TRUE(near[0] ==
                 std::vector<std::string>(
                     {near[0][0], "Expected |twice(a) - a| < 0.5",
                      "  |twice(a) - a|: 1.0", "  twice(a): 2.0", "  a: 1.0"}));
     EXPECT_TRUE(
-        near[1][0].ends_with("reflect_test_expressions.t.cpp:69 Failure"));
+        near[1][0].ends_with("reflect_test_expressions.t.cpp:79 Failure"));
     EXPECT_TRUE(near[1] == std::vector<std::string>(
                                {near[1][0], "Expected |b - 2.5| < 0.1",
                                 "  |b - 2.5|: 0.5", "  b: 2.0"}));
@@ -226,6 +236,7 @@ void side_by_side_same() {
   std::string s = "abc";
   std::vector<double> v = {1.0, 2.0};
   double arr[2] = {1.0, 2.0};
+  long double z = 0.2L;
   EXPECT_EQUAL(a, b);
   reflect_test::expect_equal(a, b);
   EXPECT_EQUAL(a + b, c * b);
@@ -264,6 +275,8 @@ void side_by_side_same() {
   reflect_test::expect_equal(scaled(v[1]), 1.0);
   EXPECT_EQUAL(arr[i], 1.0);
   reflect_test::expect_equal(arr[i], 1.0);
+  EXPECT_EQUAL(z, 0.1L);
+  reflect_test::expect_equal(z, 0.1L);
 }
 
 // Where the text differs: see the header comment of
