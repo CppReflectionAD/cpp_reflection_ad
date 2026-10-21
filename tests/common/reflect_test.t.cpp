@@ -6,9 +6,10 @@
 
 #include <test_simple_include.hpp>
 
+#include "output/output_of.hpp"
+
 #include <cstdint>
 #include <limits>
-#include <sstream>
 #include <string>
 #include <vector>
 
@@ -67,20 +68,6 @@ private:
   int id_;
 };
 
-// The lines `f` prints to std::cout.
-template <class F> std::vector<std::string> output_of(F f) {
-  std::ostringstream captured;
-  std::streambuf *previous = std::cout.rdbuf(captured.rdbuf());
-  f();
-  std::cout.rdbuf(previous);
-
-  std::vector<std::string> lines;
-  std::istringstream in(captured.str());
-  for (std::string line; std::getline(in, line);)
-    lines.push_back(line);
-  return lines;
-}
-
 // The text a value prints as in a failure.
 template <class T> std::string text(const T &v) {
   return reflect_test::detail::value_text(v);
@@ -114,7 +101,7 @@ int main() {
   EXPECT_EQUAL(reflect_test::result(), 1);
   EXPECT_EQUAL(failing.size(), 4u);
   if (failing.size() == 4) {
-    EXPECT_TRUE(failing[0].ends_with("reflect_test.t.cpp:113 Failure"));
+    EXPECT_TRUE(failing[0].ends_with("reflect_test.t.cpp:100 Failure"));
     EXPECT_EQUAL(failing[1], "Expected lhs == rhs");
     EXPECT_EQUAL(failing[2], "  lhs: 1.0");
     EXPECT_EQUAL(failing[3], "  rhs: 2");
@@ -128,11 +115,11 @@ int main() {
   EXPECT_EQUAL(reflect_test::result(), 3);
   EXPECT_EQUAL(more.size(), 8u);
   if (more.size() == 8) {
-    EXPECT_TRUE(more[0].ends_with("reflect_test.t.cpp:125 Failure"));
+    EXPECT_TRUE(more[0].ends_with("reflect_test.t.cpp:112 Failure"));
     EXPECT_EQUAL(more[1], "Expected lhs != rhs");
     EXPECT_EQUAL(more[2], "  lhs: 'a'");
     EXPECT_EQUAL(more[3], "  rhs: 'a'");
-    EXPECT_TRUE(more[4].ends_with("reflect_test.t.cpp:91 Failure"));
+    EXPECT_TRUE(more[4].ends_with("reflect_test.t.cpp:78 Failure"));
     EXPECT_EQUAL(more[5], "Expected lhs == rhs");
     EXPECT_EQUAL(more[6], "  lhs: 2.0");
     EXPECT_EQUAL(more[7], "  rhs: 3.0");
