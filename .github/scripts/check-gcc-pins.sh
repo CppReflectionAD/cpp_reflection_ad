@@ -33,10 +33,13 @@ fail() { echo "check-gcc-pins: $*" >&2; exit 1; }
 # base, and no shallow boundary is inside either side of the range. A boundary
 # there hides its parents, so git cherry could skip commits behind it, or reach
 # commits below the base through a merge and list them as missing.
+#
+# Not grep -q: it exits at the first match, git rev-list then dies of SIGPIPE,
+# pipefail fails the pipeline, and the ! turns that into "complete".
 complete() {
   base="$(git merge-base "$darwin" "$mirror")" || return 1
   [[ -s $work/shallow ]] || return 0
-  ! git rev-list "^$base" "$darwin" "$mirror" | grep -qxFf "$work/shallow"
+  ! git rev-list "^$base" "$darwin" "$mirror" | grep -xFf "$work/shallow" >/dev/null
 }
 depth=256
 while :; do
