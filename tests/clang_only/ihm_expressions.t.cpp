@@ -8,6 +8,7 @@
 
 #include "output/output_of.hpp"
 
+#include <compare>
 #include <cstdlib>
 #include <limits>
 #include <string>
@@ -86,6 +87,20 @@ void parenthesised_checks() {
   ihm::expect_equal(a < b, a < b && b < a);
 }
 
+struct ordered {
+  int value;
+  auto operator<=>(const ordered &) const = default;
+};
+
+void rewritten_ordering_checks() {
+  const ordered p{1};
+  const ordered q{2};
+  ihm::expect_equal(p < q, false);
+  ihm::expect_equal(p <= q, false);
+  ihm::expect_equal(p > q, true);
+  ihm::expect_equal(p >= q, true);
+}
+
 // The failures in `lines`, each from its "<file>:<line> Failure" line to the
 // next one.
 std::vector<std::vector<std::string>>
@@ -120,15 +135,15 @@ int main() {
   EXPECT_EQUAL(ihm::result(), 3);
   EXPECT_EQUAL(failing.size(), 3u);
   if (failing.size() == 3) {
-    EXPECT_TRUE(failing[0][0].ends_with("ihm_expressions.t.cpp:43 Failure"));
+    EXPECT_TRUE(failing[0][0].ends_with("ihm_expressions.t.cpp:44 Failure"));
     EXPECT_TRUE(failing[0] ==
                 std::vector<std::string>({failing[0][0], "Expected a != b",
                                           "  a: 1.0", "  b: 1.0"}));
-    EXPECT_TRUE(failing[1][0].ends_with("ihm_expressions.t.cpp:45 Failure"));
+    EXPECT_TRUE(failing[1][0].ends_with("ihm_expressions.t.cpp:46 Failure"));
     EXPECT_TRUE(failing[1] == std::vector<std::string>(
                                   {failing[1][0], "Expected twice(a) != a + b",
                                    "  twice(a): 2.0", "  a + b: 2.0"}));
-    EXPECT_TRUE(failing[2][0].ends_with("ihm_expressions.t.cpp:48 Failure"));
+    EXPECT_TRUE(failing[2][0].ends_with("ihm_expressions.t.cpp:49 Failure"));
     EXPECT_TRUE(failing[2] ==
                 std::vector<std::string>(
                     {failing[2][0], "Expected -i != 0", "  -i: 0"}));
@@ -146,13 +161,13 @@ int main() {
   EXPECT_EQUAL(failing_equal.size(), 3u);
   if (failing_equal.size() == 3) {
     EXPECT_TRUE(
-        failing_equal[0][0].ends_with("ihm_expressions.t.cpp:66 Failure"));
+        failing_equal[0][0].ends_with("ihm_expressions.t.cpp:67 Failure"));
     EXPECT_EQUAL(failing_equal[0][1], "Expected a == b");
     EXPECT_TRUE(
-        failing_equal[1][0].ends_with("ihm_expressions.t.cpp:67 Failure"));
+        failing_equal[1][0].ends_with("ihm_expressions.t.cpp:68 Failure"));
     EXPECT_EQUAL(failing_equal[1][1], "Expected b != twice(a)");
     EXPECT_TRUE(
-        failing_equal[2][0].ends_with("ihm_expressions.t.cpp:69 Failure"));
+        failing_equal[2][0].ends_with("ihm_expressions.t.cpp:70 Failure"));
     EXPECT_EQUAL(failing_equal[2][1], "Expected twice(a) == a + b");
   }
 
@@ -170,12 +185,12 @@ int main() {
   EXPECT_EQUAL(ihm::result(), 9);
   EXPECT_EQUAL(near.size(), 2u);
   if (near.size() == 2) {
-    EXPECT_TRUE(near[0][0].ends_with("ihm_expressions.t.cpp:77 Failure"));
+    EXPECT_TRUE(near[0][0].ends_with("ihm_expressions.t.cpp:78 Failure"));
     EXPECT_TRUE(near[0] ==
                 std::vector<std::string>(
                     {near[0][0], "Expected |twice(a) - a| < 0.5",
                      "  |twice(a) - a|: 1.0", "  twice(a): 2.0", "  a: 1.0"}));
-    EXPECT_TRUE(near[1][0].ends_with("ihm_expressions.t.cpp:78 Failure"));
+    EXPECT_TRUE(near[1][0].ends_with("ihm_expressions.t.cpp:79 Failure"));
     EXPECT_TRUE(near[1] == std::vector<std::string>(
                                {near[1][0], "Expected |b - 2.5| < 0.1",
                                 "  |b - 2.5|: 0.5", "  b: 2.0"}));
@@ -192,6 +207,29 @@ int main() {
                     {parenthesised[0][0], "Expected |b - (a - b)| < 0.1",
                      "  |b - (a - b)|: 3.0", "  b: 2.0", "  a - b: -1.0"}));
     EXPECT_EQUAL(parenthesised[1][1], "Expected a < b == (a < b && b < a)");
+  }
+
+  const auto rewritten = failures_in(
+      output_of([] { ihm::run_with_text<^^rewritten_ordering_checks>(); }));
+  EXPECT_EQUAL(ihm::result(), 15);
+  EXPECT_EQUAL(rewritten.size(), 4u);
+  if (rewritten.size() == 4) {
+    EXPECT_TRUE(rewritten[0] ==
+                std::vector<std::string>({rewritten[0][0],
+                                          "Expected p < q == false",
+                                          "  p < q: true"}));
+    EXPECT_TRUE(rewritten[1] ==
+                std::vector<std::string>({rewritten[1][0],
+                                          "Expected p <= q == false",
+                                          "  p <= q: true"}));
+    EXPECT_TRUE(rewritten[2] ==
+                std::vector<std::string>({rewritten[2][0],
+                                          "Expected p > q == true",
+                                          "  p > q: false"}));
+    EXPECT_TRUE(rewritten[3] ==
+                std::vector<std::string>({rewritten[3][0],
+                                          "Expected p >= q == true",
+                                          "  p >= q: false"}));
   }
 
   for (const auto &failure : failing)

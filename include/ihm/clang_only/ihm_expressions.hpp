@@ -395,8 +395,25 @@ consteval expr_text rewritten_text(m::info e) {
     comparison = strip_casts(
         is_plain_literal(strip_casts(sides[0])) ? sides[1] : sides[0]);
   } else if (m::is_function_call(form)) {
-    op = m::op_equals_equals; // `a == b` rewritten as `b == a`
-    comparison = form;
+    const m::info callee = m::callee_of(form);
+    if (!m::is_operator_function(callee))
+      return {"<expr>", primary_prec};
+    const m::operators called_op = m::operator_of(callee);
+    if (called_op == m::op_equals_equals) {
+      op = called_op; // `a == b` rewritten as `b == a`
+      comparison = form;
+    } else if (called_op == m::op_less || called_op == m::op_less_equals ||
+               called_op == m::op_greater ||
+               called_op == m::op_greater_equals) {
+      op = called_op;
+      const std::vector<m::info> sides = comparison_operands(form);
+      if (sides.size() != 2)
+        return {"<expr>", primary_prec};
+      comparison = strip_casts(
+          is_plain_literal(strip_casts(sides[0])) ? sides[1] : sides[0]);
+    } else {
+      return {"<expr>", primary_prec};
+    }
   }
   if (comparison == m::info{})
     return {"<expr>", primary_prec};
