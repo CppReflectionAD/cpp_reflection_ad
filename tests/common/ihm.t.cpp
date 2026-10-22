@@ -11,8 +11,11 @@
 #include <cstdint>
 #include <cstdlib>
 #include <limits>
+#include <map>
 #include <stdexcept>
 #include <string>
+#include <tuple>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -106,7 +109,7 @@ int main() {
   EXPECT_EQUAL(ihm::result(), 1);
   EXPECT_EQUAL(failing.size(), 4u);
   if (failing.size() == 4) {
-    EXPECT_TRUE(failing[0].ends_with("ihm.t.cpp:105 Failure"));
+    EXPECT_TRUE(failing[0].ends_with("ihm.t.cpp:108 Failure"));
     EXPECT_EQUAL(failing[1], "Expected lhs == rhs");
     EXPECT_EQUAL(failing[2], "  lhs: 1.0");
     EXPECT_EQUAL(failing[3], "  rhs: 2");
@@ -120,11 +123,11 @@ int main() {
   EXPECT_EQUAL(ihm::result(), 3);
   EXPECT_EQUAL(more.size(), 8u);
   if (more.size() == 8) {
-    EXPECT_TRUE(more[0].ends_with("ihm.t.cpp:117 Failure"));
+    EXPECT_TRUE(more[0].ends_with("ihm.t.cpp:120 Failure"));
     EXPECT_EQUAL(more[1], "Expected lhs != rhs");
     EXPECT_EQUAL(more[2], "  lhs: 'a'");
     EXPECT_EQUAL(more[3], "  rhs: 'a'");
-    EXPECT_TRUE(more[4].ends_with("ihm.t.cpp:83 Failure"));
+    EXPECT_TRUE(more[4].ends_with("ihm.t.cpp:86 Failure"));
     EXPECT_EQUAL(more[5], "Expected lhs == rhs");
     EXPECT_EQUAL(more[6], "  lhs: 2.0");
     EXPECT_EQUAL(more[7], "  rhs: 3.0");
@@ -201,6 +204,11 @@ int main() {
   EXPECT_EQUAL(text(light), "shade::light");
   EXPECT_EQUAL(text(static_cast<color>(5)), "color(5)");
   EXPECT_EQUAL(text(static_cast<shade>(7)), "shade(7)");
+  // Tuple-like types print their elements.
+  EXPECT_EQUAL(text(std::pair{1, 2.5}), "{1, 2.5}");
+  EXPECT_EQUAL(text(std::tuple{1, 'a', std::string("b")}), "{1, 'a', \"b\"}");
+  EXPECT_EQUAL(text(std::tuple<>{}), "{}");
+  EXPECT_EQUAL(text(std::map<int, int>{{1, 2}, {3, 4}}), "{{1, 2}, {3, 4}}");
 
   // A failure with values that aren't printable with `<<`.
   const auto aggregates =

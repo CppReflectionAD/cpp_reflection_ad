@@ -129,6 +129,15 @@ void literal_checks() {
 // A test function that throws.
 void throwing_checks() { throw 1; }
 
+// Two checks on one line, each with its own text.
+void same_line_checks() {
+  const double a = 1.0;
+  const double b = 2.0;
+  // clang-format off
+  ihm::expect_equal(a, 1.5); ihm::expect_equal(b, 3.0);
+  // clang-format on
+}
+
 // The failures in `lines`, each from its "<file>:<line> Failure" line to the
 // next one.
 std::vector<std::vector<std::string>>
@@ -307,6 +316,19 @@ int main() {
   }
   EXPECT_TRUE(detail::operand_names_at == nullptr);
   EXPECT_EQUAL(detail::active_sites.size(), 0u);
+
+  const auto same_line =
+      failures_in(output_of([] { ihm::run_with_text<^^same_line_checks>(); }));
+  EXPECT_EQUAL(ihm::result(), 26);
+  EXPECT_EQUAL(same_line.size(), 2u);
+  if (same_line.size() == 2) {
+    EXPECT_TRUE(same_line[0] ==
+                std::vector<std::string>(
+                    {same_line[0][0], "Expected a == 1.5", "  a: 1.0"}));
+    EXPECT_TRUE(same_line[1] ==
+                std::vector<std::string>(
+                    {same_line[1][0], "Expected b == 3.0", "  b: 2.0"}));
+  }
 
   for (const auto &failure : failing)
     for (const std::string &line : failure)

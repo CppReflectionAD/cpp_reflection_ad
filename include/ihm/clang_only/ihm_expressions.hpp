@@ -22,9 +22,9 @@
 //
 // Only checks written directly in the body of the function given to
 // run_with_text() (including nested blocks, `if`s and loops) have their text;
-// the others print `lhs` and `rhs`. Each check is found by its line, so put
-// at most one check per line. Declare one variable per declaration in that
-// body (see AGENTS.md).
+// the others print `lhs` and `rhs`. Each check is found by its line and
+// column, so several checks can share a line. Declare one variable per
+// declaration in that body (see AGENTS.md).
 //
 // The text is rebuilt from the expression, not copied from the source, so it
 // can differ from what the macros print: parentheses are only those the
@@ -67,6 +67,7 @@ namespace m = std::meta;
 struct check_site {
   const char *file;
   unsigned line;
+  unsigned column;
   const char *lhs;
   const char *rhs;
   int lhs_prec;
@@ -497,13 +498,14 @@ consteval int operand_precedence(m::info operand) {
   return is_whole_literal(operand) ? primary_prec : print(operand).prec;
 }
 
-// The text of a check call's operands, and where the call is: the same file
-// and line as the std::source_location it passes at run time.
+// The text of a check call's operands, and where the call is: the same file,
+// line and column as the std::source_location it passes at run time.
 consteval check_site site_of(m::info call) {
   const std::source_location loc = m::source_location_of(call);
   const auto ops = m::operands_of(call); // [callee, lhs, rhs, ..., loc]
   return {std::define_static_string(std::string_view(loc.file_name())),
           static_cast<unsigned>(loc.line()),
+          static_cast<unsigned>(loc.column()),
           operand_text(ops[1]),
           operand_text(ops[2]),
           operand_precedence(ops[1]),
@@ -535,7 +537,8 @@ consteval std::vector<check_site> collect_sites(m::info fn) {
 // active_sites.
 inline operand_names names_from_sites(const std::source_location &loc) {
   for (const check_site &s : active_sites)
-    if (s.line == loc.line() && std::string_view(s.file) == loc.file_name())
+    if (s.line == loc.line() && s.column == loc.column() &&
+        std::string_view(s.file) == loc.file_name())
       return {s.lhs, s.rhs, s.lhs_prec, s.rhs_prec};
   return {};
 }

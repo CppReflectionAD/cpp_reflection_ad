@@ -29,7 +29,8 @@
 // as numbers, and pointers to them as addresses; floating-point values in the
 // shortest form that reads back exactly (a long double wider than a double
 // with all the digits it may need); enums as their enumerator (`color::red`);
-// ranges and other arrays as their elements (`{1, 2}`); aggregates as their
+// ranges and other arrays as their elements (`{1, 2}`); std::pair, std::tuple
+// and other tuple-like types as their elements too; aggregates as their
 // members (`{.x = 1, .y = 2.5}`); and anything else as its type name
 // (`<widget>`).
 //
@@ -48,6 +49,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 
@@ -194,6 +196,16 @@ template <class R> void write_range(std::ostream &os, const R &range) {
   os << '}';
 }
 
+// A tuple-like value (std::pair, std::tuple) as its elements: `{1, 2}`.
+template <class T> void write_tuple(std::ostream &os, const T &v) {
+  os << '{';
+  [&]<std::size_t... I>(std::index_sequence<I...>) {
+    using std::get;
+    ((os << (I == 0 ? "" : ", "), write_value(os, get<I>(v))), ...);
+  }(std::make_index_sequence<std::tuple_size_v<T>>());
+  os << '}';
+}
+
 // An aggregate as its initializer: its bases first, as `{...}`, then its
 // members, as `.name = value`. An anonymous union has no name and its active
 // member isn't known, so it prints as `<anonymous union>`.
@@ -273,6 +285,8 @@ template <class T> void write_value(std::ostream &os, const T &v) {
     os << v;
   } else if constexpr (std::ranges::input_range<const T>) {
     write_range(os, v);
+  } else if constexpr (requires { std::tuple_size<T>::value; }) {
+    write_tuple(os, v);
   } else if constexpr (std::is_class_v<T> && std::is_aggregate_v<T>) {
     write_members(os, v);
   } else {
