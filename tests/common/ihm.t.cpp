@@ -165,6 +165,15 @@ int main() {
   const char *null_string = nullptr;
   EXPECT_EQUAL(text(null_string), "nullptr");
   EXPECT_EQUAL(text(nullptr), "nullptr");
+  // A pointer to bytes (std::int8_t, std::uint8_t) prints as an address, not
+  // as the C string it would be read as.
+  const std::uint8_t *null_bytes = nullptr;
+  EXPECT_EQUAL(text(null_bytes), "nullptr");
+  const std::uint8_t bytes[3] = {'A', 'B', '\0'};
+  EXPECT_EQUAL(text(bytes + 1), text(static_cast<const void *>(bytes + 1)));
+  const std::int8_t *signed_bytes =
+      reinterpret_cast<const std::int8_t *>(bytes);
+  EXPECT_EQUAL(text(signed_bytes), text(static_cast<const void *>(bytes)));
   EXPECT_EQUAL(text(std::vector<double>{1.0, 2.5}), "{1.0, 2.5}");
   EXPECT_EQUAL(text(std::vector<int>(20, 7)),
                "{7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, ...}");

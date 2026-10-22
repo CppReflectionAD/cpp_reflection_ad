@@ -25,7 +25,8 @@
 // Being function templates, the checks work anywhere: in helpers, lambdas,
 // templates and loops, several to a line. They find where they are
 // with std::source_location, and print values by reflection: with `<<` if a
-// value has it; strings and char arrays quoted; floating-point values in the
+// value has it; strings and char arrays quoted; std::int8_t and std::uint8_t
+// as numbers, and pointers to them as addresses; floating-point values in the
 // shortest form that reads back exactly (a long double wider than a double
 // with all the digits it may need); enums as their enumerator (`color::red`);
 // ranges and other arrays as their elements (`{1, 2}`); aggregates as their
@@ -255,6 +256,19 @@ template <class T> void write_value(std::ostream &os, const T &v) {
       }
     }
     os << quoted(v);
+  } else if constexpr (std::is_pointer_v<T> &&
+                       (std::is_same_v<
+                            std::remove_cv_t<std::remove_pointer_t<T>>,
+                            signed char> ||
+                        std::is_same_v<
+                            std::remove_cv_t<std::remove_pointer_t<T>>,
+                            unsigned char>)) {
+    // An address, as the bytes it points to print as numbers; `<<` would read
+    // it as a C string.
+    if (v == nullptr)
+      os << "nullptr";
+    else
+      os << static_cast<const void *>(v);
   } else if constexpr (requires { os << v; }) {
     os << v;
   } else if constexpr (std::ranges::input_range<const T>) {
