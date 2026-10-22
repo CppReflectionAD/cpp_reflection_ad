@@ -62,7 +62,7 @@ namespace detail {
 inline int error_count = 0;
 
 inline void increase_error_count() {
-  if (++error_count == max_errors) {
+  if (++error_count >= max_errors) {
     std::cout << "maximum number of errors exceeded" << std::endl;
     throw std::runtime_error("maximum number of errors exceeded");
   }

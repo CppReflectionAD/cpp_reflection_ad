@@ -58,7 +58,7 @@ inline int max_errors = 10;
 
 inline void increase_error_count() {
   _result++;
-  if (_result == max_errors) {
+  if (_result >= max_errors) {
     std::cout << "maximum number of errors exceeded" << std::endl;
     throw std::runtime_error("maximum number of errors exceeded");
   }

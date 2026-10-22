@@ -257,6 +257,17 @@ int main() {
   EXPECT_TRUE(std::cout.rdbuf() == cout_buffer);
   EXPECT_TRUE(threw);
   EXPECT_EQUAL(ihm::result(), 2);
+
+  // A limit at or below the count already reached stops at the next failure.
+  ihm::max_errors = 0;
+  threw = false;
+  try {
+    output_of([] { ihm::expect_equal(1, 4); });
+  } catch (const std::runtime_error &) {
+    threw = true;
+  }
+  EXPECT_TRUE(threw);
+  EXPECT_EQUAL(ihm::result(), 3);
   ihm::max_errors = 10;
   detail::error_count = 0;
 
