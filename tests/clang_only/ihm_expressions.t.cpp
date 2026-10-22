@@ -113,6 +113,19 @@ void null_pointer_checks() {
   ihm::expect_equal(p == 0, true);
 }
 
+// A literal operand prints as its value, without a value line of its own.
+void literal_checks() {
+  const unsigned n = 2u;
+  const long l = 4;
+  const float f = 1.5f;
+  const double d = 1.0;
+  ihm::expect_equal(n, 3u);
+  ihm::expect_equal(l, 5l);
+  ihm::expect_equal(f, 2.5f);
+  ihm::expect_equal(d, 1e16);
+  ihm::expect_equal(d, 1e300);
+}
+
 // The failures in `lines`, each from its "<file>:<line> Failure" line to the
 // next one.
 std::vector<std::vector<std::string>>
@@ -262,6 +275,28 @@ int main() {
                                   "  p == 0: false"}));
   }
 
+  const auto literals =
+      failures_in(output_of([] { ihm::run_with_text<^^literal_checks>(); }));
+  EXPECT_EQUAL(ihm::result(), 24);
+  EXPECT_EQUAL(literals.size(), 5u);
+  if (literals.size() == 5) {
+    EXPECT_TRUE(literals[0] ==
+                std::vector<std::string>(
+                    {literals[0][0], "Expected n == 3", "  n: 2"}));
+    EXPECT_TRUE(literals[1] ==
+                std::vector<std::string>(
+                    {literals[1][0], "Expected l == 5", "  l: 4"}));
+    EXPECT_TRUE(literals[2] ==
+                std::vector<std::string>(
+                    {literals[2][0], "Expected f == 2.5", "  f: 1.5"}));
+    EXPECT_TRUE(literals[3] ==
+                std::vector<std::string>(
+                    {literals[3][0], "Expected d == 1e+16", "  d: 1.0"}));
+    EXPECT_TRUE(literals[4] ==
+                std::vector<std::string>(
+                    {literals[4][0], "Expected d == 1e+300", "  d: 1.0"}));
+  }
+
   for (const auto &failure : failing)
     for (const std::string &line : failure)
       std::cout << "  | " << line << std::endl;
@@ -283,11 +318,9 @@ void side_by_side_same() {
   double b = 2.0;
   double c = 3.0;
   int i = 1;
-  unsigned n = 2u;
   std::string s = "abc";
   std::vector<double> v = {1.0, 2.0};
   double arr[2] = {1.0, 2.0};
-  long double z = 0.2L;
   EXPECT_EQUAL(a, b);
   ihm::expect_equal(a, b);
   EXPECT_EQUAL(a + b, c * b);
@@ -306,8 +339,6 @@ void side_by_side_same() {
   ihm::expect_equal(a < b, false);
   EXPECT_EQUAL(i, 2);
   ihm::expect_equal(i, 2);
-  EXPECT_EQUAL(n, 3u);
-  ihm::expect_equal(n, 3u);
   EXPECT_EQUAL(i * (i + 1), 1);
   ihm::expect_equal(i * (i + 1), 1);
   EXPECT_EQUAL(i, 'b');
@@ -326,8 +357,6 @@ void side_by_side_same() {
   ihm::expect_equal(scaled(v[1]), 1.0);
   EXPECT_EQUAL(arr[i], 1.0);
   ihm::expect_equal(arr[i], 1.0);
-  EXPECT_EQUAL(z, 0.1L);
-  ihm::expect_equal(z, 0.1L);
 }
 
 // Where the text differs: see the header comment of
@@ -337,8 +366,14 @@ void side_by_side_different() {
   double b = 2.0;
   double c = 3.0;
   int i = 1;
+  unsigned n = 2u;
+  long double z = 0.2L;
   std::string s = "abc";
   std::vector<double> v = {1.0, 2.0};
+  EXPECT_EQUAL(n, 3u);
+  ihm::expect_equal(n, 3u);
+  EXPECT_EQUAL(z, 0.1L);
+  ihm::expect_equal(z, 0.1L);
   EXPECT_EQUAL(a < b ? a : b, c);
   ihm::expect_equal(a < b ? a : b, c);
   EXPECT_EQUAL(std::abs(i - 3), 1);

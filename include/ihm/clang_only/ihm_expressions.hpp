@@ -28,9 +28,11 @@
 //
 // The text is rebuilt from the expression, not copied from the source, so it
 // can differ from what the macros print: parentheses are only those the
-// operators' precedence needs, literals are respelled (`0x10` prints as `16`,
-// `1.e3` as `1000.0`), names lose their qualification (`std::abs(x)` prints as
-// `abs(x)`), casts are dropped, and member accesses and member function calls
+// operators' precedence needs, a literal operand prints as its value (`3u` as
+// `3`, `1e16` as `1e+16`) and literals inside an operand are respelled (`0x10`
+// prints as `16`, `1.e3` as `1000.0`), names lose their qualification
+// (`std::abs(x)` prints as `abs(x)`), casts are dropped, and member accesses
+// and member function calls
 // print as `<expr>` (the reflection gives no member names; known gap
 // tests/known_gap/clang/member_access_declaration.cpp). A string literal
 // is only supported as a whole operand of a check, or passed to a parameter of
@@ -475,23 +477,24 @@ consteval bool is_check(m::info call) {
          check == ^^expect_near_abs;
 }
 
-consteval bool is_string_literal(m::info operand, m::info type) {
-  return m::is_array_type(type) && is_plain_literal(strip_casts(operand));
+consteval bool is_whole_literal(m::info operand) {
+  return is_plain_literal(strip_casts(operand));
 }
 
-// The text of a check's operand of type `type`, or null for a string literal.
-// The literal binds to the check's reference parameter without converting to
-// a pointer, so literal_text can't evaluate it; report_failure prints its
-// value instead.
-consteval const char *operand_text(m::info operand, m::info type) {
-  if (is_string_literal(operand, type))
+// The text of a check's operand, or null for a literal. A literal operand is
+// named by its value's text, printed at run time (`3u` as `3`, `1e300` as
+// `1e+300`), so it gets no value line of its own; a string literal also can't
+// be evaluated here, as it binds to the check's reference parameter without
+// converting to a pointer.
+consteval const char *operand_text(m::info operand) {
+  if (is_whole_literal(operand))
     return nullptr;
   return std::define_static_string(text_of(operand));
 }
 
 // The precedence of the outermost operator in operand_text().
-consteval int operand_precedence(m::info operand, m::info type) {
-  return is_string_literal(operand, type) ? primary_prec : print(operand).prec;
+consteval int operand_precedence(m::info operand) {
+  return is_whole_literal(operand) ? primary_prec : print(operand).prec;
 }
 
 // The text of a check call's operands, and where the call is: the same file
@@ -499,13 +502,12 @@ consteval int operand_precedence(m::info operand, m::info type) {
 consteval check_site site_of(m::info call) {
   const std::source_location loc = m::source_location_of(call);
   const auto ops = m::operands_of(call); // [callee, lhs, rhs, ..., loc]
-  const auto types = m::template_arguments_of(m::callee_of(call)); // [L, R...]
   return {std::define_static_string(std::string_view(loc.file_name())),
           static_cast<unsigned>(loc.line()),
-          operand_text(ops[1], types[0]),
-          operand_text(ops[2], types[1]),
-          operand_precedence(ops[1], types[0]),
-          operand_precedence(ops[2], types[1])};
+          operand_text(ops[1]),
+          operand_text(ops[2]),
+          operand_precedence(ops[1]),
+          operand_precedence(ops[2])};
 }
 
 consteval void collect_sites(m::info stmt, std::vector<check_site> &out,
