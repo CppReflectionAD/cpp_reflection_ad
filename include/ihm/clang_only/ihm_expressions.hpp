@@ -235,12 +235,17 @@ consteval bool is_char_pointer(m::info t) {
 }
 
 // The literal `p.expr`. A string literal can't be evaluated by itself, but
-// its conversion to `const char *` can.
+// its conversion to `const char *` can. A null pointer literal converted to
+// `const char *` (`p == nullptr`, `p == 0`) isn't a string: it prints as
+// written.
 consteval std::string literal_text(peeled p) {
   if (m::is_cast(p.innermost)) {
     const m::info v = m::constant_of(p.innermost);
-    if (is_char_pointer(m::type_of(v)))
-      return quoted(m::extract<const char *>(v));
+    if (is_char_pointer(m::type_of(v))) {
+      const char *s = m::extract<const char *>(v);
+      if (s != nullptr)
+        return quoted(s);
+    }
   }
   return value_text(m::constant_of(p.expr));
 }

@@ -106,6 +106,13 @@ void rewritten_ordering_checks() {
   ihm::expect_equal(s >= t, true);
 }
 
+// A null pointer literal converted to `const char *` isn't a string.
+void null_pointer_checks() {
+  const char *p = "x";
+  ihm::expect_equal(p == nullptr, true);
+  ihm::expect_equal(p == 0, true);
+}
+
 // The failures in `lines`, each from its "<file>:<line> Failure" line to the
 // next one.
 std::vector<std::vector<std::string>>
@@ -238,6 +245,21 @@ int main() {
     EXPECT_TRUE(rewritten[5] == std::vector<std::string>(
                                     {rewritten[5][0], "Expected s >= t == true",
                                      "  s >= t: false"}));
+  }
+
+  const auto null_pointer = failures_in(
+      output_of([] { ihm::run_with_text<^^null_pointer_checks>(); }));
+  EXPECT_EQUAL(ihm::result(), 19);
+  EXPECT_EQUAL(null_pointer.size(), 2u);
+  if (null_pointer.size() == 2) {
+    EXPECT_TRUE(null_pointer[0] ==
+                std::vector<std::string>({null_pointer[0][0],
+                                          "Expected p == nullptr == true",
+                                          "  p == nullptr: false"}));
+    EXPECT_TRUE(
+        null_pointer[1] ==
+        std::vector<std::string>({null_pointer[1][0], "Expected p == 0 == true",
+                                  "  p == 0: false"}));
   }
 
   for (const auto &failure : failing)
