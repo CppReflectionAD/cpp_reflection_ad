@@ -6,6 +6,7 @@ the [CMake presets](#cmake-presets), which CI calls directly. Where a new test
 goes is in [tests/README.md](tests/README.md).
 
 - [Prerequisites](#prerequisites)
+- [Getting the compilers](#getting-the-compilers)
 - [Building the compilers](#building-the-compilers)
 - [Building and testing](#building-and-testing)
 - [CMake presets](#cmake-presets)
@@ -19,11 +20,13 @@ goes is in [tests/README.md](tests/README.md).
 
 ## Prerequisites
 
-The tests need the two reflection compiler forks, which the repo builds from its
-submodules (see [Building the compilers](#building-the-compilers)). Released
-compilers can't build this code.
+The tests need the two reflection compiler forks, which CI builds from the
+repo's submodules. Download those builds, or build the compilers yourself (see
+[Getting the compilers](#getting-the-compilers)). Released compilers can't
+build this code.
 
-- **Linux** (CI uses Ubuntu 24.04): `git`, `cmake` (3.25 or newer), `ninja`,
+- **Linux** (CI uses Ubuntu 24.04; WSL2 works the same): `git`, `cmake` (3.25
+  or newer) and `ninja`. To build the compilers rather than download them, also
   host `clang`/`clang++` and `ld.lld` to build clang, and for GCC the packages
   CI installs: `build-essential flex bison libgmp-dev libmpfr-dev libmpc-dev
   texinfo zlib1g-dev`.
@@ -34,6 +37,39 @@ compilers can't build this code.
   scripts in `tools/`.
 - **A debugger:** `gdb` or `lldb`. In VS Code, CodeLLDB comes first (see
   [Debugging](#debugging)).
+
+## Getting the compilers
+
+CI builds both compilers from the submodule pins on Linux x86-64, Linux arm64
+and macOS arm64, and publishes each build in the
+[`toolchains` release](https://github.com/CppReflectionAD/cpp_reflection_ad/releases/tag/toolchains).
+`--fetch-compilers` downloads the builds that match your checkout and machine,
+checks them against their checksums, and unpacks them where
+`--build-compilers` would put them, so the presets and `run_tests.py` find
+them. It takes minutes rather than hours:
+
+```bash
+# both compilers, then every test with each
+python3 run_tests.py --fetch-compilers
+
+# just GCC, then build the tests without running them
+python3 run_tests.py --compiler gcc --fetch-compilers --build-only
+```
+
+It's the same build the CI tests use: the asset is named after the pin and a
+hash of the recipe, the same inputs as CI's toolchain cache key. Fetching again
+after a pin bump replaces a fetched compiler, and does nothing if it's already
+current. It never replaces a compiler you built, and `--build-compilers` won't
+build over a fetched one: delete the directory first, or use another one
+(`--clang-root`, `--gcc-build-dir`).
+
+There's no asset for a pin or recipe that hasn't reached `main` yet, such as a
+pin-bump branch, so build the compilers there. The Linux builds come from
+Ubuntu 24.04 runners and may not run on a distribution with an older glibc. On
+macOS, GCC finds the system
+headers through the SDK it was built with, so a fetch warns when your Xcode's
+SDK or linker differs from the CI runner's; if the fetched GCC then fails to
+find headers or to link, build it instead.
 
 ## Building the compilers
 
@@ -136,7 +172,7 @@ python3 run_tests.py --compiler clang --tests ad_scalar_demo
 python3 run_tests.py --compiler clang --tests 'common/ad_scalar_demo.cpp'
 
 # every test under AddressSanitizer and UBSan (a Debug build, the
-# <compiler>-sanitize preset); clang needs compiler-rt, which --build-compilers builds
+# <compiler>-sanitize preset); clang needs compiler-rt, which fetched and built clangs have
 python3 run_tests.py --sanitize
 ```
 
@@ -216,8 +252,9 @@ or run a built binary directly: `lldb build/cmake/clang-debug/tests/ad_scalar_de
 The repo checks in a VS Code setup in `.vscode/`: CMake Tools in presets mode,
 debug configurations, and IntelliSense from `build/compile_commands.json`.
 
-1. Build the compiler(s) (see [Building the compilers](#building-the-compilers));
-   the presets look for them in `build/`.
+1. Fetch or build the compiler(s) (see
+   [Getting the compilers](#getting-the-compilers)); the presets look for them
+   in `build/`.
 2. Install the recommended extensions (VS Code offers them when the folder
    opens): `ms-vscode.cmake-tools` and `vadimcn.vscode-lldb` (CodeLLDB). For the
    `(cppdbg)` configurations, install `ms-vscode.cpptools` too.
@@ -346,6 +383,16 @@ Both workflows also build and cache their compiler on Linux arm64
 (`ubuntu-24.04-arm`) in a `toolchain-arm64` job, with the same recipe and key
 as on x86-64. The key records the runner's architecture, so the two don't
 share an entry.
+
+After each toolchain job, an `archive` job (`toolchain-archive.yml`) checks
+whether the `toolchains` release already has that toolchain's asset for
+`--fetch-compilers`. If it doesn't, the job packs the cached toolchain,
+deletes the original, fetches the archive into `build/` and runs the Release
+preset and the toolchain check with it, so the archive is known to work once
+moved. On `main`, a `publish` job then uploads it; it's the only job with
+write access to the repository. So a pin bump's pull request checks its
+archives, and its merge publishes them. The `archive` jobs aren't required
+checks and don't run in the merge queue.
 
 ## Merging a pull request
 

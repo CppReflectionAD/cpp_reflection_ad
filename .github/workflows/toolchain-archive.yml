@@ -1,0 +1,181 @@
+# Packs a cached toolchain into a release asset, checks that it works once
+# moved, and on main publishes it to the `toolchains` release, from which
+# `run_tests.py --fetch-compilers` downloads it (#165).
+# Called by {clang,gcc}_prebuilt_cache.yml after each toolchain job, next to
+# the tests rather than ahead of them, and outside the summary jobs, so
+# archiving never delays or fails a required check.
+# The asset is named by tools/toolchain/archive.py from the inputs of the cache
+# key, so each pin and recipe is packed once: when its asset is already
+# published, this does nothing. Until then it runs on pull requests too, which
+# checks the archive of a pin bump before it merges, but publishes only from
+# main.
+name: Archive Toolchain
+
+on:
+  workflow_call:
+    inputs:
+      compiler:
+        description: clang or gcc
+        type: string
+        required: true
+      cache_key:
+        description: Cache key of the toolchain job, holding /opt/toolchain-<compiler>
+        type: string
+        required: true
+      runner:
+        description: Runner the toolchain was built on
+        type: string
+        required: true
+      macos_sdk:
+        description: On macOS, the SDK and linker GCC was built with (macos-sdk-id.sh)
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  archive:
+    runs-on: ${{ inputs.runner }}
+    permissions:
+      contents: read
+    outputs:
+      asset: ${{ steps.name.outputs.asset }}
+      publish: ${{ steps.published.outputs.publish }}
+    env:
+      COMPILER: ${{ inputs.compiler }}
+      PREFIX: /opt/toolchain-${{ inputs.compiler }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # Fails if archive.py and the toolchain job disagree on pin or recipe.
+      - name: Name the asset
+        id: name
+        env:
+          CACHE_KEY: ${{ inputs.cache_key }}
+        run: |
+          set -euo pipefail
+          asset="$(python3 -m tools.toolchain.archive name "$COMPILER" --cache-key "$CACHE_KEY")"
+          echo "asset=${asset}" >> "$GITHUB_OUTPUT"
+
+      - name: Check whether it's already published
+        id: published
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASSET: ${{ steps.name.outputs.asset }}
+          FROM_MAIN: >-
+            ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push'
+            || github.event_name == 'schedule'
+            || github.event_name == 'workflow_dispatch') }}
+        run: |
+          set -euo pipefail
+          names="$(gh release view toolchains --repo "$GITHUB_REPOSITORY" \
+            --json assets --jq '.assets[].name' 2>/dev/null || true)"
+          if grep -qxF "$ASSET" <<< "$names"; then
+            echo "${ASSET} is already published."
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+            echo "publish=${FROM_MAIN}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # /opt belongs to root on macOS, so the cache can't create the prefix.
+      - name: Create the toolchain prefix
+        if: steps.published.outputs.needed == 'true' && runner.os == 'macOS'
+        run: |
+          sudo mkdir -p "$PREFIX"
+          sudo chown "$(id -u):$(id -g)" "$PREFIX"
+
+      - name: Restore the toolchain from cache
+        if: steps.published.outputs.needed == 'true'
+        uses: actions/cache/restore@v6
+        with:
+          path: /opt/toolchain-${{ inputs.compiler }}
+          key: ${{ inputs.cache_key }}
+          fail-on-cache-miss: true
+
+      - name: Pack it
+        if: steps.published.outputs.needed == 'true'
+        env:
+          MACOS_SDK: ${{ inputs.macos_sdk }}
+        run: |
+          set -euo pipefail
+          start=$SECONDS
+          python3 -m tools.toolchain.archive pack "$COMPILER" "$PREFIX" \
+            "$RUNNER_TEMP/assets" --macos-sdk "$MACOS_SDK"
+          echo "Took $((SECONDS - start)) s"
+          ls -l "$RUNNER_TEMP/assets"
+
+      # The original goes first, so nothing in the unpacked copy can still
+      # reach into /opt. Then fetch the archive the way a contributor would,
+      # into the presets' own place, and run the Release preset and the
+      # toolchain check (sanitizers included) against it. On macOS the check's
+      # programs need SDKROOT, which the tests get from CMake's -isysroot.
+      - name: Fetch it elsewhere and test with it
+        if: steps.published.outputs.needed == 'true'
+        run: |
+          set -euo pipefail
+          sudo rm -rf "$PREFIX"
+          export REFLECT_TOOLCHAIN_URL="file://${RUNNER_TEMP}/assets"
+          python3 run_tests.py --compiler "$COMPILER" --fetch-compilers --build-type release
+          if [ "$COMPILER" = clang ]; then
+            fetched=build/clang-p2996
+          else
+            fetched=build/gcc-p2996/artifacts
+          fi
+          if [ "$RUNNER_OS" = macOS ] && [ "$COMPILER" = clang ]; then
+            SDKROOT="$(xcrun --show-sdk-path)"
+            export SDKROOT
+          fi
+          ".github/scripts/check-${COMPILER}-toolchain.sh" "$fetched"
+
+      - name: Hand the asset to the publish job
+        if: steps.published.outputs.publish == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.name.outputs.asset }}
+          path: ${{ runner.temp }}/assets/
+          retention-days: 1
+          if-no-files-found: error
+
+  # Only this job can write to the repository, and it runs only on main.
+  publish:
+    needs: archive
+    if: needs.archive.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Download the asset
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.archive.outputs.asset }}
+          path: assets
+
+      # The first leg to publish creates the release. Another leg may create
+      # it at the same moment, so a failed create is fine if it now exists.
+      - name: Upload it to the toolchains release
+        env:
+          NOTES: >-
+            Compiler toolchains that CI built from this repository's submodule
+            pins, for `python3 run_tests.py --fetch-compilers` (see
+            CONTRIBUTING.md). Each asset is named
+            <compiler>-<pin>-<recipe hash>-<platform>.tar.xz and has a
+            .sha256 file. CI adds assets as pins and recipes change; don't
+            edit this release by hand.
+        run: |
+          set -euo pipefail
+          if ! gh release view toolchains --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release create toolchains --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" --prerelease --title "Compiler toolchains" \
+              --notes "$NOTES" ||
+              gh release view toolchains --repo "$GITHUB_REPOSITORY" > /dev/null
+          fi
+          gh release upload toolchains --repo "$GITHUB_REPOSITORY" --clobber assets/*
+          ls -l assets

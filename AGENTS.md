@@ -10,7 +10,9 @@ lists only the points that are easy to get wrong.
   call or `cmake` without `--preset`: the flags come from CMake targets.
 - **Don't build the compilers unless asked.** `--build-compilers` takes hours.
   Check for `build/clang-p2996/bin/clang++` and
-  `build/gcc-p2996/artifacts/bin/g++` instead, and say if one is missing.
+  `build/gcc-p2996/artifacts/bin/g++` instead. If one is missing,
+  `--fetch-compilers` downloads CI's build of the pinned compiler in minutes;
+  say so if that fails too.
 - **Iterate on one test** with `--tests <name>`, and run the full suite at the
   end.
 - **Run the lint gate before committing.** It rewrites files, so check the diff
