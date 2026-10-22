@@ -99,6 +99,11 @@ void rewritten_ordering_checks() {
   ihm::expect_equal(p <= q, false);
   ihm::expect_equal(p > q, true);
   ihm::expect_equal(p >= q, true);
+  // In C++26, libc++ compares std::string through operator<=> too.
+  const std::string s = "abc";
+  const std::string t = "abd";
+  ihm::expect_equal(s < t, false);
+  ihm::expect_equal(s >= t, true);
 }
 
 // The failures in `lines`, each from its "<file>:<line> Failure" line to the
@@ -211,25 +216,28 @@ int main() {
 
   const auto rewritten = failures_in(
       output_of([] { ihm::run_with_text<^^rewritten_ordering_checks>(); }));
-  EXPECT_EQUAL(ihm::result(), 15);
-  EXPECT_EQUAL(rewritten.size(), 4u);
-  if (rewritten.size() == 4) {
-    EXPECT_TRUE(rewritten[0] ==
-                std::vector<std::string>({rewritten[0][0],
-                                          "Expected p < q == false",
-                                          "  p < q: true"}));
-    EXPECT_TRUE(rewritten[1] ==
-                std::vector<std::string>({rewritten[1][0],
-                                          "Expected p <= q == false",
-                                          "  p <= q: true"}));
-    EXPECT_TRUE(rewritten[2] ==
-                std::vector<std::string>({rewritten[2][0],
-                                          "Expected p > q == true",
-                                          "  p > q: false"}));
-    EXPECT_TRUE(rewritten[3] ==
-                std::vector<std::string>({rewritten[3][0],
-                                          "Expected p >= q == true",
-                                          "  p >= q: false"}));
+  EXPECT_EQUAL(ihm::result(), 17);
+  EXPECT_EQUAL(rewritten.size(), 6u);
+  if (rewritten.size() == 6) {
+    EXPECT_TRUE(rewritten[0] == std::vector<std::string>(
+                                    {rewritten[0][0], "Expected p < q == false",
+                                     "  p < q: true"}));
+    EXPECT_TRUE(
+        rewritten[1] ==
+        std::vector<std::string>(
+            {rewritten[1][0], "Expected p <= q == false", "  p <= q: true"}));
+    EXPECT_TRUE(rewritten[2] == std::vector<std::string>(
+                                    {rewritten[2][0], "Expected p > q == true",
+                                     "  p > q: false"}));
+    EXPECT_TRUE(rewritten[3] == std::vector<std::string>(
+                                    {rewritten[3][0], "Expected p >= q == true",
+                                     "  p >= q: false"}));
+    EXPECT_TRUE(rewritten[4] == std::vector<std::string>(
+                                    {rewritten[4][0], "Expected s < t == false",
+                                     "  s < t: true"}));
+    EXPECT_TRUE(rewritten[5] == std::vector<std::string>(
+                                    {rewritten[5][0], "Expected s >= t == true",
+                                     "  s >= t: false"}));
   }
 
   for (const auto &failure : failing)
@@ -238,7 +246,8 @@ int main() {
 
   detail::error_count = 0;
 
-  // The macros and the functions print the same first two lines, except
+  // The macros and the functions print the same first two lines in
+  // side_by_side_same(), and different ones in side_by_side_different(),
   // where the text can't be recovered from the reflection.
   EXPECT_EQUAL(compare_side_by_side(), 0);
   TEST_END;
@@ -341,9 +350,11 @@ std::string next_line(const std::string &location) {
 
 // Runs `Fn` and prints the failures of each macro check and of the function
 // check after it side by side, then the values the function prints. Returns
-// the number of pairs whose first two lines differ, other than the function's
-// line being the next one.
-template <std::meta::info Fn> int side_by_side(const char *title) {
+// the number of pairs that aren't as `same_text` says: whose first two lines
+// differ (other than the function's line being the next one) if it's true,
+// or are the same if it's false.
+template <std::meta::info Fn>
+int side_by_side(const char *title, bool same_text) {
   const int macro_errors = detail_test::_result;
   detail_test::_result = 0;
   const auto failures =
@@ -357,19 +368,19 @@ template <std::meta::info Fn> int side_by_side(const char *title) {
   };
   std::cout << title << ":\n  " << column("EXPECT_*") << " | "
             << "ihm::expect_*" << std::endl;
-  int different = 0;
+  int unexpected = 0;
   for (std::size_t i = 0; i + 1 < failures.size(); i += 2) {
     const auto &macro = failures[i];
     const auto &function = failures[i + 1];
     if (macro.size() != 2 || function.size() < 2) {
-      ++different;
+      ++unexpected;
       continue;
     }
     const std::string macro_at = location_of(macro[0]);
     const std::string function_at = location_of(function[0]);
     const bool same =
         function_at == next_line(macro_at) && macro[1] == function[1];
-    different += same ? 0 : 1;
+    unexpected += same == same_text ? 0 : 1;
     std::cout << "  " << column(macro_at) << " | " << function_at << "\n  "
               << column(macro[1]) << " | " << function[1]
               << (same ? "" : "   <- differs") << std::endl;
@@ -377,12 +388,11 @@ template <std::meta::info Fn> int side_by_side(const char *title) {
       std::cout << "  " << column("") << " | " << function[j] << std::endl;
   }
   if (failures.size() % 2 != 0)
-    ++different;
-  return different;
+    ++unexpected;
+  return unexpected;
 }
 
 int compare_side_by_side() {
-  const int different = side_by_side<^^side_by_side_same>("same text");
-  side_by_side<^^side_by_side_different>("different text");
-  return different;
+  return side_by_side<^^side_by_side_same>("same text", true) +
+         side_by_side<^^side_by_side_different>("different text", false);
 }
