@@ -26,6 +26,25 @@ constexpr bool wide_long_double = std::numeric_limits<long double>::digits >
 static_assert(ihm::detail::floating_text(0.1L) == "0.1");
 static_assert(ihm::detail::floating_text(0.1000000000000000001L) ==
               (wide_long_double ? "0.1000000000000000001" : "0.1"));
+// Exact also beyond the powers of ten a double holds exactly (1e22), and for
+// the extremes of each type.
+static_assert(ihm::detail::floating_text(1e300) == "1e300");
+static_assert(ihm::detail::floating_text(1e-300) == "1e-300");
+static_assert(ihm::detail::floating_text(1e23) == "1e23");
+static_assert(ihm::detail::floating_text(0.3) == "0.3");
+static_assert(ihm::detail::floating_text(2.5) == "2.5");
+static_assert(ihm::detail::floating_text(-1.5) == "-1.5");
+static_assert(ihm::detail::floating_text(100.0) == "100.0");
+static_assert(ihm::detail::floating_text(1e-13) == "1e-13");
+static_assert(ihm::detail::floating_text(0.1f) == "0.1");
+static_assert(ihm::detail::floating_text(3.4028235e38f) == "3.4028235e38");
+static_assert(ihm::detail::floating_text(1.7976931348623157e308) ==
+              "1.7976931348623157e308");
+static_assert(ihm::detail::floating_text(2.2250738585072014e-308) ==
+              "2.2250738585072014e-308");
+static_assert(ihm::detail::floating_text(5e-324) == "5e-324");
+static_assert(ihm::detail::floating_text(9007199254740993.0) ==
+              "9007199254740992.0");
 
 void passing_checks() {
   double a = 1.0;
@@ -172,15 +191,15 @@ int main() {
   EXPECT_EQUAL(ihm::result(), 3);
   EXPECT_EQUAL(failing.size(), 3u);
   if (failing.size() == 3) {
-    EXPECT_TRUE(failing[0][0].ends_with("ihm_expressions.t.cpp:44 Failure"));
+    EXPECT_TRUE(failing[0][0].ends_with("ihm_expressions.t.cpp:63 Failure"));
     EXPECT_TRUE(failing[0] ==
                 std::vector<std::string>({failing[0][0], "Expected a != b",
                                           "  a: 1.0", "  b: 1.0"}));
-    EXPECT_TRUE(failing[1][0].ends_with("ihm_expressions.t.cpp:46 Failure"));
+    EXPECT_TRUE(failing[1][0].ends_with("ihm_expressions.t.cpp:65 Failure"));
     EXPECT_TRUE(failing[1] == std::vector<std::string>(
                                   {failing[1][0], "Expected twice(a) != a + b",
                                    "  twice(a): 2.0", "  a + b: 2.0"}));
-    EXPECT_TRUE(failing[2][0].ends_with("ihm_expressions.t.cpp:49 Failure"));
+    EXPECT_TRUE(failing[2][0].ends_with("ihm_expressions.t.cpp:68 Failure"));
     EXPECT_TRUE(failing[2] ==
                 std::vector<std::string>(
                     {failing[2][0], "Expected -i != 0", "  -i: 0"}));
@@ -198,13 +217,13 @@ int main() {
   EXPECT_EQUAL(failing_equal.size(), 3u);
   if (failing_equal.size() == 3) {
     EXPECT_TRUE(
-        failing_equal[0][0].ends_with("ihm_expressions.t.cpp:67 Failure"));
+        failing_equal[0][0].ends_with("ihm_expressions.t.cpp:86 Failure"));
     EXPECT_EQUAL(failing_equal[0][1], "Expected a == b");
     EXPECT_TRUE(
-        failing_equal[1][0].ends_with("ihm_expressions.t.cpp:68 Failure"));
+        failing_equal[1][0].ends_with("ihm_expressions.t.cpp:87 Failure"));
     EXPECT_EQUAL(failing_equal[1][1], "Expected b != twice(a)");
     EXPECT_TRUE(
-        failing_equal[2][0].ends_with("ihm_expressions.t.cpp:70 Failure"));
+        failing_equal[2][0].ends_with("ihm_expressions.t.cpp:89 Failure"));
     EXPECT_EQUAL(failing_equal[2][1], "Expected twice(a) == a + b");
   }
 
@@ -222,12 +241,12 @@ int main() {
   EXPECT_EQUAL(ihm::result(), 9);
   EXPECT_EQUAL(near.size(), 2u);
   if (near.size() == 2) {
-    EXPECT_TRUE(near[0][0].ends_with("ihm_expressions.t.cpp:78 Failure"));
+    EXPECT_TRUE(near[0][0].ends_with("ihm_expressions.t.cpp:97 Failure"));
     EXPECT_TRUE(near[0] ==
                 std::vector<std::string>(
                     {near[0][0], "Expected |twice(a) - a| < 0.5",
                      "  |twice(a) - a|: 1.0", "  twice(a): 2.0", "  a: 1.0"}));
-    EXPECT_TRUE(near[1][0].ends_with("ihm_expressions.t.cpp:79 Failure"));
+    EXPECT_TRUE(near[1][0].ends_with("ihm_expressions.t.cpp:98 Failure"));
     EXPECT_TRUE(near[1] == std::vector<std::string>(
                                {near[1][0], "Expected |b - 2.5| < 0.1",
                                 "  |b - 2.5|: 0.5", "  b: 2.0"}));

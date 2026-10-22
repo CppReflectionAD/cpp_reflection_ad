@@ -133,18 +133,60 @@ template <class T> consteval std::string integer_text(T value) {
   return negative ? "-" + s : s;
 }
 
-template <class F> consteval F power_of_ten(int n) {
-  F p = 1;
-  for (int i = 0; i < n; ++i)
-    p *= 10;
-  return p;
+// A non-negative integer of any size, as base-10^9 digits, least significant
+// first.
+using big_decimal = std::vector<unsigned>;
+inline constexpr unsigned big_base = 1'000'000'000;
+
+// n *= factor, for a factor up to 2^31.
+consteval void multiply(big_decimal &n, unsigned factor) {
+  unsigned long long carry = 0;
+  for (unsigned &limb : n) {
+    carry += static_cast<unsigned long long>(limb) * factor;
+    limb = static_cast<unsigned>(carry % big_base);
+    carry /= big_base;
+  }
+  for (; carry != 0; carry /= big_base)
+    n.push_back(static_cast<unsigned>(carry % big_base));
+}
+
+// n *= factor^count, for a factor of 2 or 5, a few powers at a time.
+consteval void multiply_power(big_decimal &n, unsigned factor, int count) {
+  while (count > 0) {
+    unsigned f = 1;
+    for (; count > 0 && f <= (1u << 31) / factor; --count)
+      f *= factor;
+    multiply(n, f);
+  }
+}
+
+// n += delta, for a delta in -2..2 that leaves n non-negative.
+consteval void add(big_decimal &n, int delta) {
+  for (std::size_t i = 0; delta != 0; ++i) {
+    if (i == n.size())
+      n.push_back(0);
+    const long long sum = static_cast<long long>(n[i]) + delta;
+    delta = sum < 0 ? -1 : sum >= big_base ? 1 : 0;
+    n[i] =
+        static_cast<unsigned>(sum - delta * static_cast<long long>(big_base));
+  }
+}
+
+// The decimal digits of `n`, with leading zeros up to a multiple of 9.
+consteval std::string decimal_digits(const big_decimal &n) {
+  std::string s(9 * n.size(), '0');
+  std::size_t end = s.size();
+  for (unsigned limb : n)
+    for (int i = 0; i < 9; ++i, limb /= 10)
+      s[--end] = static_cast<char>('0' + limb % 10);
+  return s;
 }
 
 // `digits` times 10^`exponent`, as a C++ floating literal: fixed notation
 // with at least one decimal (`2.0`, `0.125`), or scientific for very large
 // or small values (`1e-13`).
-consteval std::string decimal_text(unsigned long long digits, int exponent) {
-  std::string d = integer_text(digits);
+consteval std::string decimal_text(std::string d, int exponent) {
+  d.erase(0, d.find_first_not_of('0'));
   while (d.size() > 1 && d.back() == '0') {
     d.pop_back();
     ++exponent;
@@ -166,38 +208,86 @@ consteval std::string decimal_text(unsigned long long digits, int exponent) {
   return "0." + std::string(static_cast<std::size_t>(-point), '0') + d;
 }
 
-// The shortest decimal that reads back as `value`, searched in double, or in
-// long double for a long double, which can be more precise. Up to 19
-// significant digits.
+// The shortest decimal that reads back as `value`. Found exactly, with
+// integers: the value and the bounds of the decimals that round to it are
+// written out in full, and the shortest decimal between the bounds wins (the
+// nearer to the value if there are two).
 template <class T> consteval std::string floating_text(T value) {
-  using F = std::common_type_t<T, double>;
+  constexpr int digits = std::numeric_limits<T>::digits;
+  constexpr int min_exponent = std::numeric_limits<T>::min_exponent - digits;
   if (value == 0)
     return "0.0";
   const bool negative = value < 0;
-  const T magnitude = negative ? -value : value;
-  const F x = magnitude;
-  int leading = 0;
-  for (F y = x; y >= 10; y /= 10)
-    ++leading;
-  for (F y = x; y < 1; y *= 10)
-    --leading;
-  for (int precision = 1; precision <= std::numeric_limits<F>::max_digits10;
-       ++precision) {
-    const int exponent = leading - precision + 1;
-    if (exponent > 300 || exponent < -300)
-      break;
-    const F scale = power_of_ten<F>(exponent < 0 ? -exponent : exponent);
-    const F scaled = exponent < 0 ? x * scale : x / scale;
-    if (!(scaled < 1e19))
-      break;
-    const unsigned long long digits =
-        static_cast<unsigned long long>(scaled + F(0.5));
-    const F back = exponent < 0 ? static_cast<F>(digits) / scale
-                                : static_cast<F>(digits) * scale;
-    if (static_cast<T>(back) == magnitude)
-      return (negative ? "-" : "") + decimal_text(digits, exponent);
+  T x = negative ? -value : value;
+  if (!(x <= std::numeric_limits<T>::max())) // infinity or NaN
+    return "<literal>";
+  // value = ±x * 2^exponent, x an integer below 2^digits.
+  T top = 1;
+  for (int i = 0; i < digits; ++i)
+    top *= 2;
+  int exponent = 0;
+  for (; x >= top; x /= 2)
+    ++exponent;
+  for (; x < top / 2; x *= 2)
+    --exponent;
+  for (; exponent < min_exponent; x /= 2) // a subnormal
+    ++exponent;
+  // Beyond a double's exponents (a wider long double) the digits would take
+  // too many steps to write out at compile time.
+  if (exponent > 1100 || exponent < -1100)
+    return "<literal>";
+  // At a power of two the next value down is nearer than the next value up.
+  const bool narrower_below = x == top / 2 && exponent > min_exponent;
+  big_decimal mantissa{0};
+  for (T bit = top / 2; bit >= 1; bit /= 2) {
+    multiply(mantissa, 2);
+    if (x >= bit) {
+      x -= bit;
+      add(mantissa, 1);
+    }
   }
-  return "<literal>";
+  // A decimal exactly halfway to the next value rounds to the even mantissa.
+  const bool even = mantissa[0] % 2 == 0;
+  multiply(mantissa, 4);
+  // In units of 2^(exponent - 2), the value is 4 * mantissa, and the bounds
+  // are halfway to the next values down and up. 2^-n is 5^n / 10^n.
+  const int twos = exponent - 2;
+  const int decimal_exponent = twos < 0 ? twos : 0;
+  const auto digits_of = [&](int offset) {
+    big_decimal n = mantissa;
+    add(n, offset);
+    if (twos >= 0)
+      multiply_power(n, 2, twos);
+    else
+      multiply_power(n, 5, -twos);
+    return decimal_digits(n);
+  };
+  std::string low = digits_of(narrower_below ? -1 : -2);
+  std::string exact = digits_of(0);
+  const std::string high = digits_of(2);
+  low.insert(0, high.size() - low.size(), '0');
+  exact.insert(0, high.size() - exact.size(), '0');
+  const auto reads_back = [&](const std::string &d) {
+    return (low < d || (even && low == d)) && (d < high || (even && d == high));
+  };
+  for (std::size_t end = exact.find_first_not_of('0') + 1;; ++end) {
+    const std::string down =
+        exact.substr(0, end) + std::string(high.size() - end, '0');
+    std::string up = down;
+    std::size_t i = end;
+    for (; i > 0 && up[i - 1] == '9'; --i)
+      up[i - 1] = '0';
+    if (i > 0)
+      ++up[i - 1];
+    const bool up_reads_back = i > 0 && reads_back(up);
+    const bool down_reads_back = reads_back(down);
+    const bool up_nearer = end < exact.size() && exact[end] >= '5';
+    const std::string sign = negative ? "-" : "";
+    if (up_reads_back && (up_nearer || !down_reads_back))
+      return sign + decimal_text(up, decimal_exponent);
+    if (down_reads_back) // at the latest when `down` is all of `exact`
+      return sign + decimal_text(down, decimal_exponent);
+  }
 }
 
 // A value reflection as a C++ literal.
