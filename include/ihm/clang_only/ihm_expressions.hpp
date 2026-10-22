@@ -546,14 +546,19 @@ inline operand_names names_from_sites(const std::source_location &loc) {
 template <std::meta::info Fn> int run_with_text() {
   static constexpr auto sites =
       std::define_static_array(detail::collect_sites(Fn));
-  const std::span<const detail::check_site> previous_sites =
-      detail::active_sites;
-  const auto previous_names = detail::operand_names_at;
+  // Puts back the previous sites and names, also if Fn throws.
+  struct restore {
+    std::span<const detail::check_site> previous_sites = detail::active_sites;
+    decltype(detail::operand_names_at) previous_names =
+        detail::operand_names_at;
+    ~restore() {
+      detail::active_sites = previous_sites;
+      detail::operand_names_at = previous_names;
+    }
+  } guard;
   detail::active_sites = sites;
   detail::operand_names_at = &detail::names_from_sites;
   [:Fn:]();
-  detail::active_sites = previous_sites;
-  detail::operand_names_at = previous_names;
   return result();
 }
 

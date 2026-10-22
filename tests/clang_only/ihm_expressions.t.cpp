@@ -126,6 +126,9 @@ void literal_checks() {
   ihm::expect_equal(d, 1e300);
 }
 
+// A test function that throws.
+void throwing_checks() { throw 1; }
+
 // The failures in `lines`, each from its "<file>:<line> Failure" line to the
 // next one.
 std::vector<std::vector<std::string>>
@@ -296,6 +299,14 @@ int main() {
                 std::vector<std::string>(
                     {literals[4][0], "Expected d == 1e+300", "  d: 1.0"}));
   }
+
+  // A test function that throws leaves no operand names behind.
+  try {
+    ihm::run_with_text<^^throwing_checks>();
+  } catch (int) {
+  }
+  EXPECT_TRUE(detail::operand_names_at == nullptr);
+  EXPECT_EQUAL(detail::active_sites.size(), 0u);
 
   for (const auto &failure : failing)
     for (const std::string &line : failure)

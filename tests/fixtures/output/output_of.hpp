@@ -9,9 +9,15 @@
 // The lines `f` prints to std::cout.
 template <class F> std::vector<std::string> output_of(F f) {
   std::ostringstream captured;
-  std::streambuf *previous = std::cout.rdbuf(captured.rdbuf());
-  f();
-  std::cout.rdbuf(previous);
+  {
+    // Gives std::cout its buffer back, also if f() throws, before `captured`
+    // is destroyed.
+    struct restore {
+      std::streambuf *previous;
+      ~restore() { std::cout.rdbuf(previous); }
+    } guard{std::cout.rdbuf(captured.rdbuf())};
+    f();
+  }
 
   std::vector<std::string> lines;
   std::istringstream in(captured.str());

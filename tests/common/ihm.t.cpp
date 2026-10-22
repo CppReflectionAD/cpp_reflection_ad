@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <limits>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -105,7 +106,7 @@ int main() {
   EXPECT_EQUAL(ihm::result(), 1);
   EXPECT_EQUAL(failing.size(), 4u);
   if (failing.size() == 4) {
-    EXPECT_TRUE(failing[0].ends_with("ihm.t.cpp:104 Failure"));
+    EXPECT_TRUE(failing[0].ends_with("ihm.t.cpp:105 Failure"));
     EXPECT_EQUAL(failing[1], "Expected lhs == rhs");
     EXPECT_EQUAL(failing[2], "  lhs: 1.0");
     EXPECT_EQUAL(failing[3], "  rhs: 2");
@@ -119,11 +120,11 @@ int main() {
   EXPECT_EQUAL(ihm::result(), 3);
   EXPECT_EQUAL(more.size(), 8u);
   if (more.size() == 8) {
-    EXPECT_TRUE(more[0].ends_with("ihm.t.cpp:116 Failure"));
+    EXPECT_TRUE(more[0].ends_with("ihm.t.cpp:117 Failure"));
     EXPECT_EQUAL(more[1], "Expected lhs != rhs");
     EXPECT_EQUAL(more[2], "  lhs: 'a'");
     EXPECT_EQUAL(more[3], "  rhs: 'a'");
-    EXPECT_TRUE(more[4].ends_with("ihm.t.cpp:82 Failure"));
+    EXPECT_TRUE(more[4].ends_with("ihm.t.cpp:83 Failure"));
     EXPECT_EQUAL(more[5], "Expected lhs == rhs");
     EXPECT_EQUAL(more[6], "  lhs: 2.0");
     EXPECT_EQUAL(more[7], "  rhs: 3.0");
@@ -238,6 +239,25 @@ int main() {
     EXPECT_EQUAL(far[7], "  |lhs - rhs|: 0.10000000000000009");
     EXPECT_EQUAL(far[12], "  |lhs - rhs|: nan");
   }
+  detail::error_count = 0;
+
+  // At max_errors a check throws; output_of still gives std::cout its buffer
+  // back, rather than leave it writing into the destroyed capture.
+  ihm::max_errors = 2;
+  std::streambuf *const cout_buffer = std::cout.rdbuf();
+  bool threw = false;
+  try {
+    output_of([] {
+      ihm::expect_equal(1, 2);
+      ihm::expect_equal(1, 3);
+    });
+  } catch (const std::runtime_error &) {
+    threw = true;
+  }
+  EXPECT_TRUE(std::cout.rdbuf() == cout_buffer);
+  EXPECT_TRUE(threw);
+  EXPECT_EQUAL(ihm::result(), 2);
+  ihm::max_errors = 10;
   detail::error_count = 0;
 
   for (const std::string &line : failing)
