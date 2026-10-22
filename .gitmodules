@@ -4,8 +4,8 @@
 	branch = expr-reflect
 [submodule "gcc-mirror"]
 	path = gcc-mirror
-	url = https://github.com/yesmanchyk/gcc-mirror.git
-	branch = autograd-capable
+	url = https://github.com/CppReflectionAD/gcc.git
+	branch = p4395
 [submodule "gcc-darwin-reflect"]
 	path = gcc-darwin-reflect
 	url = https://github.com/CppReflectionAD/gcc-darwin-arm64.git

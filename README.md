@@ -43,10 +43,10 @@ newer Boost versions are not yet packaged for this compiler.
 ### The gcc fork
 
 The gcc fork
-([yesmanchyk/gcc-mirror, branch `autograd-capable`](https://github.com/yesmanchyk/gcc-mirror/tree/autograd-capable))
+([CppReflectionAD/gcc, branch `p4395`](https://github.com/CppReflectionAD/gcc/tree/p4395))
 is also on Compiler Explorer, as **x86-64 gcc (expr-reflect)**. It is in the
 x86-64 gcc list (type `expr-reflect` in the compiler picker to find it) and is
-rebuilt nightly from the tip of the `autograd-capable` branch. Its default
+rebuilt nightly from the tip of the `p4395` branch. Its default
 options are `-std=c++26 -freflection`.
 
 [This example](https://godbolt.org/z/8hroz6cnx) reflects the body of a small function and rebuilds its
