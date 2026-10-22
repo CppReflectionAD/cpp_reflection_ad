@@ -27,9 +27,10 @@
 // with std::source_location, and print values by reflection: with `<<` if a
 // value has it; strings and char arrays quoted; floating-point values in the
 // shortest form that reads back exactly (a long double wider than a double
-// with all the digits it may need); ranges and other arrays as their elements
-// (`{1, 2}`); aggregates as their members (`{.x = 1, .y = 2.5}`); and anything
-// else as its type name (`<widget>`).
+// with all the digits it may need); enums as their enumerator (`color::red`);
+// ranges and other arrays as their elements (`{1, 2}`); aggregates as their
+// members (`{.x = 1, .y = 2.5}`); and anything else as its type name
+// (`<widget>`).
 //
 // ihm/clang_only/ihm_expressions.hpp adds the operands' source
 // text, as EXPECT_EQUAL prints it, in place of `lhs` and `rhs`.
@@ -47,6 +48,7 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <utility>
 
 namespace ihm {
 
@@ -156,6 +158,23 @@ template <class T>
 inline constexpr std::string_view type_name =
     std::define_static_string(std::meta::display_string_of(^^T));
 
+// An enum as its enumerator (`color::red`), or, if none has its value, as its
+// value converted to the enum (`color(5)`).
+template <class T> void write_enum(std::ostream &os, T v) {
+  constexpr std::string_view enum_name =
+      std::meta::has_identifier(^^T)
+          ? std::define_static_string(std::meta::identifier_of(^^T))
+          : type_name<T>;
+  template for (constexpr std::meta::info e :
+                std::define_static_array(std::meta::enumerators_of(^^T))) {
+    if (v == [:e:]) {
+      os << enum_name << "::" << std::meta::identifier_of(e);
+      return;
+    }
+  }
+  os << enum_name << '(' << +std::to_underlying(v) << ')';
+}
+
 template <class T> void write_value(std::ostream &os, const T &v);
 
 template <class R> void write_range(std::ostream &os, const R &range) {
@@ -212,6 +231,9 @@ template <class T> void write_value(std::ostream &os, const T &v) {
     os << +v; // a number (std::int8_t, std::uint8_t), not a character
   } else if constexpr (std::is_floating_point_v<T>) {
     write_floating(os, v);
+  } else if constexpr (std::is_enum_v<T>) {
+    // Before the `<<` branch, which an unscoped enum takes as an integer.
+    write_enum(os, v);
   } else if constexpr (std::is_null_pointer_v<T>) {
     os << "nullptr";
   } else if constexpr (std::is_array_v<T>) {

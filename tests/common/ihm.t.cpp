@@ -69,6 +69,9 @@ private:
   int id_;
 };
 
+enum class color { red, green };
+enum shade : unsigned char { dark, light };
+
 // The text a value prints as in a failure.
 template <class T> std::string text(const T &v) {
   return ihm::detail::value_text(v);
@@ -102,7 +105,7 @@ int main() {
   EXPECT_EQUAL(ihm::result(), 1);
   EXPECT_EQUAL(failing.size(), 4u);
   if (failing.size() == 4) {
-    EXPECT_TRUE(failing[0].ends_with("ihm.t.cpp:101 Failure"));
+    EXPECT_TRUE(failing[0].ends_with("ihm.t.cpp:104 Failure"));
     EXPECT_EQUAL(failing[1], "Expected lhs == rhs");
     EXPECT_EQUAL(failing[2], "  lhs: 1.0");
     EXPECT_EQUAL(failing[3], "  rhs: 2");
@@ -116,11 +119,11 @@ int main() {
   EXPECT_EQUAL(ihm::result(), 3);
   EXPECT_EQUAL(more.size(), 8u);
   if (more.size() == 8) {
-    EXPECT_TRUE(more[0].ends_with("ihm.t.cpp:113 Failure"));
+    EXPECT_TRUE(more[0].ends_with("ihm.t.cpp:116 Failure"));
     EXPECT_EQUAL(more[1], "Expected lhs != rhs");
     EXPECT_EQUAL(more[2], "  lhs: 'a'");
     EXPECT_EQUAL(more[3], "  rhs: 'a'");
-    EXPECT_TRUE(more[4].ends_with("ihm.t.cpp:79 Failure"));
+    EXPECT_TRUE(more[4].ends_with("ihm.t.cpp:82 Failure"));
     EXPECT_EQUAL(more[5], "Expected lhs == rhs");
     EXPECT_EQUAL(more[6], "  lhs: 2.0");
     EXPECT_EQUAL(more[7], "  rhs: 3.0");
@@ -183,6 +186,11 @@ int main() {
   const std::string widget_text = text(widget(1));
   EXPECT_TRUE(widget_text.starts_with("<") && widget_text.ends_with(">") &&
               widget_text.find("widget") != std::string::npos);
+  // An enum prints its enumerator, or its value if it has none of that value.
+  EXPECT_EQUAL(text(color::green), "color::green");
+  EXPECT_EQUAL(text(light), "shade::light");
+  EXPECT_EQUAL(text(static_cast<color>(5)), "color(5)");
+  EXPECT_EQUAL(text(static_cast<shade>(7)), "shade(7)");
 
   // A failure with values that aren't printable with `<<`.
   const auto aggregates =
