@@ -397,8 +397,8 @@ changes, and then run `git submodule sync` too.
 
 Each fork pins from its `p4395` branch, which only moves forward, through pull
 requests merged with a merge commit. A rule on the branch enforces this in all
-three forks: no deletion or force push, and a pull request with one approval,
-merged with "Create a merge commit". A squash or rebase merge would give the
+three forks: no deletion or force push, and a pull request (no approval
+needed), merged with "Create a merge commit". A squash or rebase merge would give the
 pinned commit a new SHA and leave it on no branch, and a force push would drop
 it; either way, older commits of this repository could no longer check out
 their compiler.
