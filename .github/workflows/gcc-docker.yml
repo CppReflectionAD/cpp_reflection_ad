@@ -5,7 +5,7 @@ name: Test GCC (Docker)
 
 on:
   push:
-    branches: ["main"]
+    branches: ["main","docker"]
   pull_request:
   workflow_dispatch:
 
