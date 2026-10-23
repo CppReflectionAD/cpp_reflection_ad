@@ -398,6 +398,14 @@ In the pull request, say what the bump brings in and compare the test results
 of the old and new pins. Change `.gitmodules` only if the URL or branch
 changes, and then run `git submodule sync` too.
 
+Each fork pins from its `p4395` branch, which only moves forward, through pull
+requests merged with a merge commit. A rule on the branch enforces this in all
+three forks: no deletion or force push, and a pull request (no approval
+needed), merged with "Create a merge commit". A squash or rebase merge would give the
+pinned commit a new SHA and leave it on no branch, and a force push would drop
+it; either way, older commits of this repository could no longer check out
+their compiler.
+
 CI rebuilds the toolchain on the pull request, and on `main` again after
 merging (see [CI checks](#ci-checks)). Open pull requests rebuild it as well
 once they test against the new `main`.
@@ -415,10 +423,15 @@ git fetch --no-tags ../gcc-mirror "$new"
 git checkout --detach origin/p4395
 git cherry HEAD "$new" "$(git merge-base HEAD "$new")" | sed -n 's/^+ //p' |
   git cherry-pick -x --stdin
-git push origin HEAD:p4395
+git push origin HEAD:refs/heads/<pr-branch>
 cd ..
 git add gcc-darwin-reflect
 ```
+
+Then open a pull request from `<pr-branch>` into `p4395` in
+CppReflectionAD/gcc-darwin-arm64, and merge it with a merge commit before this
+repository's pull request merges. The pin can stay at `<pr-branch>`'s tip,
+since the merge commit keeps it on `p4395`.
 
 Run the `git cherry` line again afterwards: it should print only `-` lines,
 meaning every reflection commit in `gcc-mirror` is in `p4395`. If it already
@@ -440,7 +453,14 @@ git push origin FETCH_HEAD:refs/heads/<branch>
 git checkout --detach FETCH_HEAD
 ```
 
-Then run the `git cherry` pipeline above (from `git cherry` on), tag the old
-`p4395` so the pins in older commits stay fetchable
-(`git push origin origin/p4395:refs/tags/p4395-<old branch>`), and replace it
-with `git push --force-with-lease origin HEAD:p4395`.
+Then run the `git cherry` pipeline above (from `git cherry` on). Record the
+old `p4395` as a parent, so its pins stay on the branch, while keeping the tree
+of the rebuilt stack, and push and merge as above:
+
+```bash
+git merge -s ours --no-edit origin/p4395
+git push origin HEAD:refs/heads/<pr-branch>
+```
+
+The `-s ours` merge takes nothing from the old stack, so the `git cherry` line
+still prints only `-` lines.
