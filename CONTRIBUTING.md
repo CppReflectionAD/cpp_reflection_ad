@@ -38,7 +38,9 @@ compilers can't build this code.
 ## Building the compilers
 
 The repo is **self-contained**: `--build-compilers` builds clang from its own
-`clang-p2996` submodule into `build/` — no externally pre-built compiler needed.
+`clang-p2996` submodule, the `p4395` branch of
+[CppReflectionAD/clang-p4395](https://github.com/CppReflectionAD/clang-p4395),
+into `build/` — no externally pre-built compiler needed.
 It checks out the submodule, builds clang (host `clang` + `lld`), builds the
 Darwin `LTO` target as well on macOS so `libLTO.dylib` is present for the local
 toolchain driver, builds the `libc++`/`libc++abi` runtimes (plus `libunwind`
@@ -73,6 +75,14 @@ after pulling:
 
 ```bash
 git submodule sync gcc-mirror && git submodule update gcc-mirror
+```
+
+And `clang-p2996` moved from `siqiyyyy/clang-p2996` (branch `expr-reflect`) to
+`CppReflectionAD/clang-p4395` (branch `p4395`), with the same pin. Update
+clones made before the move once, after pulling:
+
+```bash
+git submodule sync clang-p2996 && git submodule update clang-p2996
 ```
 
 To work on GCC on a Mac, branch from `p4395` in `gcc-darwin-reflect`:
@@ -380,13 +390,13 @@ retargeted to `main`.
 
 ## Bumping a compiler pin
 
-The compilers are the submodules `clang-p2996` (the `expr-reflect` branch of
-`siqiyyyy/clang-p2996`), `gcc-mirror` (the `p4395` branch of
+The compilers are the submodules `clang-p2996` (the `p4395` branch of
+`CppReflectionAD/clang-p4395`), `gcc-mirror` (the `p4395` branch of
 `CppReflectionAD/gcc`) and, on macOS only, `gcc-darwin-reflect`. A bump is
 its own pull request. For `clang-p2996` or `gcc-mirror`:
 
 ```bash
-git -C clang-p2996 fetch origin expr-reflect
+git -C clang-p2996 fetch origin p4395
 git -C clang-p2996 checkout --detach <commit>
 git add clang-p2996
 
