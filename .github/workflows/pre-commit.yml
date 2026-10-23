@@ -6,6 +6,8 @@ on:
   push:
     branches: ["main"]
   pull_request:
+  # The merge queue waits for this required check on each queued change.
+  merge_group:
   workflow_dispatch:
 
 permissions:
