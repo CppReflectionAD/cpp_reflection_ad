@@ -296,10 +296,12 @@ say why in a comment next to the suppression:
 
 Every pull request and every push to `main` runs these workflows, and the test
 workflows also run nightly on `main` (03:17 UTC) to keep the toolchain caches
-warm. `GCC pins` runs nightly too, in case a pin stops being fetchable. Pull
-requests test the merge with `main`. `pre-commit` and the two test workflows
-also run in the merge queue (`merge_group`), on each queued pull request
-combined with `main` and the pull requests queued ahead of it. A queue run
+warm. `GCC pins` and `Submodule pins` run nightly too, in case a pin stops
+being fetchable. `Submodule pins` checks that each submodule's pin is on the
+branch its `.gitmodules` entry names, through GitHub's compare API. Pull
+requests test the merge with `main`. `pre-commit`, `Submodule pins` and the two
+test workflows also run in the merge queue (`merge_group`), on each queued pull
+request combined with `main` and the pull requests queued ahead of it. A queue run
 can't read a toolchain cache saved by its pull request, so a pull request that
 changes a toolchain rebuilds it in the queue too.
 
@@ -313,6 +315,7 @@ changes a toolchain rebuilds it in the queue too.
 | `test (<build type>, macOS arm64)` | both test workflows | not yet ([#94](https://github.com/CppReflectionAD/cpp_reflection_ad/issues/94) C9) | `python3 run_tests.py --build-type all` and `python3 run_tests.py --sanitize`, on a Mac |
 | `test (<build type>, Linux arm64)` | both test workflows | not yet ([#94](https://github.com/CppReflectionAD/cpp_reflection_ad/issues/94) C9) | `python3 run_tests.py --build-type all` and `python3 run_tests.py --sanitize`, on an arm64 Linux machine |
 | `GCC pins` | `gcc-pins.yml` | not yet | `.github/scripts/check-gcc-pins.sh` |
+| `Submodule pins` | `submodule-pins.yml` | not yet | `.github/scripts/check-submodule-pins.sh` (needs `gh` logged in) |
 
 `Clang tests` and `GCC tests` are summary jobs. Each passes only when its
 workflow's `toolchain` job, its three `test (<build type>)` legs (one per build
