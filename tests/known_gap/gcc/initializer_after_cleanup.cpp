@@ -14,7 +14,7 @@
 //
 // This blocks reflecting code over heap-backed types (e.g. a tensor with
 // std::vector storage) that names more than one intermediate result, such as
-// include/nn's engine on `HeapVec h = ...; HeapVec y = ...;`.
+// `HeapVec h = ...; HeapVec y = ...;`.
 //
 // tests/CMakeLists.txt builds this file as an ordinary test on clang. On GCC
 // it expects the assert on two_d to fail, with the errors in
@@ -26,15 +26,13 @@
 
 namespace m = ad::meta;
 
-void destroyed(double) {}
-
 struct T {
   double v;
 };
 
 struct D {
   double v;
-  ~D() { destroyed(v); }
+  ~D() {}
 };
 
 static_assert(std::is_trivially_destructible_v<T>);
