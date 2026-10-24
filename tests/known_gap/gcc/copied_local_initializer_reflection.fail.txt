@@ -1,0 +1,4 @@
+=== GCC ===
+tests/known_gap/gcc/copied_local_initializer_reflection.cpp:76:32: error: static assertion failed: b, initialized from a copy of a, has no initializer
+   76 | static_assert(b_has_initializer(^^d_copy),
+      |               ~~~~~~~~~~~~~~~~~^~~~~~~~~~

@@ -1,0 +1,7 @@
+=== GCC ===
+tests/known_gap/gcc/const_ref_return_reflection.cpp:28:34: error: static assertion failed: std::max(x, y) is not a function call
+   28 | static_assert(m::is_function_call(return_expr(^^f_max)),
+      |               ~~~~~~~~~~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~
+tests/known_gap/gcc/const_ref_return_reflection.cpp:30:34: error: static assertion failed: std::min(x, y) is not a function call
+   30 | static_assert(m::is_function_call(return_expr(^^f_min)),
+      |               ~~~~~~~~~~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~
