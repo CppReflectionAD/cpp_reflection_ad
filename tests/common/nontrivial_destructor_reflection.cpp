@@ -10,10 +10,11 @@
 // destructible type. The fork has the same checks in
 // g++.dg/reflect/statements_of_nontrivial_dtor1.C.
 //
-// GCC still gets nearby cases wrong: returning such a local by name, copying
-// one into a by-value parameter, and reflecting any class-type local as two
-// declaration statements, which the count comparison below can't see: #188,
-// #187 and #186, with tests in tests/known_gap/gcc/.
+// Nearby cases, which the count comparison below can't see, have tests of
+// their own: returning such a local by name (nrvo_return_reflection.cpp, #188),
+// copying one into a by-value parameter
+// (copied_local_initializer_reflection.cpp, #187), and a class-type local as
+// one declaration statement (class_local_declaration_reflection.cpp, #186).
 #include <ad/meta.h>
 #include <type_traits>
 
