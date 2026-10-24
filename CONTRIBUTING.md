@@ -448,7 +448,9 @@ retargeted to `main`.
 The compilers are the submodules `clang-p2996` (the `p4395` branch of
 `CppReflectionAD/clang-p4395`), `gcc-mirror` (the `p4395` branch of
 `CppReflectionAD/gcc`) and, on macOS only, `gcc-darwin-reflect`. A bump is
-its own pull request. For `clang-p2996` or `gcc-mirror`:
+its own pull request, along with the test changes the new pin forces, such as
+moving a `known_gap/` test it fixes (see [tests/README.md](tests/README.md)).
+For `clang-p2996` or `gcc-mirror`:
 
 ```bash
 git -C clang-p2996 fetch origin p4395
