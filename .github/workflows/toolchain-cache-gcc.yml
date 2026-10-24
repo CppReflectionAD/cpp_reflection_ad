@@ -1,46 +1,91 @@
 # Makes sure the GCC toolchain is in the cache, building it on a miss.
-# Called by gcc_prebuilt_cache.yml so tests wait for the toolchain.
+# Called by gcc_prebuilt_cache.yml so tests wait for the toolchain, once per
+# runner: on Linux from gcc-mirror, on macOS from gcc-darwin-reflect.
 # On a hit this job only looks the key up; the test jobs restore the prefix.
 # The cache key is the submodule commit plus a hash of the build script and
-# the recipe it runs, the one `run_tests.py --build-compilers` uses, so edits to
-# this file don't invalidate the cache. The build itself is in
-# .github/scripts/build-gcc-toolchain.sh and tools/toolchain/gcc.py.
+# the recipe it runs, the one `run_tests.py --build-compilers` uses, and on
+# macOS a hash of the runner's SDK and linker (.github/scripts/macos-sdk-id.sh).
+# Edits to this file don't invalidate the cache. The build itself is in
+# .github/scripts/build-gcc-toolchain.sh and tools/toolchain/gcc.py. After a
+# build, GCC's own reflection tests run in its build tree (#166).
 name: Build GCC Toolchain (Cache)
 
 on:
   workflow_call:
+    inputs:
+      runner:
+        description: Runner to build on, the one the test jobs use
+        type: string
+        default: ubuntu-24.04
     outputs:
       cache_key:
         description: Cache key holding /opt/toolchain-gcc
         value: ${{ jobs.gcc.outputs.cache_key }}
+      runner:
+        description: Runner the toolchain was built on, for the test jobs
+        value: ${{ jobs.gcc.outputs.runner }}
+      macos_sdk:
+        description: >-
+          On macOS, the SDK and linker the toolchain was built with
+          (macos-sdk-id.sh), for the test jobs to compare with their own
+        value: ${{ jobs.gcc.outputs.macos_sdk }}
   workflow_dispatch:
+    inputs:
+      runner:
+        description: Runner to build on
+        type: choice
+        options: [ubuntu-24.04, ubuntu-24.04-arm, macos-15]
+        default: ubuntu-24.04
+      force_build:
+        description: >-
+          Build and test GCC even on a cache hit, without saving it (to run
+          GCC's reflection tests on the current pin)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
   gcc:
-    # Pinned to match the test jobs in gcc_prebuilt_cache.yml: the cache key
+    # Must match the test jobs in gcc_prebuilt_cache.yml: the cache key
     # doesn't record the image, so both sides must run on the same one.
-    runs-on: ubuntu-24.04
+    runs-on: ${{ inputs.runner }}
     outputs:
       cache_key: ${{ steps.key.outputs.cache_key }}
+      runner: ${{ inputs.runner }}
+      macos_sdk: ${{ steps.key.outputs.macos_sdk }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      # Reads the submodule commit from the superproject's tree, so the
-      # submodule doesn't need to be cloned on a hit.
+      # tools/toolchain/gcc.py picks the submodule for this OS. The key reads
+      # its commit from the superproject's tree, so the submodule doesn't need
+      # to be cloned on a hit. On macOS, GCC is configured with
+      # --with-sysroot=<Xcode's SDK>, so the key also records the SDK and the
+      # linker: a runner image with another Xcode, SDK or linker rebuilds the
+      # toolchain.
       - name: Compute cache key
         id: key
         shell: bash
         run: |
           set -euo pipefail
-          GCC_MIRROR_SHA="$(git rev-parse HEAD:gcc-mirror)"
+          SUBMODULE="$(python3 -m tools.toolchain.gcc --print-source-submodule)"
+          if [ "$RUNNER_OS" = macOS ]; then
+            MACOS_SDK="$(.github/scripts/macos-sdk-id.sh)"
+            echo "SDK: ${MACOS_SDK}"
+            SDK_HASH="-$(printf '%s' "$MACOS_SDK" | shasum -a 256 | cut -c1-8)"
+          else
+            MACOS_SDK=""
+            SDK_HASH=""
+          fi
+          SOURCE_SHA="$(git rev-parse "HEAD:${SUBMODULE}")"
           BUILD_INPUT_HASH="$(cat .github/scripts/build-gcc-toolchain.sh \
-            tools/toolchain/common.py tools/toolchain/gcc.py | sha256sum | cut -d' ' -f1)"
-          CACHE_KEY="gcc-${{ runner.os }}-${{ runner.arch }}-${GCC_MIRROR_SHA:0:12}-${BUILD_INPUT_HASH:0:12}"
+            tools/toolchain/common.py tools/toolchain/gcc.py | shasum -a 256 | cut -d' ' -f1)"
+          CACHE_KEY="gcc-${{ runner.os }}-${{ runner.arch }}-${SOURCE_SHA:0:12}-${BUILD_INPUT_HASH:0:12}${SDK_HASH}"
+          echo "submodule=${SUBMODULE}" >> "$GITHUB_OUTPUT"
+          echo "macos_sdk=${MACOS_SDK}" >> "$GITHUB_OUTPUT"
           echo "cache_key=${CACHE_KEY}" >> "$GITHUB_OUTPUT"
 
       - name: Check cache
@@ -51,23 +96,74 @@ jobs:
           key: ${{ steps.key.outputs.cache_key }}
           lookup-only: true
 
-      - name: Init gcc-mirror submodule only
-        if: steps.cache.outputs.cache-hit != 'true'
+      # A forced build (workflow_dispatch) builds and tests on a hit too, but
+      # the save steps below still run only on a miss.
+      - name: Decide whether to build
+        id: build
+        run: echo "needed=${{ steps.cache.outputs.cache-hit != 'true' || inputs.force_build == true }}" >> "$GITHUB_OUTPUT"
+
+      - name: Init the GCC submodule only
+        if: steps.build.outputs.needed == 'true'
+        env:
+          SUBMODULE: ${{ steps.key.outputs.submodule }}
         run: |
-          git submodule sync -- gcc-mirror
-          git submodule update --init --depth 1 gcc-mirror
+          git submodule sync -- "$SUBMODULE"
+          git submodule update --init --depth 1 "$SUBMODULE"
 
       - name: Build and install GCC into clean prefix
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: .github/scripts/build-gcc-toolchain.sh gcc-mirror /opt/toolchain-gcc
+        if: steps.build.outputs.needed == 'true'
+        run: >-
+          .github/scripts/build-gcc-toolchain.sh
+          "${{ steps.key.outputs.submodule }}" /opt/toolchain-gcc
 
       - name: Verify built prefix
-        if: steps.cache.outputs.cache-hit != 'true'
+        if: steps.build.outputs.needed == 'true'
         run: |
           set -euo pipefail
           ls -lh /opt/toolchain-gcc/bin/
           /opt/toolchain-gcc/bin/g++ --version
           .github/scripts/check-gcc-toolchain.sh /opt/toolchain-gcc
+
+      # The fork's own tests for reflection (gcc/testsuite/g++.dg/reflect), run
+      # as CppReflectionAD/gcc's CI runs them, in the build tree the recipe
+      # leaves in build/<submodule>. The check above is only a smoke test. A
+      # failure stops the job before the save, so a pin that breaks these tests
+      # is never cached. On Linux the build script installs DejaGnu.
+      - name: Run GCC's reflection tests
+        if: steps.build.outputs.needed == 'true'
+        env:
+          SUBMODULE: ${{ steps.key.outputs.submodule }}
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = macOS ]; then
+            brew install deja-gnu
+          fi
+          cd "build/${SUBMODULE}/gcc"
+          start=$SECONDS
+          # make's status isn't reliable here, so the summary decides.
+          make -j"$(getconf _NPROCESSORS_ONLN)" check-g++ \
+            RUNTESTFLAGS="dg.exp=reflect/*.C" || true
+          echo "Took $((SECONDS - start)) s"
+          sum=testsuite/g++/g++.sum
+          if ! grep -q '^# of expected passes' "$sum"; then
+            echo "::error::No reflection tests ran; see g++.log in the job's artifacts"
+            exit 1
+          fi
+          grep '^# of ' "$sum"
+          if grep -E '^(FAIL|XPASS|UNRESOLVED|ERROR):' "$sum"; then
+            echo "::error::GCC's reflection tests failed; see g++.sum and g++.log in the job's artifacts"
+            exit 1
+          fi
+
+      - name: Upload the reflection test results
+        if: always() && steps.build.outputs.needed == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: gcc-reflect-tests-${{ runner.os }}-${{ runner.arch }}
+          path: |
+            build/${{ steps.key.outputs.submodule }}/gcc/testsuite/g++/g++.sum
+            build/${{ steps.key.outputs.submodule }}/gcc/testsuite/g++/g++.log
+          if-no-files-found: ignore
 
       - name: Save gcc toolchain
         if: steps.cache.outputs.cache-hit != 'true'

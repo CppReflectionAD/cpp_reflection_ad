@@ -6,7 +6,8 @@ compiler and build type it configures the matching preset (clang-release,
 gcc-debug, ...), builds, and runs ctest, so a local run and CI run the same
 commands. The flags, the test list and the expected failures all live in
 CMake. --build-compilers builds the compiler forks from their submodules
-first, with the recipes in tools/toolchain/ that CI's toolchain cache uses too.
+first, with the recipes in tools/toolchain/ that CI's toolchain cache uses too;
+--fetch-compilers downloads the builds CI made from the same pins instead.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from tools.toolchain import archive as toolchain_archive
 from tools.toolchain import clang as clang_recipe
 from tools.toolchain import gcc as gcc_recipe
 from tools.toolchain.clang import DEFAULT_GCC_TOOLCHAIN
@@ -67,11 +69,9 @@ DEFAULT_GCC_BUILD_DIR = os.environ.get(
     "REFLECT_GCC_BUILD_DIR", str(BUILD_ROOT / "gcc-p2996")
 )
 
-# On macOS, GCC is built from gcc-darwin-reflect, our fork of iains' Darwin
-# port with the reflection commits on top (see CONTRIBUTING.md).
+# gcc-darwin-reflect on macOS, gcc-mirror elsewhere.
 DEFAULT_GCC_SOURCE_DIR = os.environ.get(
-    "REFLECT_GCC_SOURCE_DIR",
-    str(ROOT / ("gcc-darwin-reflect" if sys.platform == "darwin" else "gcc-mirror")),
+    "REFLECT_GCC_SOURCE_DIR", str(ROOT / gcc_recipe.SOURCE_SUBMODULE)
 )
 
 
@@ -138,6 +138,16 @@ def parse_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
         "--build-compilers",
         action="store_true",
         help="Build the selected compiler submodules before running tests.",
+    )
+    parser.add_argument(
+        "--fetch-compilers",
+        action="store_true",
+        help=(
+            "Download the selected compilers that CI built from this "
+            "checkout's pins, into the same places --build-compilers uses, "
+            "before running tests (Linux x86-64, Linux arm64, macOS arm64; "
+            "env REFLECT_TOOLCHAIN_URL overrides where from)."
+        ),
     )
     parser.add_argument(
         "--tests",
@@ -303,6 +313,8 @@ def parse_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
         )
     if args.std is not None:
         parser.error("--std is gone: CMake sets the language standard (c++2c).")
+    if args.build_compilers and args.fetch_compilers:
+        parser.error("Use --build-compilers or --fetch-compilers, not both.")
     if args.sanitize and args.build_type not in (None, "debug"):
         parser.error("--sanitize is a Debug build; drop --build-type.")
     if args.build_type is None:
@@ -370,10 +382,23 @@ def build_selected_compilers(
 ) -> None:
     for compiler_name in selected_compilers(args):
         spec = specs[compiler_name]
+        if (spec.binary_dir / toolchain_archive.MARKER).is_file():
+            raise SystemExit(
+                f"{spec.binary_dir} holds a fetched {compiler_name} toolchain. "
+                "Delete it before building there, or build elsewhere with "
+                "--clang-root or --gcc-build-dir."
+            )
         if compiler_name == "clang":
             clang_recipe.build_clang(spec, args)
         else:
             gcc_recipe.build_gcc(spec, args)
+
+
+def fetch_selected_compilers(
+    specs: dict[str, CompilerSpec], args: argparse.Namespace
+) -> None:
+    for compiler_name in selected_compilers(args):
+        toolchain_archive.fetch(compiler_name, specs[compiler_name].binary_dir)
 
 
 def validate_compiler_executable(spec: CompilerSpec) -> None:
@@ -381,7 +406,8 @@ def validate_compiler_executable(spec: CompilerSpec) -> None:
         return
     raise SystemExit(
         f"Compiler executable not found for {spec.name}: {spec.executable}\n"
-        f"Build it from the submodule with --build-compilers --compiler {spec.name}, "
+        f"Download it with --fetch-compilers --compiler {spec.name}, build it "
+        f"from the submodule with --build-compilers --compiler {spec.name}, "
         "or point --clang-root at an existing build."
     )
 
@@ -721,6 +747,9 @@ def main() -> int:
     if args.build_compilers:
         log(f"building compiler(s): {', '.join(selected_compilers(args))}")
         build_selected_compilers(specs, args)
+    elif args.fetch_compilers:
+        log(f"fetching compiler(s): {', '.join(selected_compilers(args))}")
+        fetch_selected_compilers(specs, args)
 
     results: list[RunResult] = []
     for compiler_name in selected_compilers(args):

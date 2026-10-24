@@ -17,6 +17,11 @@ Black-Scholes Monte Carlo model (`mc_sim/`), and helpers for tests that inspect
 reflected function bodies (`reflection/`). Include them as
 `"functions/1-poly.h"` or `"mc_sim/black_scholes.hpp"`.
 
+`install/` isn't one either. It holds the `install_consumer` test: it installs
+the build into a scratch prefix, then builds and runs `install/consumer/`, a
+separate project that uses the library only through
+`find_package(reflection_ad)`. Don't add tests there.
+
 ## Adding a test
 
 - Add a `.cpp` file to the right directory. There is nothing to register:
@@ -38,7 +43,7 @@ If the other compiler already accepts a `known_gap/` test, don't copy it into
 `*_only/` for that compiler. Put `// TEST-PASSES-ON: clang` (or `gcc`) in the
 first 10 lines instead: both `ctest` and `run_tests.py` then build and run it
 as an ordinary test on that compiler, so one file checks the same asserts on
-both. See `known_gap/gcc/nontrivial_destructor_reflection.cpp`.
+both.
 
 When a known gap is fixed, the `known_gap/` test starts failing (the file
 compiles). Move the file to `common/` or the right `*_only/` directory, turn

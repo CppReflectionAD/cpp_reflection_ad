@@ -2,7 +2,7 @@
 //
 // Pick a straight-line scalar function, reflect its body, and get a zero-cost
 // spliced derivative. Built on the statement/expression reflection extension to
-// P2996 (body_of / statements_of / return_value_of / ... plus the existing
+// P2996 (body_of / statements_of / return_operand_of / ... plus the existing
 // expression reflection).
 //
 // Design (see docs/ + plan): reflection -> SSA/let-DAG IR -> array-tape
@@ -57,9 +57,11 @@
 #include <utility>
 #include <vector>
 
+#include "meta.h"
+
 namespace ad {
 using std::meta::info;
-namespace m = std::meta;
+namespace m = ad::meta;
 
 using namespace std::numbers;
 constexpr double two_over_root_pi = 2. * std::numbers::inv_sqrtpi_v<double>;
@@ -370,19 +372,14 @@ consteval OpKind binOp(m::operators op) {
 }
 
 // Peel "transparent" wrapper nodes so we reach the real subexpression:
-//   - implicit casts (lvalue-to-rvalue, NoOp, conversions), and
-//   - single-argument copy/move constructions, which wrap e.g. `return v;` for
-//     class-typed (tensor) functions. A multi-arg construct is a real object
-//     construction and is left intact.
+// implicit casts (lvalue-to-rvalue, NoOp, conversions) and single-argument
+// (converting-constructor) constructions, which wrap e.g. `return v;` for
+// class-typed (tensor) functions -- both are is_conversion per
+// [expr.type.conv]p2. A multi-arg construct is a real object construction
+// (is_construct but not is_conversion) and is left intact.
 consteval info stripCasts(info e) {
-  while (m::is_expression(e)) {
-    if (m::is_cast(e))
-      e = m::operands_of(e).front();
-    else if (m::is_construct(e) && m::operands_of(e).size() == 1)
-      e = m::operands_of(e).front();
-    else
-      break;
-  }
+  while (m::is_expression(e) && m::is_conversion(e))
+    e = m::operands_of(e).front();
   return e;
 }
 
@@ -390,7 +387,8 @@ consteval info stripCasts(info e) {
 consteval info probe_callee(info fn) {
   for (info s : m::statements_of(m::body_of(fn)))
     if (m::is_return_statement(s))
-      return m::callee_of(stripCasts(m::return_value_of(s)));
+      return m::declaration_of(
+          m::callee_of(stripCasts(m::return_operand_of(s))));
   throw "reflection AD: probe function has no call to reflect";
 }
 
@@ -471,7 +469,7 @@ consteval Prim find_primitive(info callee) {
 consteval std::size_t lower(Ctx &c, info e) {
   e = stripCasts(e);
 
-  if (m::is_variable_reference(e)) {
+  if (m::is_id_expression(e)) {
     const std::string_view name = m::identifier_of(m::declaration_of(e));
     for (std::size_t i = c.envDecl.size(); i-- > 0;)
       if (m::identifier_of(c.envDecl[i]) == name)
@@ -488,7 +486,11 @@ consteval std::size_t lower(Ctx &c, info e) {
     return emit(c, OpKind::Const, 0, 0, m::constant_of(e));
   }
 
-  if (m::is_unary_operator(e)) {
+  // is_operator_expression covers both arities; discriminate with
+  // operands_of().size() (1 = unary, 2 = binary), same as
+  // expression_operator_of and operands_of handle built-in vs. overloaded
+  // uniformly.
+  if (m::is_operator_expression(e) && m::operands_of(e).size() == 1) {
     m::operators op = m::expression_operator_of(e);
     std::size_t a = lower(c, m::operands_of(e).front());
     if (op == m::operators::op_plus)
@@ -500,7 +502,7 @@ consteval std::size_t lower(Ctx &c, info e) {
     throw "reflection AD: unsupported unary operator";
   }
 
-  if (m::is_binary_operator(e)) {
+  if (m::is_operator_expression(e) && m::operands_of(e).size() == 2) {
     auto ops = m::operands_of(e);
     OpKind op = binOp(m::expression_operator_of(e));
     std::size_t a = lower(c, ops[0]);
@@ -537,15 +539,16 @@ consteval std::size_t lower(Ctx &c, info e) {
   }
 
   if (m::is_function_call(e)) {
-    // operands_of(call) = [callee, arg0, arg1, ...].
+    // operands_of(call) = [arg0, arg1, ...] -- the callee is never an operand;
+    // callee_of(e) is the only way to get it.
     auto ops = m::operands_of(e);
-    Prim p = find_primitive(m::callee_of(e));
+    Prim p = find_primitive(m::declaration_of(m::callee_of(e)));
     if (!p.found) // user helper -> inline its body
       return inline_call(c, e);
     OpKind op = p.op;
     if (op_has_b(op)) { // binary call, e.g. matmul(a, b)
-      std::size_t a = lower(c, ops[1]);
-      std::size_t b = lower(c, ops[2]);
+      std::size_t a = lower(c, ops[0]);
+      std::size_t b = lower(c, ops[1]);
       return emit(c, op, a, b);
     }
     std::size_t a = lower(c, ops[ops.size() - 1]); // unary call
@@ -567,15 +570,20 @@ consteval std::size_t lower_body(Ctx &c, info body) {
   bool sawReturn = false;
   for (info s : m::statements_of(body)) {
     if (m::is_declaration_statement(s)) {
-      info v = m::declared_variable_of(s);
-      std::size_t slot = lower(c, m::initializer_of(v));
-      c.envDecl.push_back(v);
-      c.envSlot.push_back(slot);
+      // declarators_of/initializers_of handle `T a, b = 5;` -- multiple
+      // declarators sharing one declaration-statement -- not just one.
+      auto decls = m::declarators_of(s);
+      auto inits = m::initializers_of(s);
+      for (std::size_t i = 0; i < decls.size(); ++i) {
+        std::size_t slot = lower(c, inits[i]);
+        c.envDecl.push_back(decls[i]);
+        c.envSlot.push_back(slot);
+      }
     } else if (m::is_return_statement(s)) {
       if (sawReturn)
         throw "reflection AD: multiple return statements (straight-line bodies "
               "only)";
-      root = lower(c, m::return_value_of(s));
+      root = lower(c, m::return_operand_of(s));
       sawReturn = true;
     } else {
       throw "reflection AD: unsupported statement; straight-line bodies only "
@@ -594,8 +602,8 @@ consteval std::size_t lower_body(Ctx &c, info body) {
 // analysis and codegen are unaffected, and arguments are evaluated once (a
 // param used N times reuses its one slot).
 consteval std::size_t inline_call(Ctx &c, info call) {
-  auto ops = m::operands_of(call); // [callee, arg0, arg1, ...]
-  info callee = m::callee_of(call);
+  auto ops = m::operands_of(call); // [arg0, arg1, ...]
+  info callee = m::declaration_of(m::callee_of(call));
 
   // Cycle guard: recursive helpers are out of scope (would not terminate here).
   for (info f : c.callStack)
@@ -611,7 +619,7 @@ consteval std::size_t inline_call(Ctx &c, info call) {
 
   // (a) lower argument expressions in the CALLER scope -> slots.
   std::vector<std::size_t> argSlots;
-  for (std::size_t i = 1; i < ops.size(); ++i)
+  for (std::size_t i = 0; i < ops.size(); ++i)
     argSlots.push_back(lower(c, ops[i]));
 
   // (b) open a lexical scope; bind callee parameters to the argument slots.

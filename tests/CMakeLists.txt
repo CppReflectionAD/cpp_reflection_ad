@@ -58,6 +58,7 @@ file(GLOB_RECURSE _stray CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}
     "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
 list(FILTER _stray EXCLUDE REGEX
     "^(common|clang_only|gcc_only|static_fail|known_gap/clang|known_gap/gcc)/[^/]+\\.cpp$")
+list(REMOVE_ITEM _stray install/consumer/main.cpp)
 if(_stray)
     message(FATAL_ERROR "Tests outside the test directories: ${_stray}. "
                         "Move each into one of them (see tests/README.md).")
@@ -66,15 +67,6 @@ endif()
 # The gap only shows with this UBSan check enabled.
 set_source_files_properties(known_gap/gcc/ubsan_reflection_repro.cpp
     PROPERTIES COMPILE_OPTIONS -fsanitize=float-divide-by-zero)
-
-# GCC's statements_of() for this file's d_return_call depends on the flags:
-# optimization (any -O but -O0) together with -g turns the gap's <init_expr>
-# back into a return statement. Appending -O0 pins the result its .fail.txt
-# records, whatever the build type. clang builds it with the usual flags.
-if(_is_gcc)
-    set_source_files_properties(known_gap/gcc/nontrivial_destructor_reflection.cpp
-        PROPERTIES COMPILE_OPTIONS -O0)
-endif()
 
 foreach(_src IN LISTS _common)
     get_filename_component(_name "${_src}" NAME_WE)
@@ -94,6 +86,21 @@ if(_is_gcc)
         add_reflect_test(${_name} "${_src}")
     endforeach()
 endif()
+
+# The installed package (#94 B5): install this build, then build a separate
+# project against it, which uses only find_package(reflection_ad <version>)
+# and reflection_ad::ad. It has no target of its own; the test does the work.
+add_test(NAME install_consumer
+    COMMAND "${CMAKE_COMMAND}"
+        "-DBUILD_DIR=${CMAKE_BINARY_DIR}"
+        "-DSCRATCH_DIR=${CMAKE_CURRENT_BINARY_DIR}/install_consumer"
+        "-DCONSUMER_DIR=${CMAKE_CURRENT_SOURCE_DIR}/install/consumer"
+        "-DCXX=${CMAKE_CXX_COMPILER}"
+        "-DGENERATOR=${CMAKE_GENERATOR}"
+        "-DMAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}"
+        "-DBUILD_TYPE=${CMAKE_BUILD_TYPE}"
+        "-DVERSION=${PROJECT_VERSION}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/install/run_consumer_test.cmake")
 
 compile_check(reflection_ad "${_static_fail}")
 if(_is_clang)
