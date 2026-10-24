@@ -341,6 +341,14 @@ pin bump, rebuilds the toolchain, and a change to `common.py` rebuilds both.
 A cache saved by a pull request can't be read from `main`, so the toolchain is
 built again after merging. Workflow YAML isn't in the key.
 
+After building GCC, the `toolchain` job also runs the fork's own reflection
+tests (`gcc/testsuite/g++.dg/reflect`) in the build tree, and fails before
+saving the cache if any of them fails, so a pin that breaks them is never
+cached. Their `g++.sum` and `g++.log` are uploaded as the job's artifact. To
+run them on the current pin without a pin bump, start `Build GCC Toolchain
+(Cache)` by hand (`workflow_dispatch`) with `force_build` set: it builds and
+tests GCC on the chosen runner even on a cache hit, and doesn't save it.
+
 The clang workflow also builds and caches clang on macOS arm64 in its
 `toolchain-macos` job, under the same key, which records the runner's OS and
 architecture. The macOS prefix isn't stripped, since the recipe's strip step
