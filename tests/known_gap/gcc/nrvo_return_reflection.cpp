@@ -1,7 +1,7 @@
 // TEST-PASSES-ON: clang
 //
 // Known GCC gap: `return a;` of a local with a non-trivial destructor loses
-// the local's declaration.
+// the local's declaration (#188).
 //
 // When a function returns a local of such a type by name (the named return
 // value optimization), clang still gives two statements: `a`'s declaration and

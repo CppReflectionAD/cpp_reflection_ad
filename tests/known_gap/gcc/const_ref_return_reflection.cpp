@@ -1,7 +1,7 @@
 // TEST-PASSES-ON: clang
 //
 // Known GCC gap: a call that returns `const T&` is reflected as a unary `*`
-// applied to the call.
+// applied to the call (#184).
 //
 // clang reflects `std::max(x, y)` and `std::min(x, y)` as calls, which
 // autograd.h registers as primitives (OpKind::Max and OpKind::Min). GCC wraps

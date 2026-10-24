@@ -1,7 +1,7 @@
 // TEST-PASSES-ON: clang
 //
 // Known GCC gap: a local of class type initialized by a call is reflected as
-// two declaration statements.
+// two declaration statements (#186).
 //
 // clang gives `T a = make_t(x); return a.v;` two statements: the declaration
 // and the return. GCC adds a second declaration statement for `a`, holding the

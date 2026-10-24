@@ -1,7 +1,7 @@
 // TEST-PASSES-ON: clang
 //
 // Known GCC gap: a local's initializer is lost when it passes another local
-// with a non-trivial destructor to a function by value.
+// with a non-trivial destructor to a function by value (#187).
 //
 // In `D b = pass_d(a);`, the call copies `a` into a temporary that has to be
 // destroyed. GCC then has no initializer for `b`: initializer_of() throws

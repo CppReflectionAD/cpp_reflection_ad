@@ -1,6 +1,6 @@
 // TEST-PASSES-ON: clang
 //
-// Known GCC gap: a call to std::fabs is folded to an ABS_EXPR.
+// Known GCC gap: a call to std::fabs is folded to an ABS_EXPR (#183).
 //
 // clang reflects `std::fabs(x)` as a call to std::fabs, which autograd.h
 // registers as a primitive (OpKind::Abs). GCC folds the builtin into an
