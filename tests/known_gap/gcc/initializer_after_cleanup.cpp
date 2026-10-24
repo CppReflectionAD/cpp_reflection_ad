@@ -26,15 +26,13 @@
 
 namespace m = ad::meta;
 
-void destroyed(double) {}
-
 struct T {
   double v;
 };
 
 struct D {
   double v;
-  ~D() { destroyed(v); }
+  ~D() {}
 };
 
 static_assert(std::is_trivially_destructible_v<T>);
