@@ -1,4 +1,0 @@
-=== GCC ===
-tests/known_gap/gcc/fabs_reflection.cpp:26:34: error: static assertion failed: std::fabs(x) is not a function call
-   26 | static_assert(m::is_function_call(return_expr(^^f_fabs)),
-      |               ~~~~~~~~~~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~

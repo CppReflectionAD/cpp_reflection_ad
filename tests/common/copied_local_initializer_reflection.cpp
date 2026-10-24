@@ -1,21 +1,10 @@
-// TEST-PASSES-ON: clang
+// A local keeps its initializer when it follows a local with a non-trivial
+// destructor, on both compilers: in `D a = make_d(x); D b = pass_d(a);`, b's
+// initializer is the call.
 //
-// Known GCC gap: a local's initializer is lost when it passes another local
-// with a non-trivial destructor to a function by value (#187).
-//
-// In `D b = pass_d(a);`, the call copies `a` into a temporary that has to be
-// destroyed. GCC then has no initializer for `b`: initializer_of() throws
-// "reflection does not represent a variable declaration with initializer", so
-// the engine can't lower the declaration. With a trivially destructible type
-// (t_copy) the initializer is found. This is one of the two gaps that keep
-// the tensor demo in tests/clang_only/: its ops take Tensor by value.
-// nrvo_return_reflection.cpp is the other.
-//
-// On GCC, tests/CMakeLists.txt expects the static_assert on d_copy below to
-// fail, with the error in copied_local_initializer_reflection.fail.txt. The
-// TEST-PASSES-ON line makes this an ordinary test on clang. When GCC fixes the
-// gap, move this file to tests/common/, drop that line and delete the
-// .fail.txt.
+// GCC used to lose the initializer of every local after one with a
+// non-trivial destructor (#187). This, with nrvo_return_reflection.cpp, is
+// what kept the tensor demo, whose ops take Tensor by value, clang-only.
 #include <ad/meta.h>
 
 #include <string_view>
