@@ -1,18 +1,22 @@
 // statements_of() must find the return statement in a function body that uses
-// a class with a non-trivial destructor, and report a returned call as a
-// function call.
+// a class with a non-trivial destructor, and report a returned call as a call
+// to the right function, as autograd.h finds primitives through callee_of().
 //
 // The GCC fork used to get this wrong: after a local of such a type
 // (d_local_then_return) the return was wrapped in the local's cleanup and came
 // back as a <try_finally_expr> expression, and `return make_d(x);`
 // (d_return_call) came back as an <init_expr> of the return slot. Fixed in
 // CppReflectionAD/gcc#2. The T functions are controls with a trivially
-// destructible type.
+// destructible type. The fork has the same checks in
+// g++.dg/reflect/statements_of_nontrivial_dtor1.C.
 #include <meta>
+#include <type_traits>
 
 #include "reflection/return_expr.hpp"
 
 namespace m = std::meta;
+
+void destroyed(double) {}
 
 struct T {
   double v;
@@ -20,8 +24,12 @@ struct T {
 
 struct D {
   double v;
-  ~D() {}
+  ~D() { destroyed(v); }
 };
+
+// So the D cases can't quietly turn into copies of the T controls.
+static_assert(std::is_trivially_destructible_v<T>);
+static_assert(!std::is_trivially_destructible_v<D>);
 
 T make_t(double x) { return {x}; }
 D make_d(double x) { return {x}; }
@@ -48,9 +56,16 @@ static_assert(has_return(^^t_return_call));
 static_assert(has_return(^^d_local_then_return));
 static_assert(has_return(^^d_return_call));
 
+// The local's destructor adds no statement.
+static_assert(m::statements_of(m::body_of(^^d_local_then_return)).size() ==
+              m::statements_of(m::body_of(^^t_local_then_return)).size());
+
 static_assert(m::is_function_call(return_expr(^^t_return_call)),
               "`return make_t(x);` is not a return of a function call");
 static_assert(m::is_function_call(return_expr(^^d_return_call)),
               "`return make_d(x);` is not a return of a function call");
+static_assert(m::callee_of(return_expr(^^t_return_call)) == ^^make_t);
+static_assert(m::callee_of(return_expr(^^d_return_call)) == ^^make_d);
+static_assert(m::operands_of(return_expr(^^d_return_call)).size() == 2);
 
 int main() {}
