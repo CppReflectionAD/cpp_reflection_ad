@@ -9,12 +9,12 @@
 // CppReflectionAD/gcc#2. The T functions are controls with a trivially
 // destructible type. The fork has the same checks in
 // g++.dg/reflect/statements_of_nontrivial_dtor1.C.
-#include <meta>
+#include <ad/meta.h>
 #include <type_traits>
 
 #include "reflection/return_expr.hpp"
 
-namespace m = std::meta;
+namespace m = ad::meta;
 
 void destroyed(double) {}
 
@@ -64,8 +64,10 @@ static_assert(m::is_function_call(return_expr(^^t_return_call)),
               "`return make_t(x);` is not a return of a function call");
 static_assert(m::is_function_call(return_expr(^^d_return_call)),
               "`return make_d(x);` is not a return of a function call");
-static_assert(m::callee_of(return_expr(^^t_return_call)) == ^^make_t);
-static_assert(m::callee_of(return_expr(^^d_return_call)) == ^^make_d);
-static_assert(m::operands_of(return_expr(^^d_return_call)).size() == 2);
+static_assert(m::declaration_of(m::callee_of(return_expr(^^t_return_call))) ==
+              ^^make_t);
+static_assert(m::declaration_of(m::callee_of(return_expr(^^d_return_call))) ==
+              ^^make_d);
+static_assert(m::operands_of(return_expr(^^d_return_call)).size() == 1);
 
 int main() {}
