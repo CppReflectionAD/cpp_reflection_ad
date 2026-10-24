@@ -38,7 +38,9 @@ compilers can't build this code.
 ## Building the compilers
 
 The repo is **self-contained**: `--build-compilers` builds clang from its own
-`clang-p2996` submodule into `build/` — no externally pre-built compiler needed.
+`clang-p2996` submodule, the `p4395` branch of
+[CppReflectionAD/clang-p4395](https://github.com/CppReflectionAD/clang-p4395),
+into `build/` — no externally pre-built compiler needed.
 It checks out the submodule, builds clang (host `clang` + `lld`), builds the
 Darwin `LTO` target as well on macOS so `libLTO.dylib` is present for the local
 toolchain driver, builds the `libc++`/`libc++abi` runtimes (plus `libunwind`
@@ -73,6 +75,14 @@ after pulling:
 
 ```bash
 git submodule sync gcc-mirror && git submodule update gcc-mirror
+```
+
+And `clang-p2996` moved from `siqiyyyy/clang-p2996` (branch `expr-reflect`) to
+`CppReflectionAD/clang-p4395` (branch `p4395`), with the same pin. Update
+clones made before the move once, after pulling:
+
+```bash
+git submodule sync clang-p2996 && git submodule update clang-p2996
 ```
 
 To work on GCC on a Mac, branch from `p4395` in `gcc-darwin-reflect`:
@@ -296,10 +306,12 @@ say why in a comment next to the suppression:
 
 Every pull request and every push to `main` runs these workflows, and the test
 workflows also run nightly on `main` (03:17 UTC) to keep the toolchain caches
-warm. `GCC pins` runs nightly too, in case a pin stops being fetchable. Pull
-requests test the merge with `main`. `pre-commit` and the two test workflows
-also run in the merge queue (`merge_group`), on each queued pull request
-combined with `main` and the pull requests queued ahead of it. A queue run
+warm. `GCC pins` and `Submodule pins` run nightly too, in case a pin stops
+being fetchable. `Submodule pins` checks that each submodule's pin is on the
+branch its `.gitmodules` entry names, through GitHub's compare API. Pull
+requests test the merge with `main`. `pre-commit`, `Submodule pins` and the two
+test workflows also run in the merge queue (`merge_group`), on each queued pull
+request combined with `main` and the pull requests queued ahead of it. A queue run
 can't read a toolchain cache saved by its pull request, so a pull request that
 changes a toolchain rebuilds it in the queue too.
 
@@ -313,6 +325,7 @@ changes a toolchain rebuilds it in the queue too.
 | `test (<build type>, macOS arm64)` | both test workflows | not yet ([#94](https://github.com/CppReflectionAD/cpp_reflection_ad/issues/94) C9) | `python3 run_tests.py --build-type all` and `python3 run_tests.py --sanitize`, on a Mac |
 | `test (<build type>, Linux arm64)` | both test workflows | not yet ([#94](https://github.com/CppReflectionAD/cpp_reflection_ad/issues/94) C9) | `python3 run_tests.py --build-type all` and `python3 run_tests.py --sanitize`, on an arm64 Linux machine |
 | `GCC pins` | `gcc-pins.yml` | not yet | `.github/scripts/check-gcc-pins.sh` |
+| `Submodule pins` | `submodule-pins.yml` | not yet | `.github/scripts/check-submodule-pins.sh` (needs `gh` logged in) |
 
 `Clang tests` and `GCC tests` are summary jobs. Each passes only when its
 workflow's `toolchain` job, its three `test (<build type>)` legs (one per build
@@ -377,13 +390,13 @@ retargeted to `main`.
 
 ## Bumping a compiler pin
 
-The compilers are the submodules `clang-p2996` (the `expr-reflect` branch of
-`siqiyyyy/clang-p2996`), `gcc-mirror` (the `p4395` branch of
+The compilers are the submodules `clang-p2996` (the `p4395` branch of
+`CppReflectionAD/clang-p4395`), `gcc-mirror` (the `p4395` branch of
 `CppReflectionAD/gcc`) and, on macOS only, `gcc-darwin-reflect`. A bump is
 its own pull request. For `clang-p2996` or `gcc-mirror`:
 
 ```bash
-git -C clang-p2996 fetch origin expr-reflect
+git -C clang-p2996 fetch origin p4395
 git -C clang-p2996 checkout --detach <commit>
 git add clang-p2996
 
@@ -394,6 +407,14 @@ python3 run_tests.py --compiler clang --build-compilers --build-type all
 In the pull request, say what the bump brings in and compare the test results
 of the old and new pins. Change `.gitmodules` only if the URL or branch
 changes, and then run `git submodule sync` too.
+
+Each fork pins from its `p4395` branch, which only moves forward, through pull
+requests merged with a merge commit. A rule on the branch enforces this in all
+three forks: no deletion or force push, and a pull request (no approval
+needed), merged with "Create a merge commit". A squash or rebase merge would give the
+pinned commit a new SHA and leave it on no branch, and a force push would drop
+it; either way, older commits of this repository could no longer check out
+their compiler.
 
 CI rebuilds the toolchain on the pull request, and on `main` again after
 merging (see [CI checks](#ci-checks)). Open pull requests rebuild it as well
@@ -412,10 +433,15 @@ git fetch --no-tags ../gcc-mirror "$new"
 git checkout --detach origin/p4395
 git cherry HEAD "$new" "$(git merge-base HEAD "$new")" | sed -n 's/^+ //p' |
   git cherry-pick -x --stdin
-git push origin HEAD:p4395
+git push origin HEAD:refs/heads/<pr-branch>
 cd ..
 git add gcc-darwin-reflect
 ```
+
+Then open a pull request from `<pr-branch>` into `p4395` in
+CppReflectionAD/gcc-darwin-arm64, and merge it with a merge commit before this
+repository's pull request merges. The pin can stay at `<pr-branch>`'s tip,
+since the merge commit keeps it on `p4395`.
 
 Run the `git cherry` line again afterwards: it should print only `-` lines,
 meaning every reflection commit in `gcc-mirror` is in `p4395`. If it already
@@ -437,7 +463,14 @@ git push origin FETCH_HEAD:refs/heads/<branch>
 git checkout --detach FETCH_HEAD
 ```
 
-Then run the `git cherry` pipeline above (from `git cherry` on), tag the old
-`p4395` so the pins in older commits stay fetchable
-(`git push origin origin/p4395:refs/tags/p4395-<old branch>`), and replace it
-with `git push --force-with-lease origin HEAD:p4395`.
+Then run the `git cherry` pipeline above (from `git cherry` on). Record the
+old `p4395` as a parent, so its pins stay on the branch, while keeping the tree
+of the rebuilt stack, and push and merge as above:
+
+```bash
+git merge -s ours --no-edit origin/p4395
+git push origin HEAD:refs/heads/<pr-branch>
+```
+
+The `-s ours` merge takes nothing from the old stack, so the `git cherry` line
+still prints only `-` lines.

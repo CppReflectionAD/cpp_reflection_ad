@@ -1,0 +1,39 @@
+# Checks that every submodule pin is on the branch .gitmodules names for it
+# (#162 step 9), so no pin can be lost. Reproduce it locally with
+# .github/scripts/check-submodule-pins.sh.
+name: Submodule pins
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  merge_group:
+  workflow_dispatch:
+  # Nightly on main as well, so a pin whose branch was moved or deleted shows
+  # up without waiting for a PR.
+  schedule:
+    - cron: "17 3 * * *"
+
+permissions:
+  contents: read
+
+# A new push to a PR cancels that PR's previous run. Runs on main are never
+# cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    name: Submodule pins
+    runs-on: ubuntu-latest
+    steps:
+      # The script reads the pins from the index and asks GitHub about them,
+      # so the submodules aren't checked out.
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Check that each pin is on its branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .github/scripts/check-submodule-pins.sh

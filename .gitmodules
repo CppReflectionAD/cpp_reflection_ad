@@ -1,7 +1,7 @@
 [submodule "clang-p2996"]
 	path = clang-p2996
-	url = https://github.com/siqiyyyy/clang-p2996.git
-	branch = expr-reflect
+	url = https://github.com/CppReflectionAD/clang-p4395.git
+	branch = p4395
 [submodule "gcc-mirror"]
 	path = gcc-mirror
 	url = https://github.com/CppReflectionAD/gcc.git
