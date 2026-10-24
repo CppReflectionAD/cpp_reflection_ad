@@ -13,8 +13,9 @@ says which compilers it runs on and what it checks:
 
 `fixtures/` is not a test directory. It holds headers that tests (and
 benchmarks) share: the functions to differentiate (`functions/`), the
-Black-Scholes Monte Carlo model (`mc_sim/`), and helpers for tests that inspect
-reflected function bodies (`reflection/`). Include them as
+Black-Scholes Monte Carlo model (`mc_sim/`), helpers for tests that inspect
+reflected function bodies (`reflection/`), and `output_of`, which captures what
+a call prints to `std::cout` (`output/`). Include them as
 `"functions/1-poly.h"` or `"mc_sim/black_scholes.hpp"`.
 
 `install/` isn't one either. It holds the `install_consumer` test: it installs
