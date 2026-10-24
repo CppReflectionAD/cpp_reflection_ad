@@ -1,0 +1,10 @@
+=== GCC ===
+tests/known_gap/gcc/nrvo_return_reflection.cpp:43:32: error: static assertion failed: the returned local's declaration is not a declaration statement
+   43 |     m::is_declaration_statement(
+      |     ~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+   44 |         m::statements_of(m::body_of(^^return_local))[0]),
+      |         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+tests/known_gap/gcc/nrvo_return_reflection.cpp:46:67: error: static assertion failed: returning a local adds statements for its cleanup
+   46 | static_assert(m::statements_of(m::body_of(^^return_local)).size() == 2,
+      |               ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~~
+  • the comparison reduces to '(5 == 2)'

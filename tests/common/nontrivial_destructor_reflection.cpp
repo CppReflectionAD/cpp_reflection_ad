@@ -9,6 +9,11 @@
 // CppReflectionAD/gcc#2. The T functions are controls with a trivially
 // destructible type. The fork has the same checks in
 // g++.dg/reflect/statements_of_nontrivial_dtor1.C.
+//
+// GCC still gets nearby cases wrong: returning such a local by name, copying
+// one into a by-value parameter, and reflecting any class-type local as two
+// declaration statements, which the count comparison below can't see: #188,
+// #187 and #186, with tests in tests/known_gap/gcc/.
 #include <ad/meta.h>
 #include <type_traits>
 
