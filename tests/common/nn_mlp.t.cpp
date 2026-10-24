@@ -11,6 +11,20 @@
 #include <iostream>
 #include <span>
 #include <tuple>
+#include <type_traits>
+#include <vector>
+
+// A tensor with heap storage, so with a non-trivial destructor: GCC wraps
+// each temporary of it in a cleanup, which the engine sees through. In nn,
+// like Vec, so that nn's operators are found for it, in user code and in the
+// code the engine generates.
+namespace nn {
+template <std::size_t N> struct HeapVec {
+  static constexpr std::size_t size = N;
+  std::vector<double> d = std::vector<double>(N);
+};
+static_assert(!std::is_trivially_destructible_v<HeapVec<3>>);
+} // namespace nn
 
 namespace model {
 
@@ -83,6 +97,14 @@ inline double predict(const Mat<H, 2> &W1, const Vec<H> &b1,
   return nn::sigmoid(W2 * dense_relu(W1, b1, x) + b2)[0];
 }
 
+// Only one local of the heap-backed type: on GCC, a second one has no
+// initializer (see tests/known_gap/gcc/initializer_after_cleanup.cpp).
+inline double heap_loss(const nn::HeapVec<3> &a, const nn::HeapVec<3> &b,
+                        const nn::HeapVec<3> &t) {
+  nn::HeapVec<3> h = relu(a + b);
+  return mse(sigmoid(hadamard(h, a)), t);
+}
+
 } // namespace model
 
 // ---------------------------------------------------------------------------
@@ -125,6 +147,10 @@ static_assert(count_live<nad::Kind::Neg>(reg) == 1);
 constexpr auto xor_tape =
     nad::tape<^^model::xor_loss, nad::mask_of<0, 1, 2, 3>>;
 static_assert(count_live<nad::Kind::Call>(xor_tape) == 4 * 7);
+
+// add (inlined from operator+), relu, hadamard, sigmoid, mse.
+constexpr auto heap_tape = nad::tape<^^model::heap_loss, nad::mask_of<0, 1>>;
+static_assert(count_live<nad::Kind::Call>(heap_tape) == 5);
 
 // ---------------------------------------------------------------------------
 // Run time.
@@ -222,6 +248,21 @@ void test_regularised() {
   expect_matches_fd<1>(model::regularised, args, gb);
 }
 
+void test_heap_storage() {
+  using V = nn::HeapVec<3>;
+  const auto a = filled_with<V>(0.9, 1.0);
+  const auto b = filled_with<V>(1.1, 0.5);
+  const auto t = filled_with<V>(1.3, 1.0);
+
+  auto [L, g] = nad::value_and_grad<^^model::heap_loss, 0, 1>(a, b, t);
+  const auto &[ga, gb] = g;
+
+  EXPECT_EQUAL(L, model::heap_loss(a, b, t));
+  const auto args = std::tuple{a, b, t};
+  expect_matches_fd<0>(model::heap_loss, args, ga);
+  expect_matches_fd<1>(model::heap_loss, args, gb);
+}
+
 void test_xor_training() {
   auto W1 = filled_with<Mat<H, 2>>(1.0, 1.0);
   auto b1 = nn::filled<Vec<H>>(0.1);
@@ -267,6 +308,7 @@ int main() {
   test_dense_mse();
   test_mlp();
   test_regularised();
+  test_heap_storage();
   test_xor_training();
   TEST_END;
 }

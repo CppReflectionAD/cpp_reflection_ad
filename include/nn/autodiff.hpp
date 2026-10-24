@@ -151,8 +151,10 @@ consteval info value_type(info t) { return m::remove_cvref(t); }
 //     (coerce()), since a conversion's target type cannot be queried.
 //   - Clang: a copy or move of a class value is a one-operand construct.
 //   - GCC: binding to a `const T &` parameter is a conversion of `&operand`; a
-//     temporary, and the return slot, is a two-operand construct of an
-//     unnamed variable from its initializer.
+//     temporary, and the return slot, is a construct of an unnamed variable
+//     from its initializer. If the class has a non-trivial destructor, a
+//     temporary's construct has a third operand: the destructor call that
+//     cleans it up.
 consteval info strip(info e) {
   while (m::is_expression(e)) {
     if (m::is_conversion(e)) {
@@ -169,9 +171,25 @@ consteval info strip(info e) {
         e = ops[0];
         continue;
       }
-      if (ops.size() == 2 && m::is_expression(ops[0]) &&
+      // The cleanup is a call on the temporary (`&tmp`). Its callee is GCC's
+      // destructor clone, for which is_destructor() is false, so match the
+      // operand rather than the callee.
+      const auto cleans_up = [&](info call) {
+        if (!m::is_expression(call) || !m::is_function_call(call))
+          return false;
+        const auto args = m::operands_of(call);
+        if (args.size() != 1 || !m::is_expression(args[0]) ||
+            !m::is_operator_expression(args[0]) ||
+            m::expression_operator_of(args[0]) != m::operators::op_ampersand)
+          return false;
+        const info target = m::operands_of(args[0])[0];
+        return m::is_expression(target) && m::is_id_expression(target) &&
+               m::declaration_of(target) == m::declaration_of(ops[0]);
+      };
+      if ((ops.size() == 2 || ops.size() == 3) && m::is_expression(ops[0]) &&
           m::is_id_expression(ops[0]) &&
-          !m::has_identifier(m::declaration_of(ops[0]))) {
+          !m::has_identifier(m::declaration_of(ops[0])) &&
+          (ops.size() == 2 || cleans_up(ops[2]))) {
         e = ops[1];
         continue;
       }

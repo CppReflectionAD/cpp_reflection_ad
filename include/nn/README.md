@@ -147,24 +147,30 @@ primitive has a hand-written VJP", which is the same design as PyTorch / JAX
 
 ## Compiler notes
 
-Both forks:
-- An **overloaded operator is `is_function_call`, not `is_binary_operator`**.
-  The proposal (§4.2) says `a+b` classifies as an operator, so both
-  implementations differ from the proposal here.
-- `operands_of(call)` is `[callee, args...]`.
+The engine goes through `ad::meta` (`include/ad/meta.h`), which gives the
+clang fork's expression API on both compilers. With it, on both forks:
+- `operands_of(call)` is the arguments only; the callee comes from
+  `declaration_of(callee_of(call))`.
 - `type_of` on an expression is an error.
 
 Clang:
-- The callee operand is a `cast` of a reference to the function.
+- An **overloaded operator is both `is_function_call` and
+  `is_operator_expression`**, so the engine checks for calls first. The
+  proposal (§4.2) says `a+b` classifies as an operator.
 - Copies are one-operand `construct`s.
 
 GCC:
-- **A class with a non-trivial destructor (e.g. `std::vector` storage) is
-  unusable.** The `return` statement goes missing from `statements_of`, both
-  after a local of such a type and in a body that is just `return make(x);`.
-  See [tests/known_gap/gcc/nontrivial_destructor_reflection.cpp](../../tests/known_gap/gcc/nontrivial_destructor_reflection.cpp).
-  This is likely why the older `include/ad/clang_only/` tensor prototype is
-  Clang-only. Fixed-size trivially copyable types avoid it.
+- An overloaded operator is `is_function_call` only.
+- A class with a non-trivial destructor used to lose the `return` statement
+  from `statements_of`. Fixed in the pinned fork; see
+  [tests/common/nontrivial_destructor_reflection.cpp](../../tests/common/nontrivial_destructor_reflection.cpp).
+  A temporary of such a class is a three-operand construct: the unnamed
+  variable, its initializer, and the destructor call that cleans it up.
+  `strip()` peels it.
+- **A second local of such a class has no initializer** (`initializer_of`
+  throws), so a reflected body can name only one intermediate of a
+  heap-backed type. See
+  [tests/known_gap/gcc/initializer_after_cleanup.cpp](../../tests/known_gap/gcc/initializer_after_cleanup.cpp).
 - Binding to `const T&` shows as `cast(&x)`. A temporary or return slot is
   `construct(<unnamed var>, init)`. `strip()` in autodiff.hpp peels both.
 - **Each declaration statement appears twice** in `statements_of`. The engine

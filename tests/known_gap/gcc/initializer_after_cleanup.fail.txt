@@ -1,0 +1,5 @@
+=== GCC ===
+tests/known_gap/gcc/initializer_after_cleanup.cpp:72:42: error: non-constant condition for static assertion
+   72 | static_assert(every_local_has_initializer(^^two_d));
+      |               ~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~~~
+tests/known_gap/gcc/initializer_after_cleanup.cpp:72:42: error: uncaught exception of type 'std::meta::exception'; 'what()': 'reflection does not represent a variable declaration with initializer'

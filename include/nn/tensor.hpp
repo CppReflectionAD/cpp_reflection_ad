@@ -7,10 +7,10 @@
 // Design constraints, all coming from what body reflection can see today:
 //
 //   - Shapes are template parameters and the types are trivially copyable
-//     (std::array storage, no heap). GCC reflects a call returning a class with
-//     a non-trivial destructor as an AGGR_INIT_EXPR plus cleanups, which the
-//     engine cannot read; fixed-size values also make shape errors compile
-//     errors.
+//     (std::array storage, no heap), so shape errors are compile errors. The
+//     engine also handles heap-backed types (tests/common/nn_mlp.t.cpp has
+//     one), but on GCC only one local of such a type per reflected body:
+//     see tests/known_gap/gcc/initializer_after_cleanup.cpp.
 //   - Values, not in-place updates. Reflected code is `T v = expr;` and
 //     `return expr;`; assignments and compound assignments are not modelled.
 //     (sgd_update below mutates, but it runs outside reflected code.)
