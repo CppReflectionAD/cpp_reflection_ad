@@ -261,6 +261,45 @@ jobs:
       - name: Test AD with CTest
         run: ctest --preset "${{ matrix.preset }}"
 
+  # Each toolchain as a release asset for `run_tests.py --fetch-compilers`
+  # (#165): packed and checked until its pin and recipe are published, and
+  # published from main. Not in the summary's needs, so it never holds up the
+  # required check, and skipped in the merge queue, which can't publish.
+  # Publishing needs contents: write, which only the publish job inside gets.
+  archive:
+    needs: toolchain
+    if: github.event_name != 'merge_group'
+    uses: ./.github/workflows/toolchain-archive.yml
+    permissions:
+      contents: write
+    with:
+      compiler: gcc
+      cache_key: ${{ needs.toolchain.outputs.cache_key }}
+      runner: ${{ needs.toolchain.outputs.runner }}
+
+  archive-macos:
+    needs: toolchain-macos
+    if: github.event_name != 'merge_group'
+    uses: ./.github/workflows/toolchain-archive.yml
+    permissions:
+      contents: write
+    with:
+      compiler: gcc
+      cache_key: ${{ needs.toolchain-macos.outputs.cache_key }}
+      runner: ${{ needs.toolchain-macos.outputs.runner }}
+      macos_sdk: ${{ needs.toolchain-macos.outputs.macos_sdk }}
+
+  archive-arm64:
+    needs: toolchain-arm64
+    if: github.event_name != 'merge_group'
+    uses: ./.github/workflows/toolchain-archive.yml
+    permissions:
+      contents: write
+    with:
+      compiler: gcc
+      cache_key: ${{ needs.toolchain-arm64.outputs.cache_key }}
+      runner: ${{ needs.toolchain-arm64.outputs.runner }}
+
   # The one check for the ruleset to require (#94 C4), so it names this
   # workflow's result rather than each matrix leg. always() makes it report
   # even when the toolchain fails and the legs are skipped, or the run is
