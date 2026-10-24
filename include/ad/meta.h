@@ -2,14 +2,15 @@
 // compilers.
 //
 // The clang fork renamed and reshaped part of the statement/expression API
-// (siqiyyyy/clang-p2996#11); the GCC fork's <meta> still has the older one.
-// Code that reflects function bodies uses ad::meta instead of std::meta, and
-// on GCC the functions below supply the clang fork's API on top of the older
-// one, with the same meaning:
-//   - is_id_expression, is_operator_expression, is_conversion,
-//     return_operand_of: renames or combinations of the old predicates.
-//     Unlike clang's, is_operator_expression is false for an overloaded
-//     operator, which GCC reflects only as a call.
+// (siqiyyyy/clang-p2996#11); the GCC fork's <meta> has only part of it so far
+// (return_operand_of, CppReflectionAD/gcc#4). Code that reflects function
+// bodies uses ad::meta instead of std::meta, and on GCC the functions below
+// supply the rest of the clang fork's API on top of the older one, with the
+// same meaning:
+//   - is_id_expression, is_operator_expression, is_conversion: renames or
+//     combinations of the old predicates. Unlike clang's,
+//     is_operator_expression is false for an overloaded operator, which GCC
+//     reflects only as a call.
 //   - operands_of: on a call, the arguments only. GCC lists the callee first,
 //     if the call has one.
 //   - is_declaration_statement: false for an assignment, which GCC also
@@ -102,10 +103,6 @@ consteval bool is_conversion(info e) {
          (std::meta::is_construct(e) && ad::meta::operands_of(e).size() == 1);
 }
 
-consteval info return_operand_of(info s) {
-  return std::meta::return_value_of(s);
-}
-
 consteval std::vector<info> declarators_of(info s) {
   return {std::meta::declared_variable_of(s)};
 }
@@ -114,20 +111,20 @@ consteval std::vector<info> initializers_of(info s) {
   return {std::meta::initializer_of(std::meta::declared_variable_of(s))};
 }
 
-// Fails once GCC's <meta> has return_operand_of, as a sign that it has the
-// rest of the new API too. Then the wrappers above would shadow it (and
+// Fails once GCC's <meta> has declarators_of, as a sign that it has the rest
+// of the new API too. Then the wrappers above would shadow it (and
 // operands_of would drop a real argument), so delete them.
 namespace detail {
 struct absent {};
 namespace fallback {
-consteval absent return_operand_of(auto) { return {}; }
+consteval absent declarators_of(auto) { return {}; }
 } // namespace fallback
 namespace probe {
 using namespace std::meta;
 using namespace fallback;
 } // namespace probe
 } // namespace detail
-static_assert(std::is_same_v<decltype(detail::probe::return_operand_of(^^int)),
+static_assert(std::is_same_v<decltype(detail::probe::declarators_of(^^int)),
                              detail::absent>,
               "GCC's <meta> now has the new expression-reflection API: "
               "delete the GCC wrappers in ad/meta.h");
