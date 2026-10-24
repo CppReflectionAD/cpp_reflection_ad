@@ -44,6 +44,8 @@
 #ifndef NN_AUTODIFF_HPP
 #define NN_AUTODIFF_HPP
 
+#include <ad/meta.h>
+
 #include <cstddef>
 #include <meta>
 #include <span>
@@ -54,7 +56,8 @@
 
 namespace nn::ad {
 
-namespace m = std::meta;
+// ::ad::meta, not ad::meta: inside nn::ad, that would name nn::ad::meta.
+namespace m = ::ad::meta;
 using info = m::info;
 
 // The registry key of a function: the function, or for a template or one of
@@ -144,17 +147,18 @@ consteval info value_type(info t) { return m::remove_cvref(t); }
 // Peel the nodes that carry no computation, to reach the expression that does.
 // What wraps an operand differs by compiler:
 //   - both: implicit conversions (lvalue-to-rvalue, derived-to-base, ...) are
-//     casts. Arithmetic conversions are restored where the type is known
-//     (coerce()), since a cast's target type cannot be queried.
+//     conversions. Arithmetic conversions are restored where the type is known
+//     (coerce()), since a conversion's target type cannot be queried.
 //   - Clang: a copy or move of a class value is a one-operand construct.
-//   - GCC: binding to a `const T &` parameter is a cast of `&operand`; a
+//   - GCC: binding to a `const T &` parameter is a conversion of `&operand`; a
 //     temporary, and the return slot, is a two-operand construct of an
 //     unnamed variable from its initializer.
 consteval info strip(info e) {
   while (m::is_expression(e)) {
-    if (m::is_cast(e)) {
+    if (m::is_conversion(e)) {
       e = m::operands_of(e)[0];
-      if (m::is_expression(e) && m::is_unary_operator(e) &&
+      if (m::is_expression(e) && m::is_operator_expression(e) &&
+          m::operands_of(e).size() == 1 &&
           m::expression_operator_of(e) == m::operators::op_ampersand)
         e = m::operands_of(e)[0];
       continue;
@@ -166,7 +170,7 @@ consteval info strip(info e) {
         continue;
       }
       if (ops.size() == 2 && m::is_expression(ops[0]) &&
-          m::is_variable_reference(ops[0]) &&
+          m::is_id_expression(ops[0]) &&
           !m::has_identifier(m::declaration_of(ops[0]))) {
         e = ops[1];
         continue;
@@ -238,22 +242,22 @@ consteval std::size_t inline_call(Ctx &c, info callee,
 }
 
 consteval std::size_t lower_call(Ctx &c, info call) {
-  const info callee = m::callee_of(call);
+  const info callee = m::declaration_of(m::callee_of(call));
   if (!m::is_function(callee))
     throw "nn::ad: only calls to named functions are supported";
   if (m::is_class_member(callee) && !m::is_static_member(callee))
     throw "nn::ad: member function calls are not supported";
 
-  const auto ops = m::operands_of(call); // [callee, args...] on both compilers
+  const auto ops = m::operands_of(call); // the arguments, without the callee
   const auto params = m::parameters_of(callee);
-  if (ops.size() != params.size() + 1)
+  if (ops.size() != params.size())
     throw "nn::ad: calls must pass every argument explicitly (no defaults, no "
           "varargs)";
 
   std::vector<std::size_t> args;
   for (std::size_t i = 0; i < params.size(); ++i)
     args.push_back(
-        coerce(c, lower(c, ops[i + 1]), value_type(m::type_of(params[i]))));
+        coerce(c, lower(c, ops[i]), value_type(m::type_of(params[i]))));
 
   const info rule = rule_for(callee);
   if (rule == info{})
@@ -274,7 +278,7 @@ consteval std::size_t lower_call(Ctx &c, info call) {
 consteval std::size_t lower(Ctx &c, info e) {
   e = strip(e);
 
-  if (m::is_variable_reference(e)) {
+  if (m::is_id_expression(e)) {
     const info decl = m::declaration_of(e);
     if (m::has_identifier(decl))
       if (std::size_t s = lookup(c, m::identifier_of(decl)); s != npos)
@@ -293,8 +297,13 @@ consteval std::size_t lower(Ctx &c, info e) {
                         .leaf = v});
   }
 
-  // Built-in operators. (An overloaded operator is a call on both compilers.)
-  if (m::is_unary_operator(e)) {
+  // Before the operators: clang reports an overloaded operator as both a call
+  // and an operator expression, GCC as a call only.
+  if (m::is_function_call(e))
+    return lower_call(c, e);
+
+  // Built-in operators.
+  if (m::is_operator_expression(e) && m::operands_of(e).size() == 1) {
     const m::operators op = m::expression_operator_of(e);
     const std::size_t a = lower(c, m::operands_of(e)[0]);
     if (!m::is_arithmetic_type(c.nodes[a].type))
@@ -309,7 +318,7 @@ consteval std::size_t lower(Ctx &c, info e) {
     throw "nn::ad: unsupported unary operator";
   }
 
-  if (m::is_binary_operator(e)) {
+  if (m::is_operator_expression(e) && m::operands_of(e).size() == 2) {
     const auto ops = m::operands_of(e);
     const m::operators op = m::expression_operator_of(e);
     const std::size_t a = lower(c, ops[0]);
@@ -340,9 +349,6 @@ consteval std::size_t lower(Ctx &c, info e) {
                         .arg = {a, b}});
   }
 
-  if (m::is_function_call(e))
-    return lower_call(c, e);
-
   throw "nn::ad: unsupported expression (conditional operators, casts the "
         "engine cannot see through, constructions, ...)";
 }
@@ -363,19 +369,24 @@ consteval std::size_t lower_body(Ctx &c, info body) {
     if (ret != npos)
       throw "nn::ad: statement after the return statement";
     if (m::is_declaration_statement(s)) {
-      const info v = m::declared_variable_of(s);
-      // GCC lists each declaration statement twice. A block declares a name
-      // once, so a name already declared in this body is the same statement.
-      bool seen = false;
-      for (std::size_t i = begin; i < c.env_decl.size(); ++i)
-        seen = seen || m::identifier_of(c.env_decl[i]) == m::identifier_of(v);
-      if (seen)
-        continue;
-      const std::size_t slot =
-          coerce(c, lower(c, m::initializer_of(v)), value_type(m::type_of(v)));
-      bind(c, v, slot);
+      const auto decls = m::declarators_of(s);
+      const auto inits = m::initializers_of(s);
+      for (std::size_t d = 0; d < decls.size(); ++d) {
+        const info v = decls[d];
+        // GCC lists each declaration statement twice. A block declares a
+        // name once, so a name already declared in this body is the same
+        // statement.
+        bool seen = false;
+        for (std::size_t i = begin; i < c.env_decl.size(); ++i)
+          seen = seen || m::identifier_of(c.env_decl[i]) == m::identifier_of(v);
+        if (seen)
+          continue;
+        const std::size_t slot =
+            coerce(c, lower(c, inits[d]), value_type(m::type_of(v)));
+        bind(c, v, slot);
+      }
     } else {
-      ret = lower(c, m::return_value_of(s));
+      ret = lower(c, m::return_operand_of(s));
     }
   }
   if (ret == npos)
