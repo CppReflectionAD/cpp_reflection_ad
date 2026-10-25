@@ -16,6 +16,7 @@ goes is in [tests/README.md](tests/README.md).
 - [Formatting and linting](#formatting-and-linting)
 - [CI checks](#ci-checks)
 - [Merging a pull request](#merging-a-pull-request)
+- [Reporting a compiler gap](#reporting-a-compiler-gap)
 - [Bumping a compiler pin](#bumping-a-compiler-pin)
 
 ## Prerequisites
@@ -442,6 +443,26 @@ Rulesets), which
 tracks. It applies only to pull requests into `main`, so one stacked on
 another pull request's branch shows as mergeable without a review until it is
 retargeted to `main`.
+
+## Reporting a compiler gap
+
+A bug or missing feature in one of the reflection forks is a compiler gap.
+The forks ([CppReflectionAD/clang-p4395](https://github.com/CppReflectionAD/clang-p4395),
+[CppReflectionAD/gcc](https://github.com/CppReflectionAD/gcc) and
+[CppReflectionAD/gcc-darwin-arm64](https://github.com/CppReflectionAD/gcc-darwin-arm64))
+have issues turned off, and their READMEs send bug reports here. Report one
+as an issue in this repository with the `CompilerGap` label:
+
+- Give a small reproducer that uses only `<meta>`, in the fork's own API, so a
+  fix can add it to the fork's tests (for GCC, as a `g++.dg/reflect` test).
+- Say which pin shows it, what the other compiler does, and what it blocks
+  here.
+- If code here runs into it, record it as a `known_gap/` test (see
+  [tests/README.md](tests/README.md)) that names the issue.
+
+A fix is a pull request into the fork's `p4395` branch. Then bump the pin
+here, moving the `known_gap/` test in the same pull request (see
+[Bumping a compiler pin](#bumping-a-compiler-pin)), and close the issue.
 
 ## Bumping a compiler pin
 
