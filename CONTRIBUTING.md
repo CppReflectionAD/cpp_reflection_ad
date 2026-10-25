@@ -359,11 +359,11 @@ changes a toolchain rebuilds it in the queue too.
 | `Clang tests` | `clang_prebuilt_cache.yml` | yes | `python3 run_tests.py --compiler clang --build-type all && python3 run_tests.py --compiler clang --sanitize` |
 | `GCC tests` | `gcc_prebuilt_cache.yml` | yes | `python3 run_tests.py --compiler gcc --build-type all && python3 run_tests.py --compiler gcc --sanitize` |
 | `sanitize (ASan+UBSan)` | both test workflows | yes, through `Clang tests` and `GCC tests` | `python3 run_tests.py --sanitize` |
+| `Submodule pins` | `submodule-pins.yml` | yes | `.github/scripts/check-submodule-pins.sh` (needs `gh` logged in) |
 | `test (Release, x86-64-v3)` | both test workflows | not yet | `cmake --preset clang-x86-64-v3 && cmake --build --preset clang-x86-64-v3 && ctest --preset clang-x86-64-v3` (or `gcc-`) |
 | `test (<build type>, macOS arm64)` | both test workflows | not yet ([#94](https://github.com/CppReflectionAD/cpp_reflection_ad/issues/94) C9) | `python3 run_tests.py --build-type all` and `python3 run_tests.py --sanitize`, on a Mac |
 | `test (<build type>, Linux arm64)` | both test workflows | not yet ([#94](https://github.com/CppReflectionAD/cpp_reflection_ad/issues/94) C9) | `python3 run_tests.py --build-type all` and `python3 run_tests.py --sanitize`, on an arm64 Linux machine |
 | `GCC pins` | `gcc-pins.yml` | not yet | `.github/scripts/check-gcc-pins.sh` |
-| `Submodule pins` | `submodule-pins.yml` | not yet | `.github/scripts/check-submodule-pins.sh` (needs `gh` logged in) |
 
 `Clang tests` and `GCC tests` are summary jobs. Each passes only when its
 workflow's `toolchain` job, its three `test (<build type>)` legs (one per build
@@ -421,8 +421,9 @@ checks and don't run in the merge queue.
 `main` changes only through pull requests, and they are squash-merged through
 a merge queue. A pull request can join the queue once it has:
 
-- `pre-commit`, `Clang tests` and `GCC tests` passing (see
-  [CI checks](#ci-checks));
+- `pre-commit`, `Submodule pins`, `Clang tests` and `GCC tests` passing (see
+  [CI checks](#ci-checks)). So a pin bump can merge only after its pins are
+  merged into their fork branches;
 - an approving review from someone other than whoever pushed last. A push
   dismisses earlier approvals;
 - every review thread resolved.
