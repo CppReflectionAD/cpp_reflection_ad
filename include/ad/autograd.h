@@ -35,7 +35,10 @@
 // sin/cos/exp/log/sqrt/erfc. The core is rule-driven so more ops / tensors are
 // additive. Calls to user-defined helpers are inlined (the callee's body is
 // reflected into the same DAG), so ordinary functions compose; the callee must
-// itself be straight-line and non-recursive (free functions only).
+// itself be straight-line and non-recursive, and use only its parameters (free
+// functions, and lambdas or function objects without state). An overloaded
+// operator is such a call too, whatever its symbol: `a * b` is lowered as the
+// primitive or body of the `operator*` it calls.
 //
 // Control flow so far means `c ? a : b`, the operators building `c`, and
 // abs/max/min; `if` and loops are not supported. Branches are predicated, not
@@ -119,6 +122,8 @@ inline constexpr std::size_t UNGUARDED = static_cast<std::size_t>(-1);
 //   template <> struct ad::primitive<^^toy_tensor::relu> {
 //     static constexpr ad::OpKind op = ad::OpKind::Relu;
 //   };
+// An overloaded operator is registered the same way, e.g.
+// `ad::primitive<^^mat::operator*>` with op = Matmul.
 template <info F> struct primitive; // declared, never defined
 
 // `^^f` is ill-formed when `f` names an overload set, so a specific overload is
@@ -486,24 +491,22 @@ consteval std::size_t lower(Ctx &c, info e) {
     return emit(c, OpKind::Const, 0, 0, m::constant_of(e));
   }
 
-  // is_operator_expression covers both arities; discriminate with
-  // operands_of().size() (1 = unary, 2 = binary), same as
-  // expression_operator_of and operands_of handle built-in vs. overloaded
-  // uniformly.
-  if (m::is_operator_expression(e) && m::operands_of(e).size() == 1) {
-    m::operators op = m::expression_operator_of(e);
-    std::size_t a = lower(c, m::operands_of(e).front());
-    if (op == m::operators::op_plus)
-      return a; // unary plus is a no-op
-    if (op == m::operators::op_minus)
-      return emit(c, OpKind::Neg, a);
-    if (op == m::operators::op_exclamation)
-      return emit(c, OpKind::Not, a);
-    throw "reflection AD: unsupported unary operator";
-  }
-
-  if (m::is_operator_expression(e) && m::operands_of(e).size() == 2) {
-    auto ops = m::operands_of(e);
+  // A built-in operator. An overloaded one is also is_operator_expression,
+  // but it is a call to its operator function and is lowered as one below,
+  // so its derivative follows what that function does.
+  if (m::is_operator_expression(e) && !m::is_function_call(e)) {
+    const auto ops = m::operands_of(e);
+    if (ops.size() == 1) {
+      m::operators op = m::expression_operator_of(e);
+      std::size_t a = lower(c, ops[0]);
+      if (op == m::operators::op_plus)
+        return a; // unary plus is a no-op
+      if (op == m::operators::op_minus)
+        return emit(c, OpKind::Neg, a);
+      if (op == m::operators::op_exclamation)
+        return emit(c, OpKind::Not, a);
+      throw "reflection AD: unsupported unary operator";
+    }
     OpKind op = binOp(m::expression_operator_of(e));
     std::size_t a = lower(c, ops[0]);
     // Short-circuit: lower the right operand under the guard saying the left
@@ -540,7 +543,8 @@ consteval std::size_t lower(Ctx &c, info e) {
 
   if (m::is_function_call(e)) {
     // operands_of(call) = [arg0, arg1, ...] -- the callee is never an operand;
-    // callee_of(e) is the only way to get it.
+    // callee_of(e) is the only way to get it. A member operator's object is
+    // its first operand: `a` in `a * b`, `f` in `f(x)`.
     auto ops = m::operands_of(e);
     Prim p = find_primitive(m::declaration_of(m::callee_of(e)));
     if (!p.found) // user helper -> inline its body
@@ -551,7 +555,7 @@ consteval std::size_t lower(Ctx &c, info e) {
       std::size_t b = lower(c, ops[1]);
       return emit(c, op, a, b);
     }
-    std::size_t a = lower(c, ops[ops.size() - 1]); // unary call
+    std::size_t a = lower(c, ops[0]); // unary call
     return emit(c, op, a);
   }
 
@@ -604,6 +608,12 @@ consteval std::size_t lower_body(Ctx &c, info body) {
 consteval std::size_t inline_call(Ctx &c, info call) {
   auto ops = m::operands_of(call); // [arg0, arg1, ...]
   info callee = m::declaration_of(m::callee_of(call));
+  auto params = m::parameters_of(callee);
+  // A member function's object is an operand with no parameter: `f` in a
+  // function object's `f(x)`, or on GCC `s` in `s.mf(x)`. Its body can't use
+  // it (only parameters and locals resolve), so leave it out.
+  if (ops.size() == params.size() + 1)
+    ops.erase(ops.begin());
 
   // Cycle guard: recursive helpers are out of scope (would not terminate here).
   for (info f : c.callStack)
@@ -624,7 +634,6 @@ consteval std::size_t inline_call(Ctx &c, info call) {
 
   // (b) open a lexical scope; bind callee parameters to the argument slots.
   std::size_t mark = c.envDecl.size();
-  auto params = m::parameters_of(callee);
   for (std::size_t i = 0; i < params.size(); ++i) {
     c.envDecl.push_back(params[i]);
     c.envSlot.push_back(argSlots[i]);
