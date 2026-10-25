@@ -115,7 +115,8 @@ that names `gcc-mirror` at `gcc`:
 
 ```bash
 git submodule sync gcc && git submodule update --init gcc
-rm -rf gcc-mirror   # the old checkout, now untracked; push any work in it first
+# the old checkout, once it's untracked; push any work in it first
+git ls-files --error-unmatch gcc-mirror 2>/dev/null || rm -rf gcc-mirror
 ```
 
 And `clang-p2996` moved from `siqiyyyy/clang-p2996` (branch `expr-reflect`) to
