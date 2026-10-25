@@ -1,6 +1,6 @@
 # Makes sure the GCC toolchain is in the cache, building it on a miss.
 # Called by gcc_prebuilt_cache.yml so tests wait for the toolchain, once per
-# runner: on Linux from gcc-mirror, on macOS from gcc-darwin-reflect.
+# runner: on Linux from the gcc submodule, on macOS from gcc-darwin-reflect.
 # On a hit this job only looks the key up; the test jobs restore the prefix.
 # The cache key is the submodule commit plus a hash of the build script and
 # the recipe it runs, the one `run_tests.py --build-compilers` uses, and on
