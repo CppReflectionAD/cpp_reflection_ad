@@ -1,4 +1,4 @@
-#include <ad/clang_only/is_continuous.hpp>
+#include <ad/is_continuous.hpp>
 #include <test_simple_include.hpp>
 
 #include "functions/1-poly.h"
