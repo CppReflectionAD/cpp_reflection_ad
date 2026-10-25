@@ -21,7 +21,7 @@ The `ad::meta` results were measured with #198's version (`acf056c`); with
 
 ## Headlines
 
-1. **Neither fork has `has_body`** (§3.1), not even at the fork tips. On clang,
+1. **Neither fork has `has_body`** (§3.1, #204), not even at the fork tips. On clang,
    `body_of` on a function with no definition is a hard error. The clang fork
    has no `std::meta::exception`, so it can't be caught, and there is no way
    to ask first. On GCC, catching the exception works as a substitute.
@@ -41,23 +41,24 @@ The `ad::meta` results were measured with #198's version (`acf056c`); with
    - expression statements are not statements;
    - nested blocks are flattened;
    - multi-declarators are split into one statement per variable;
-   - a variable is its own operand, so the recursive walk §3.5 describes never
-     terminates;
+   - a variable or a literal is its own operand, so the recursive walk §3.5
+     describes never terminates (#202);
    - `+=` is lowered to `= … + …`, and prefix vs. postfix can't be told apart.
 
    An overloaded operator call doesn't report its operator either, but
    `operator_of(declaration_of(callee_of(e)))` recovers it (p18), so a shim
    could.
-5. **New GCC bug:** an internal compiler error (`r07`). See
+5. **New GCC bug:** an internal compiler error (#201, `r07`). See
    [Other fork defects](#other-fork-defects).
-6. **Clang reports a structured binding as `is_simple_declaration`**, although
-   the paper and the fork's own `<meta>` comment both say bindings are excluded.
+6. **Clang reports a structured binding as `is_simple_declaration`** (#203),
+   although the paper and the fork's own `<meta>` comment both say bindings
+   are excluded.
 
 ## API and semantics, claim by claim
 
 | § | Paper API / claim | clang | GCC (and + fixes) | Probe |
 |---|---|---|---|---|
-| 3.1 | `has_body` | ❌ absent | ❌ absent | p01 |
+| 3.1 | `has_body` | ❌ absent (#204) | ❌ absent (#204) | p01 |
 | 3.1 | `body_of` on a declared-only function | ⚠️ not a constant expression; can't be caught, because the fork has no `std::meta::exception` | ⚠️ throws `std::meta::exception` "function is not defined"; catchable, so it can stand in for `has_body` | p02, p20 |
 | 3.1 | `body_of` gives a compound statement | ✅ | ⚠️ a single-statement body is that statement (e.g. the `return`). A body with locals is a scope node that satisfies `is_expression` and has 3 `operands_of` | d01, r06, r07 |
 | 3.2 | `statements_of` lists the block's statements in order | ✅ | ⚠️ nested `{ … }` blocks are flattened into the parent list; a `for` comes back as a lowered statement list; a `using` alias disappears | p04, d01 #2 #4 |
@@ -67,7 +68,7 @@ The `ad::meta` results were measured with #198's version (`acf056c`); with
 | 3.2 | `is_declaration_statement` | ✅ | ⚠️ at `311c34e`, `p.x += …` is reported as a declaration (#185, fixed by gcc#6). A structured binding is not a declaration statement on either GCC | p06, d01 #4 #7 |
 | 3.2 | `is_expression_statement` | ✅ | ❌ absent | p04, p13 |
 | 3.2 | `is_return_statement` | ✅ | ✅ (also `is_expression`) | p04 |
-| 3.3 | `is_simple_declaration` | ⚠️ **true** for `auto [a, b] = p;`, which should be excluded; correctly false for `using D = double;` | ❌ absent | p06 |
+| 3.3 | `is_simple_declaration` | ⚠️ **true** for `auto [a, b] = p;`, which should be excluded (#203); correctly false for `using D = double;` | ❌ absent | p06 |
 | 3.3 / 5.1 | `declarators_of` / `initializers_of` (`double v = …, w = …;` gives 2 of each) | ✅ | ❌ absent: GCC has `declared_variable_of` + `initializer_of`, and splits a multi-declarator into one statement per variable. `ad::meta` returns one-element vectors | p05, r02 |
 | 3.4 | `return_operand_of`, including `return {x, y};` → the constructor call | ✅ | ⚠️ called `return_value_of` at both pins (renamed only at the fork tip). Through `ad::meta` it behaves as the paper says, braced returns included | p12 |
 | 3.5 | `expression_of` | ✅ | ❌ absent; an expression statement already *is* its expression | p13 |
@@ -77,7 +78,7 @@ The `ad::meta` results were measured with #198's version (`acf056c`); with
 | 3.5 | `is_function_call`, also true for an overloaded operator | ✅ | ✅ | p08, p10 |
 | 3.5 | `callee_of` is the raw callee expression; `is_id_expression` + `declaration_of` resolve it | ✅ | ❌ returns the function itself (`operands_of(e)[0]`), not an expression; `ad::meta::declaration_of` passes it through | p08 |
 | 3.5 | `operands_of` on a call: the arguments, defaulted ones included | ✅ | ⚠️ the callee is listed first (`ad::meta` drops it); defaulted arguments are included | p09 |
-| 3.5 | operands are leaves or sub-expressions to recurse into | ✅ | ❌ `operands_of(v)` for a variable is `{v}`, so a walk that recurses into every `is_expression` operand never ends | r05, p17b |
+| 3.5 | operands are leaves or sub-expressions to recurse into | ✅ | ❌ `operands_of(v)` for a variable is `{v}`, and likewise for a literal, so a walk that recurses into every `is_expression` operand never ends (#202) | r05, p17b |
 | 3.5 | `is_literal` | ✅ | ✅ | p11 |
 | 3.5 | `is_id_expression` | ⚠️ exists, but value uses arrive wrapped in an implicit conversion, so `operands_of(v + 1)[0]` is not an id-expression | ❌ absent: `is_variable_reference` is just `is_variable`, because the operand *is* the variable reflection. `ad::meta` maps it | p07, p09 |
 | 3.5 | `declaration_of(id)` matches `declarators_of(decl)[i]` | ⚠️ only after stripping the implicit conversion (`while (is_conversion(e)) e = operands_of(e)[0];`); on the operand as returned it is not a constant expression | ✅ through `ad::meta` | p07, p19 |
@@ -89,7 +90,7 @@ The `ad::meta` results were measured with #198's version (`acf056c`); with
 
 ## Other fork defects
 
-- **GCC internal compiler error (new, not filed).** In a function with a
+- **GCC internal compiler error (#201).** In a function with a
   local, `operands_of(body_of(f))` has 3 elements. The third is a raw scope
   block, and `is_statement` on it crashes the compiler: `tree check: expected
   tree that contains 'typed' structure, have 'block' in error_operand_p`. It
