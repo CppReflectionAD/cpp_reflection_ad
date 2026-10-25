@@ -1,3 +1,5 @@
+// TEST-PASSES-ON: clang
+//
 // Known GCC gap: `||`, `&&` and `!` are not classified as operators.
 //
 // For a comparison such as `x > 0.0`, both compilers report
@@ -7,11 +9,11 @@
 // operands_of() already handle these expressions (see
 // tests/common/gcc_logical_operator_reflection.cpp).
 //
-// tests/CMakeLists.txt expects all three static_asserts below to fail, with the
-// errors in logical_operator_reflection.fail.txt, so the test also fails if GCC
-// fixes only some of them. clang checks the same asserts in
-// tests/clang_only/logical_operator_reflection.cpp. When GCC fixes the gap,
-// move that file to tests/common/ and delete this one and its .fail.txt.
+// On GCC, tests/CMakeLists.txt expects all three static_asserts below to fail,
+// with the errors in logical_operator_reflection.fail.txt, so the test also
+// fails if GCC fixes only some of them. The TEST-PASSES-ON line makes this an
+// ordinary test on clang, which passes all three. When GCC fixes the gap, move
+// this file to tests/common/, drop that line and delete the .fail.txt.
 #include <ad/meta.h>
 
 #include "reflection/return_expr.hpp"
