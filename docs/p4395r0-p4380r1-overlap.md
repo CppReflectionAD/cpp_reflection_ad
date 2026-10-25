@@ -20,8 +20,8 @@ But P4380R1's macros need to look at expressions, so they bring their own
 expression-reflection API (§4.1, "Expression macros"). That API overlaps
 P4395R0 §3.5 and sometimes conflicts with it. Neither paper cites the other.
 
-Section numbers below are each paper's own. "Our forks" means the clang
-`expr-reflect` and GCC `autograd-capable` forks that P4395R0 §5 lists.
+Section numbers below are each paper's own. "Our forks" means the clang and
+GCC forks that this repository pins as submodules.
 
 ## Summary
 
@@ -32,8 +32,8 @@ Section numbers below are each paper's own. "Our forks" means the clang
 | 3 | `operator_of(info expr)` vs `expression_operator_of(info)` | same query, different name | Agree on one name, with the reasons on record |
 | 4 | `operands_of(info)` | same name, unspecified or different semantics | Specify calls, default arguments and the callee once |
 | 5 | `is_binary_operation` vs `is_operator_expression`, `is_constant_expression` vs `is_literal` | overlapping predicates | Keep both sets where they mean different things; define them together |
-| 6 | `type_of`, `source_text_of`, `source_location_of` on expressions | in P4380R1 only, needed by P4395R0 §2.2 | Apply them to every expression reflection |
-| 7 | `std::meta::operators` | P4395R0 extends it, P4380R1 interpolates it as a token | Decide how a non-token operator interpolates |
+| 6 | `type_of`, `source_text_of`, `source_location_of` on expressions | in P4380R1 only, useful for P4395R0 §2.2 | Apply them to every expression reflection |
+| 7 | `std::meta::operators` | P4395R0 extends it, P4380R1 interpolates it as tokens | Decide how `?:` and cast enumerators interpolate |
 | 8 | Expression splicing | P4395R0 defers it, P4380R1 interpolation provides a form of it | Make P4380R1 the write side; solve relocation |
 | 9 | Assertions, short-circuiting, test generation | overlapping motivating examples | Present them as one story: macro at the call site, body reflection below it |
 | 10 | What an expression reflection shows (conversions, instantiation, discarded statements) | interacting design choices | Agree on the abstraction level |
@@ -172,14 +172,18 @@ Overloaded operators need one rule in both papers. P4395R0 §3.5 says
 `ad::meta` notes in [`meta.h`](../include/ad/meta.h)). For `check!`, the
 rule decides whether `x == y` on a user type gets decomposed.
 
-## 6. Queries P4395R0 needs that P4380R1 already has
+## 6. Queries P4380R1 has that P4395R0 lacks
 
-P4395R0 §2.2's `MY_ASSERT` output prints each subexpression's text
-(`lo <= hi    false`) and a line number. The API in P4395R0 §3 has no way to get
-either; P4380R1 §4.1 has both:
+P4380R1 §4.1 has two queries on expressions that P4395R0 §3 doesn't:
 
 - `source_text_of(info e) -> string_view`
 - `source_location_of(info e) -> source_location`
+
+P4395R0 §2.2's `MY_ASSERT` gets by without them. Its [Godbolt demo] takes
+the text from `#__VA_ARGS__` and the line from a defaulted
+`std::source_location` argument, then reprints each subexpression from the
+reflected tree. With these queries, it could show each subexpression as the
+user spelled it and where it is, instead of a reconstruction.
 
 P4380R1 also has `type_of(info e)`. P4395R0 doesn't say whether P2996's
 `type_of` applies to expression reflections. Body-walking libraries need it,
@@ -197,19 +201,23 @@ after instantiation.
   operators, such as the conditional operator and eventually cast operators".
   It uses `is_prefix` / `is_postfix` rather than new enumerators for `++a`
   and `a++`.
-- P4380R1 §2 interpolates an `operators` value as the single token that
-  spells it (`\(std::meta::operators::op_equals_equals)` gives `==`). §2.10 and
-  §3.2 rely on this to build expressions such as `+lhs $op +rhs`.
+- P4380R1 §2 interpolates an `operators` value as the token that spells it
+  (`\(std::meta::operators::op_equals_equals)` gives `==`). §2.10 and §3.2
+  rely on this to build expressions such as `+lhs $op +rhs`.
 
-An enumerator for `?:` has no single token. Cast enumerators would need a
-type, and `static_cast` would need template brackets. Interpolating one of
-these values either fails or needs new rules.
+P2996's enum already has enumerators that aren't one token
+(`op_parentheses`, `op_square_brackets`, `op_array_new`). So token count
+isn't the new problem. The new problem is shape:
 
-**How to address it.** Either new enumerators are defined as "not
-interpolable", or interpolation of `operators` is defined per enumerator.
-Whichever paper goes second should say which. P4395R0's choice of
-`is_prefix` / `is_postfix` over new enumerators also keeps the existing
-one-token interpolation working.
+- `?:` wraps around its operands, so `lhs \(op) rhs` can't express it.
+- A cast enumerator would need the target type as well. `static_cast`
+  also needs the type in angle brackets around the operand.
+
+**How to address it.** Whichever paper goes second should say how these
+enumerators interpolate. They could be declared not interpolable, or
+interpolation of `operators` could be defined per enumerator. P4395R0's choice
+of `is_prefix` / `is_postfix` over new enumerators keeps `++` and `--` working
+with interpolation as it is today.
 
 ## 8. Expression splicing: P4380R1 as P4395R0's write side
 
@@ -269,7 +277,7 @@ questions" that P4395R0 §4.3 names.
 
 | Use case | P4395R0 | P4380R1 | Together |
 | -------- | ------- | ------- | -------- |
-| Richer assertions | §2.2 `MY_ASSERT` walks the body of the function called in the assertion and reports each subexpression. | §3.2 `check!` decomposes one top-level comparison at the call site, as Catch2 does. | `check!` receives the call expression as an `info`, which is what P4395R0 §1.1 notes P2996 deferred (`^^(expr)`). If it is a call, `body_of(referenced_entity_of(callee_of(cond)))` continues into the callee with P4395R0's API. Neither paper can do both levels alone. |
+| Richer assertions | §2.2 `MY_ASSERT` reports each subexpression of the asserted expression. The [Godbolt demo] gets the expression by wrapping it in a lambda inside a preprocessor macro and reflecting the lambda's body. | §3.2 `check!` decomposes one top-level comparison at the call site, as Catch2 does. | `check!` receives the expression as an `info`, which is what P4395R0 §1.1 notes P2996 deferred (`^^(expr)`), with no lambda needed. It can then walk the expression, and continue into a callee with `body_of(referenced_entity_of(callee_of(cond)))`, using P4395R0's API. Neither paper can do both levels alone. |
 | Short-circuiting | §2.3 ORMs: overloading `&&` / `||` loses short-circuiting, so reflect the expression instead. | §3.7 macro operators: `__macro operator or` keeps short-circuiting. | Different problems with the same root cause. Each paper can cite the other as the solution to the other half. |
 | Generated tests | §2.4 mutation testing. | §2.3 literal testing generates test calls. | Mutation testing needs both papers: read the body, then emit the mutant. |
 | Library implementations of compiler features | §2.1 AD as a library. | §2.6 `Eq` as a metaclass, §2.7 `LoggingVector`. | The same pitch: features that today need a compiler plugin become `consteval` libraries. |
@@ -338,7 +346,8 @@ For P4395R1:
    (section 4). Settle the `operator_of` naming with the P4380 authors
    (section 3).
 4. Adopt `type_of`, `source_text_of` and `source_location_of` for expression
-   reflections (section 6). §2.2 needs them.
+   reflections (section 6), so that §2.2 can report each subexpression as
+   written.
 5. Say whether expression reflections show implicit conversions
    (section 10).
 
@@ -346,11 +355,12 @@ For the P4380 authors (to raise with them, not to decide for them):
 
 1. The `declaration_of` clash and the `operands_of` semantics (sections 2
    and 4).
-2. How `operators` enumerators without a single token interpolate
+2. How `?:` and cast enumerators of `operators` would interpolate
    (section 7).
 3. Interpolating body expressions with rebinding (section 8, option 2) as a
    joint follow-up paper.
 
+[Godbolt demo]: https://godbolt.org/z/rxMnqfav4
 [P3294R2]: https://wg21.link/p3294r2
 [P4380R1]: https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2026/p4380r1.html
 [P4395R0]: https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2026/p4395r0.pdf
