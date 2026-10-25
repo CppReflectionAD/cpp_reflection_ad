@@ -98,7 +98,7 @@ inline double predict(const Mat<H, 2> &W1, const Vec<H> &b1,
 }
 
 // Two locals of the heap-backed type: GCC used to drop the second one's
-// initializer (see tests/common/initializer_after_cleanup.cpp).
+// initializer (#187, tests/common/copied_local_initializer_reflection.cpp).
 inline double heap_loss(const nn::HeapVec<3> &a, const nn::HeapVec<3> &b,
                         const nn::HeapVec<3> &t) {
   nn::HeapVec<3> h = relu(a + b);
