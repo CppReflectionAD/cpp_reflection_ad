@@ -97,8 +97,7 @@ inline double predict(const Mat<H, 2> &W1, const Vec<H> &b1,
   return nn::sigmoid(W2 * dense_relu(W1, b1, x) + b2)[0];
 }
 
-// Two locals of the heap-backed type: GCC used to drop the second one's
-// initializer (#187, tests/common/copied_local_initializer_reflection.cpp).
+// Two locals of the heap-backed type.
 inline double heap_loss(const nn::HeapVec<3> &a, const nn::HeapVec<3> &b,
                         const nn::HeapVec<3> &t) {
   nn::HeapVec<3> h = relu(a + b);
