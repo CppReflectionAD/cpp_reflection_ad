@@ -1,5 +1,0 @@
-=== GCC ===
-tests/known_gap/gcc/class_local_declaration_reflection.cpp:33:62: error: static assertion failed: a class-type local is more than one declaration statement
-   33 | static_assert(m::statements_of(m::body_of(^^t_local)).size() == 2,
-      |               ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~~
-  • the comparison reduces to '(3 == 2)'
