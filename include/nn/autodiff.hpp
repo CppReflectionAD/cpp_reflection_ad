@@ -150,19 +150,14 @@ consteval info value_type(info t) { return m::remove_cvref(t); }
 //     conversions. Arithmetic conversions are restored where the type is known
 //     (coerce()), since a conversion's target type cannot be queried.
 //   - Clang: a copy or move of a class value is a one-operand construct.
-//   - GCC: binding to a `const T &` parameter is a conversion of `&operand`; a
-//     temporary, and the return slot, is a construct of an unnamed variable
-//     from its initializer. If the class has a non-trivial destructor, a
-//     temporary's construct has a third operand: the destructor call that
-//     cleans it up.
+//   - GCC: a temporary, and the return slot, is a construct of an unnamed
+//     variable from its initializer. If the class has a non-trivial
+//     destructor, a temporary's construct has a third operand: the destructor
+//     call that cleans it up.
 consteval info strip(info e) {
   while (m::is_expression(e)) {
     if (m::is_conversion(e)) {
       e = m::operands_of(e)[0];
-      if (m::is_expression(e) && m::is_operator_expression(e) &&
-          m::operands_of(e).size() == 1 &&
-          m::expression_operator_of(e) == m::operators::op_ampersand)
-        e = m::operands_of(e)[0];
       continue;
     }
     if (m::is_construct(e)) {
@@ -381,7 +376,6 @@ consteval std::size_t lower_body(Ctx &c, info body) {
             "declarations and one `return expr;`. A function with loops or "
             "branches needs a vjp rule (make it a primitive).";
 
-  const std::size_t begin = c.env_decl.size();
   std::size_t ret = npos;
   for (info s : m::statements_of(body)) {
     if (ret != npos)
@@ -391,14 +385,6 @@ consteval std::size_t lower_body(Ctx &c, info body) {
       const auto inits = m::initializers_of(s);
       for (std::size_t d = 0; d < decls.size(); ++d) {
         const info v = decls[d];
-        // GCC lists each declaration statement twice. A block declares a
-        // name once, so a name already declared in this body is the same
-        // statement.
-        bool seen = false;
-        for (std::size_t i = begin; i < c.env_decl.size(); ++i)
-          seen = seen || m::identifier_of(c.env_decl[i]) == m::identifier_of(v);
-        if (seen)
-          continue;
         const std::size_t slot =
             coerce(c, lower(c, inits[d]), value_type(m::type_of(v)));
         bind(c, v, slot);

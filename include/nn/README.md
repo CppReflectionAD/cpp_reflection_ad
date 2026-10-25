@@ -161,20 +161,9 @@ Clang:
 
 GCC:
 - An overloaded operator is `is_function_call` only.
-- A class with a non-trivial destructor used to lose the `return` statement
-  from `statements_of`. Fixed in the pinned fork; see
-  [tests/common/nontrivial_destructor_reflection.cpp](../../tests/common/nontrivial_destructor_reflection.cpp).
-  A temporary of such a class is a three-operand construct: the unnamed
-  variable, its initializer, and the destructor call that cleans it up.
-  `strip()` peels it.
-- **A second local of such a class has no initializer** (`initializer_of`
-  throws), so a reflected body can name only one intermediate of a
-  heap-backed type. See
-  [tests/known_gap/gcc/initializer_after_cleanup.cpp](../../tests/known_gap/gcc/initializer_after_cleanup.cpp).
-- Binding to `const T&` shows as `cast(&x)`. A temporary or return slot is
-  `construct(<unnamed var>, init)`. `strip()` in autodiff.hpp peels both.
-- **Each declaration statement appears twice** in `statements_of`. The engine
-  de-duplicates by name; a block cannot declare a name twice.
+- A temporary or return slot is `construct(<unnamed var>, init)`. For a class
+  with a non-trivial destructor, a temporary's construct has a third operand,
+  the destructor call that cleans it up. `strip()` in autodiff.hpp peels both.
 - Commutative built-in operands may be swapped (`0.5 * s` → `s, 0.5`), and
   `double four = 4;` is folded to `4.0` (no conversion node).
 - **Registry identity bug.** `template_of(spec) == ^^nn::matvec` is true, yet
