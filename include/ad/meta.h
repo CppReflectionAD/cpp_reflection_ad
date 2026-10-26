@@ -20,7 +20,8 @@
 //     unnamed variable first.
 //   - declaration_of: also accepts what GCC's callee_of returns.
 //   - declarators_of / initializers_of: GCC reflects one variable per
-//     declaration statement, so these have one element.
+//     declaration statement, so these have one element. `T a = 1, b = 2;` is
+//     two statements on GCC.
 //   - is_expression_statement / expression_of: GCC reflects an expression
 //     statement as its expression, which it converts to void if it has a
 //     value; expression_of drops that conversion. GCC also reflects a compound
@@ -124,8 +125,14 @@ consteval std::vector<info> declarators_of(info s) {
   return {std::meta::declared_variable_of(s)};
 }
 
+// A declarator without an initializer gives a null reflection, as on clang;
+// GCC's initializer_of throws for it.
 consteval std::vector<info> initializers_of(info s) {
-  return {std::meta::initializer_of(std::meta::declared_variable_of(s))};
+  try {
+    return {std::meta::initializer_of(std::meta::declared_variable_of(s))};
+  } catch (const std::meta::exception &) {
+    return {info{}};
+  }
 }
 
 // GCC's is_expression is also true for the declaration and return statements,

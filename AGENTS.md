@@ -34,8 +34,6 @@ lists only the points that are easy to get wrong.
     `std::meta::info` (such as a reflected node) in a runtime expression makes
     the function immediate, usually with no note saying why. Copy the fields
     you need into plain `constexpr` locals first.
-  - In functions whose bodies are reflected, declare one variable per
-    declaration: `const double a = 1, b = 2;` breaks the reflection.
   - clang rejects NaN results and division by zero in constant evaluation; GCC
     also rejects overflow to infinity.
   - Don't define a macro named `V`: libc++'s `<meta>` uses it as an identifier.
