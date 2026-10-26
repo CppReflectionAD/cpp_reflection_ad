@@ -12,8 +12,6 @@
 //     operator, which GCC reflects only as a call.
 //   - operands_of: on a call, the arguments only. GCC lists the callee first,
 //     if the call has one.
-//   - is_declaration_statement: false for an assignment, which GCC also
-//     counts as a declaration statement.
 //   - declaration_of: also accepts what GCC's callee_of returns.
 //   - declarators_of / initializers_of: GCC reflects one variable per
 //     declaration statement, so these have one element.
@@ -75,26 +73,6 @@ consteval info declaration_of(info e) {
   if (std::meta::is_function(e) || std::meta::is_function_call(e))
     return e;
   return std::meta::declaration_of(e);
-}
-
-namespace detail {
-consteval info initializer_or_null(info r) {
-  try {
-    return std::meta::initializer_of(r);
-  } catch (const std::meta::exception &) {
-    return {};
-  }
-}
-} // namespace detail
-
-// GCC also reports an assignment `a = e;` (or `a += e;`) as a declaration
-// statement of `a` (#185). On the statement, initializer_of gives the value it
-// stores; on the variable, the variable's initializer. They differ unless the
-// assignment stores that same initializer again.
-consteval bool is_declaration_statement(info s) {
-  return std::meta::is_declaration_statement(s) &&
-         detail::initializer_or_null(s) ==
-             detail::initializer_or_null(std::meta::declared_variable_of(s));
 }
 
 consteval bool is_conversion(info e) {
