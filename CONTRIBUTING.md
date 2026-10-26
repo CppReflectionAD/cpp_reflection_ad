@@ -358,17 +358,21 @@ changes a toolchain rebuilds it in the queue too.
 | `pre-commit` | `pre-commit.yml` | yes | `uv lock --check && uv run pre-commit run --all-files` |
 | `Clang tests` | `clang_prebuilt_cache.yml` | yes | `python3 run_tests.py --compiler clang --build-type all && python3 run_tests.py --compiler clang --sanitize` |
 | `GCC tests` | `gcc_prebuilt_cache.yml` | yes | `python3 run_tests.py --compiler gcc --build-type all && python3 run_tests.py --compiler gcc --sanitize` |
-| `sanitize (ASan+UBSan)` | both test workflows | yes, through `Clang tests` and `GCC tests` | `python3 run_tests.py --sanitize` |
-| `test (Release, x86-64-v3)` | both test workflows | not yet | `cmake --preset clang-x86-64-v3 && cmake --build --preset clang-x86-64-v3 && ctest --preset clang-x86-64-v3` (or `gcc-`) |
-| `test (<build type>, macOS arm64)` | both test workflows | not yet ([#94](https://github.com/CppReflectionAD/cpp_reflection_ad/issues/94) C9) | `python3 run_tests.py --build-type all` and `python3 run_tests.py --sanitize`, on a Mac |
-| `test (<build type>, Linux arm64)` | both test workflows | not yet ([#94](https://github.com/CppReflectionAD/cpp_reflection_ad/issues/94) C9) | `python3 run_tests.py --build-type all` and `python3 run_tests.py --sanitize`, on an arm64 Linux machine |
+| `Linux x86-64 / <compiler>-<preset>`, for the `release`, `relwithdebinfo`, `debug` and `sanitize` presets | both test workflows | yes, through `Clang tests` and `GCC tests` | `python3 run_tests.py --build-type all && python3 run_tests.py --sanitize` |
+| `Submodule pins` | `submodule-pins.yml` | yes | `.github/scripts/check-submodule-pins.sh` (needs `gh` logged in) |
+| `Linux x86-64-v3 / <compiler>-x86-64-v3` | both test workflows | not yet | `cmake --preset clang-x86-64-v3 && cmake --build --preset clang-x86-64-v3 && ctest --preset clang-x86-64-v3` (or `gcc-`) |
+| `macOS arm64 / <compiler>-<preset>`, for the same four presets | both test workflows | not yet ([#94](https://github.com/CppReflectionAD/cpp_reflection_ad/issues/94) C9) | `python3 run_tests.py --build-type all` and `python3 run_tests.py --sanitize`, on a Mac |
+| `Linux arm64 / <compiler>-<preset>`, for the same four presets | both test workflows | not yet ([#94](https://github.com/CppReflectionAD/cpp_reflection_ad/issues/94) C9) | `python3 run_tests.py --build-type all` and `python3 run_tests.py --sanitize`, on an arm64 Linux machine |
 | `GCC pins` | `gcc-pins.yml` | not yet | `.github/scripts/check-gcc-pins.sh` |
-| `Submodule pins` | `submodule-pins.yml` | not yet | `.github/scripts/check-submodule-pins.sh` (needs `gh` logged in) |
+
+Each test leg is named after the runner and the CMake preset it runs, e.g.
+`Linux x86-64 / gcc-release`, so `cmake --preset gcc-release && cmake --build
+--preset gcc-release && ctest --preset gcc-release` reproduces it. Every leg
+runs the same steps, from `toolchain-test.yml`.
 
 `Clang tests` and `GCC tests` are summary jobs. Each passes only when its
-workflow's `toolchain` job, its three `test (<build type>)` legs (one per build
-type, so they match `--build-type all`) and its `sanitize (ASan+UBSan)` job
-pass.
+workflow's `toolchain` job and its four `Linux x86-64` legs pass: one per build
+type, so they match `--build-type all`, and the sanitize preset.
 
 The `toolchain` job restores the compiler from the Actions cache, or builds it
 on a miss: about 1.5 hours for clang, about 30 minutes for GCC. The cache key
@@ -421,8 +425,9 @@ checks and don't run in the merge queue.
 `main` changes only through pull requests, and they are squash-merged through
 a merge queue. A pull request can join the queue once it has:
 
-- `pre-commit`, `Clang tests` and `GCC tests` passing (see
-  [CI checks](#ci-checks));
+- `pre-commit`, `Submodule pins`, `Clang tests` and `GCC tests` passing (see
+  [CI checks](#ci-checks)). So a pin bump can merge only after its pins are
+  merged into their fork branches;
 - an approving review from someone other than whoever pushed last. A push
   dismisses earlier approvals;
 - every review thread resolved.
@@ -489,7 +494,9 @@ changes, and then run `git submodule sync` too.
 Each fork pins from its `p4395` branch, which only moves forward, through pull
 requests merged with a merge commit. A rule on the branch enforces this in all
 three forks: no deletion or force push, and a pull request (no approval
-needed), merged with "Create a merge commit". A squash or rebase merge would give the
+needed), merged with "Create a merge commit". Squash and rebase merging are
+also turned off in each fork's settings, so every merge button there offers
+only a merge commit. A squash or rebase merge would give the
 pinned commit a new SHA and leave it on no branch, and a force push would drop
 it; either way, older commits of this repository could no longer check out
 their compiler.
