@@ -8,9 +8,10 @@
 // one, with the same meaning:
 //   - is_id_expression, is_conversion, return_operand_of: renames or
 //     combinations of the old predicates.
-//   - is_operator_expression: also true for `&&`, `||` and `!`, which GCC's
-//     is_unary_operator and is_binary_operator leave out. Unlike clang's, it
-//     is false for an overloaded operator, which GCC reflects only as a call.
+//   - is_operator_expression: also true for `&&`, `||`, `!` and `=`, which
+//     GCC's is_unary_operator and is_binary_operator leave out. Unlike
+//     clang's, it is false for an overloaded operator, which GCC reflects only
+//     as a call.
 //   - operands_of: on a call, the arguments only. GCC lists the callee first,
 //     if the call has one.
 //   - operands_of / is_conversion: a temporary of non-class type, such as
@@ -20,6 +21,10 @@
 //   - declaration_of: also accepts what GCC's callee_of returns.
 //   - declarators_of / initializers_of: GCC reflects one variable per
 //     declaration statement, so these have one element.
+//   - is_expression_statement / expression_of: GCC reflects an expression
+//     statement as its expression, which it converts to void if it has a
+//     value; expression_of drops that conversion. GCC also reflects a compound
+//     assignment `a += b` as `a = a + b`, where clang keeps the `+=`.
 // On clang, ad::meta is std::meta. Delete the GCC part once the GCC fork has
 // the same API; the static_assert below says when.
 
@@ -39,7 +44,7 @@ consteval bool is_id_expression(info e) {
 }
 
 // GCC's expression_operator_of and operands_of already handle the logical
-// operators; only the predicates leave them out.
+// operators and assignment; only the predicates leave them out.
 consteval bool is_operator_expression(info e) {
   if (std::meta::is_unary_operator(e) || std::meta::is_binary_operator(e))
     return true;
@@ -47,7 +52,8 @@ consteval bool is_operator_expression(info e) {
     const auto op = std::meta::expression_operator_of(e);
     return op == std::meta::operators::op_ampersand_ampersand ||
            op == std::meta::operators::op_pipe_pipe ||
-           op == std::meta::operators::op_exclamation;
+           op == std::meta::operators::op_exclamation ||
+           op == std::meta::operators::op_equals;
   } catch (const std::meta::exception &) {
     return false;
   }
@@ -120,6 +126,18 @@ consteval std::vector<info> declarators_of(info s) {
 
 consteval std::vector<info> initializers_of(info s) {
   return {std::meta::initializer_of(std::meta::declared_variable_of(s))};
+}
+
+// GCC's is_expression is also true for the declaration and return statements,
+// which are its only reflections that are also is_statement.
+consteval bool is_expression_statement(info s) {
+  return std::meta::is_expression(s) && !std::meta::is_statement(s);
+}
+
+// `a = b;` is a conversion of `a = b` to void; `f(x);` with f returning void
+// has no conversion.
+consteval info expression_of(info s) {
+  return std::meta::is_cast(s) ? std::meta::operands_of(s).front() : s;
 }
 
 // Fails once GCC's <meta> has return_operand_of, as a sign that it has the

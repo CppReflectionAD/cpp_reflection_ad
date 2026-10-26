@@ -21,7 +21,7 @@ include/ad/forward_derivative.h:25:36: error: could not compute size of expansio
       |                                    ^
 
 === GCC ===
-include/ad/forward_derivative.h:17:25: error: uncaught exception '(const char*)"reflection AD: unsupported statement; straight-line bodies only (`T v = expr;` declarations and one `return expr;`)"'
+include/ad/forward_derivative.h:17:25: error: uncaught exception '(const char*)"reflection AD: an assignment inside an expression is not supported; make it a statement of its own"'
    17 |   static constexpr auto nodes =
       |                         ^~~~~
 include/ad/forward_derivative.h:22:9: error: size of array is not an integral constant-expression

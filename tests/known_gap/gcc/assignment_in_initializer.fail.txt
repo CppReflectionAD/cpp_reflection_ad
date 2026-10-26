@@ -1,0 +1,6 @@
+=== GCC ===
+tests/known_gap/gcc/assignment_in_initializer.cpp:30:65: error: static assertion failed: b's initializer is not the assignment `a = a * x`
+   30 |                   m::expression_operator_of(initializer_of_b()) ==
+      |                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~
+   31 |                       m::operators::op_equals,
+      |                       ~~~~~~~~~~~~~~~~~~~~~~~                    
