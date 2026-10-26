@@ -475,10 +475,22 @@ consteval std::size_t lower(Ctx &c, info e) {
   e = stripCasts(e);
 
   if (m::is_id_expression(e)) {
-    const std::string_view name = m::identifier_of(m::declaration_of(e));
+    // Parameters are bound as their variables (parameter_variable), so a use
+    // matches its parameter or local by identity, which is the only way to
+    // resolve an expanded pack parameter.
+    const info decl = m::declaration_of(e);
     for (std::size_t i = c.envDecl.size(); i-- > 0;)
-      if (m::identifier_of(c.envDecl[i]) == name)
+      if (decl == c.envDecl[i])
         return c.envSlot[i];
+    // Fallback to looking up by name for compilers that do not support getting
+    // the `variable_of` a parameter.
+    if (m::has_identifier(decl)) {
+      const std::string_view name = m::identifier_of(decl);
+      for (std::size_t i = c.envDecl.size(); i-- > 0;)
+        if (m::has_identifier(c.envDecl[i]) &&
+            m::identifier_of(c.envDecl[i]) == name)
+          return c.envSlot[i];
+    }
 
     // External constexpr variables (e.g. std::numbers constants) are not in
     // the local environment; fold them to literal constants in the DAG.
@@ -635,7 +647,7 @@ consteval std::size_t inline_call(Ctx &c, info call) {
   // (b) open a lexical scope; bind callee parameters to the argument slots.
   std::size_t mark = c.envDecl.size();
   for (std::size_t i = 0; i < params.size(); ++i) {
-    c.envDecl.push_back(params[i]);
+    c.envDecl.push_back(m::parameter_variable(params[i]));
     c.envSlot.push_back(argSlots[i]);
   }
 
@@ -660,7 +672,7 @@ template <info Fn> consteval std::vector<Node> build_nodes() {
   for (info p : m::parameters_of(Fn)) {
     std::size_t s = c.nodes.size();
     c.nodes.push_back(Node{OpKind::Input, s, 0, 0});
-    c.envDecl.push_back(p);
+    c.envDecl.push_back(m::parameter_variable(p));
     c.envSlot.push_back(s);
   }
 
