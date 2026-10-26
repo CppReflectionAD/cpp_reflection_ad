@@ -7,9 +7,8 @@
 // and operands_of() already handle these expressions correctly.
 //
 // This file checks what works on both compilers. The classification asserts
-// that fail on GCC are in tests/known_gap/gcc/logical_operator_reflection.cpp
-// (which expects them to fail) and tests/clang_only/
-// logical_operator_reflection.cpp (which expects them to pass).
+// that fail on GCC are in tests/known_gap/gcc/logical_operator_reflection.cpp,
+// which expects them to fail on GCC and to pass on clang.
 //
 // Build:
 //   g++     -std=c++2c -freflection -fsyntax-only -I ../fixtures
