@@ -1,4 +1,4 @@
-#include <ad/clang_only/limit_algebra.hpp>
+#include <ad/limit_algebra.hpp>
 
 #include <test_simple_include.hpp>
 
