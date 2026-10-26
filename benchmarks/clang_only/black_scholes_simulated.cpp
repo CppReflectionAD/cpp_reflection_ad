@@ -12,7 +12,7 @@
 
 #include "mc_sim/black_scholes.hpp"
 #include "mc_sim/evolve_black_scholes.hpp"
-#include <ad/clang_only/discontinuity_analysis.hpp>
+#include <ad/discontinuity_analysis.hpp>
 #include <ad/forward_derivative.h>
 #include <ad/is_continuous.hpp>
 #include <ad/is_invertible.hpp>
