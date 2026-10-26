@@ -17,6 +17,7 @@
 //   - declaration_of: also accepts what GCC's callee_of returns.
 //   - declarators_of / initializers_of: GCC reflects one variable per
 //     declaration statement, so these have one element.
+// Both compilers also get parameter_variable (see below).
 // On clang, ad::meta is std::meta. Delete the GCC part once the GCC fork has
 // the same API; the static_assert below says when.
 
@@ -132,6 +133,22 @@ static_assert(std::is_same_v<decltype(detail::probe::return_operand_of(^^int)),
               "GCC's <meta> now has the new expression-reflection API: "
               "delete the GCC wrappers in ad/meta.h");
 #endif
+
+// The variable that parameter `p` introduces: what declaration_of returns for
+// a use of `p` in the function's body. parameters_of gives the parameter, a
+// different kind of reflection that never equals the variable, so a body
+// walker binds this instead and then matches uses by plain ==, which also
+// tells apart the unnamed parameters of an expanded pack. The clang fork's
+// variable_of works outside the function's body, an extension to P3096; GCC's
+// doesn't, so there it is the parameter itself and callers fall back on the
+// name.
+consteval info parameter_variable(info p) {
+#if defined(_GLIBCXX_META)
+  return p;
+#else
+  return std::meta::variable_of(p);
+#endif
+}
 } // namespace ad::meta
 
 #endif
