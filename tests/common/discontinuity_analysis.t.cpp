@@ -1,4 +1,4 @@
-#include <ad/clang_only/discontinuity_analysis.hpp>
+#include <ad/discontinuity_analysis.hpp>
 #include <test_simple_include.hpp>
 
 #include <algorithm>
@@ -359,6 +359,63 @@ static_assert(BallCxMath::add(exp_1000, Ball{-1e308, 1e308}).rad ==
 static_assert(BallCxMath::div(Ball{1.0, 0.0}, Ball{4.4e-16, 6.7e-16}).rad ==
               std::numeric_limits<double>::infinity());
 
+// An arithmetic overflow gives the runtime's result during constant
+// evaluation too, where GCC rejects the overflow itself, at and around each
+// boundary: the largest double plus half its ulp is a tie that rounds up, and
+// a product just past the largest double rounds down to it but one just short
+// of 2^1024 rounds up. (No quotient past the largest double rounds down.)
+using ad::detail_disc::IeeeCxMath;
+struct ArithCase {
+  char op;
+  double a;
+  double b;
+  double want;
+};
+constexpr double kMaxDouble = std::numeric_limits<double>::max();
+constexpr double kInfDouble = std::numeric_limits<double>::infinity();
+constexpr ArithCase arith_cases[] = {
+    {'+', kMaxDouble, 0x1p970, kInfDouble},
+    {'+', kMaxDouble, 0x1p969, kMaxDouble},
+    {'+', kMaxDouble, 0x1.fffffffffffffp969, kMaxDouble},
+    {'+', -kMaxDouble, -0x1p970, -kInfDouble},
+    {'+', 0x1p1023, 0x1p1023, kInfDouble},
+    {'+', kMaxDouble, -kMaxDouble, 0.0},
+    {'-', kMaxDouble, -0x1p970, kInfDouble},
+    {'-', -kMaxDouble, 0x1p970, -kInfDouble},
+    {'-', kMaxDouble, 0x1p970, 0x1.ffffffffffffep1023},
+    {'*', 0x1p512, 0x1p512, kInfDouble},
+    {'*', 0x1p511, 0x1p512, 0x1p1023},
+    {'*', -0x1p512, 0x1p512, -kInfDouble},
+    {'*', kMaxDouble, 0x1.0000000000001p0, kInfDouble},
+    {'*', 0x1.0000002666666p511, 0x1.ffffffb333334p512, kMaxDouble},
+    {'*', 0x1.0000000000001p511, 0x1.ffffffffffffep512, kInfDouble},
+    {'*', 0x1.4e718d7d7625ap664, 0x1.87e92154ef7acp-665, 1.0},
+    {'/', 0x1.b7cdfd9d7bdbbp-34, 0x1p-1074, kInfDouble},
+    {'/', kMaxDouble, 0.5, kInfDouble},
+    {'/', 0x1p1022, 0.5, 0x1p1023},
+    {'/', -kMaxDouble, 0.5, -kInfDouble},
+    {'/', kMaxDouble, 0x1.fffffffffffffp-1, kInfDouble},
+    {'/', 1.0, 3.0, 0x1.5555555555555p-2},
+};
+constexpr double arith(ArithCase c) {
+  switch (c.op) {
+  case '+':
+    return IeeeCxMath::add(c.a, c.b);
+  case '-':
+    return IeeeCxMath::sub(c.a, c.b);
+  case '*':
+    return IeeeCxMath::mul(c.a, c.b);
+  default:
+    return IeeeCxMath::div(c.a, c.b);
+  }
+}
+constexpr bool same_bits(double a, double b) {
+  return std::bit_cast<std::uint64_t>(a) == std::bit_cast<std::uint64_t>(b);
+}
+static_assert(std::ranges::all_of(arith_cases, [](ArithCase c) {
+  return same_bits(arith(c), c.want);
+}));
+
 // The same crossing written two ways. They meet at strike / 1.1 in exact
 // arithmetic but are rooted a few ulps apart, and Fn's own sides can be
 // exactly equal on a run of doubles between them. Either way the function
@@ -419,6 +476,10 @@ double digital_put_ge_payoff(double spot, double strike) {
 }
 
 int main() {
+  // The arithmetic at runtime, against the same results
+  for (const ArithCase &c : arith_cases)
+    EXPECT_TRUE(same_bits(arith(c), c.want));
+
   // Test 0 discontinuities
   constexpr auto disc0 = ad::get_discontinuity_points<^^continuous_linear, 0>();
   // Should be empty (no discontinuities)
