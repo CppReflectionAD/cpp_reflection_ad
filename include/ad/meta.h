@@ -21,7 +21,8 @@
 //     counts as a declaration statement.
 //   - declaration_of: also accepts what GCC's callee_of returns.
 //   - declarators_of / initializers_of: GCC reflects one variable per
-//     declaration statement, so these have one element.
+//     declaration statement, so these have one element. `T a = 1, b = 2;` is
+//     two statements on GCC.
 // On clang, ad::meta is std::meta. Delete the GCC part once the GCC fork has
 // the same API; the static_assert below says when.
 
@@ -140,8 +141,14 @@ consteval std::vector<info> declarators_of(info s) {
   return {std::meta::declared_variable_of(s)};
 }
 
+// A declarator without an initializer gives a null reflection, as on clang;
+// GCC's initializer_of throws for it.
 consteval std::vector<info> initializers_of(info s) {
-  return {std::meta::initializer_of(std::meta::declared_variable_of(s))};
+  try {
+    return {std::meta::initializer_of(std::meta::declared_variable_of(s))};
+  } catch (const std::meta::exception &) {
+    return {info{}};
+  }
 }
 
 // Fails once GCC's <meta> has return_operand_of, as a sign that it has the
