@@ -2,8 +2,7 @@
 
 // Only an assignment that is a statement of its own rebinds its target; one
 // inside an expression is rejected rather than lowered as if it stored
-// nothing. (In an initializer, GCC's reflection drops the assignment: see
-// known_gap/gcc/assignment_in_initializer.cpp.)
+// nothing. assignment_in_initializer.cpp has one in an initializer.
 inline double nested(double x) {
   double a = x;
   return (a = a * x) + x;
