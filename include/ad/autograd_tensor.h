@@ -28,9 +28,9 @@ namespace ad {
 template <info Fn, typename T, std::size_t... Params, typename... Args>
 std::array<T, sizeof...(Params)> gradient_wrt(const Args &...args) {
   constexpr unsigned long long mask = ((1ull << Params) | ... | 0ull);
-  constexpr auto nodes =
+  static constexpr auto nodes =
       std::define_static_array(build_marked_nodes<Fn, mask>());
-  constexpr auto rnodes =
+  static constexpr auto rnodes =
       std::define_static_array(build_marked_nodes_reversed<Fn, mask>());
   constexpr std::size_t N = nodes.size();
 

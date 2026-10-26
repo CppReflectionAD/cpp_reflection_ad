@@ -16,6 +16,7 @@ goes is in [tests/README.md](tests/README.md).
 - [Formatting and linting](#formatting-and-linting)
 - [CI checks](#ci-checks)
 - [Merging a pull request](#merging-a-pull-request)
+- [Reporting a compiler gap](#reporting-a-compiler-gap)
 - [Bumping a compiler pin](#bumping-a-compiler-pin)
 
 ## Prerequisites
@@ -357,17 +358,21 @@ changes a toolchain rebuilds it in the queue too.
 | `pre-commit` | `pre-commit.yml` | yes | `uv lock --check && uv run pre-commit run --all-files` |
 | `Clang tests` | `clang_prebuilt_cache.yml` | yes | `python3 run_tests.py --compiler clang --build-type all && python3 run_tests.py --compiler clang --sanitize` |
 | `GCC tests` | `gcc_prebuilt_cache.yml` | yes | `python3 run_tests.py --compiler gcc --build-type all && python3 run_tests.py --compiler gcc --sanitize` |
-| `sanitize (ASan+UBSan)` | both test workflows | yes, through `Clang tests` and `GCC tests` | `python3 run_tests.py --sanitize` |
-| `test (Release, x86-64-v3)` | both test workflows | not yet | `cmake --preset clang-x86-64-v3 && cmake --build --preset clang-x86-64-v3 && ctest --preset clang-x86-64-v3` (or `gcc-`) |
-| `test (<build type>, macOS arm64)` | both test workflows | not yet ([#94](https://github.com/CppReflectionAD/cpp_reflection_ad/issues/94) C9) | `python3 run_tests.py --build-type all` and `python3 run_tests.py --sanitize`, on a Mac |
-| `test (<build type>, Linux arm64)` | both test workflows | not yet ([#94](https://github.com/CppReflectionAD/cpp_reflection_ad/issues/94) C9) | `python3 run_tests.py --build-type all` and `python3 run_tests.py --sanitize`, on an arm64 Linux machine |
+| `Linux x86-64 / <compiler>-<preset>`, for the `release`, `relwithdebinfo`, `debug` and `sanitize` presets | both test workflows | yes, through `Clang tests` and `GCC tests` | `python3 run_tests.py --build-type all && python3 run_tests.py --sanitize` |
+| `Linux x86-64-v3 / <compiler>-x86-64-v3` | both test workflows | not yet | `cmake --preset clang-x86-64-v3 && cmake --build --preset clang-x86-64-v3 && ctest --preset clang-x86-64-v3` (or `gcc-`) |
+| `macOS arm64 / <compiler>-<preset>`, for the same four presets | both test workflows | not yet ([#94](https://github.com/CppReflectionAD/cpp_reflection_ad/issues/94) C9) | `python3 run_tests.py --build-type all` and `python3 run_tests.py --sanitize`, on a Mac |
+| `Linux arm64 / <compiler>-<preset>`, for the same four presets | both test workflows | not yet ([#94](https://github.com/CppReflectionAD/cpp_reflection_ad/issues/94) C9) | `python3 run_tests.py --build-type all` and `python3 run_tests.py --sanitize`, on an arm64 Linux machine |
 | `GCC pins` | `gcc-pins.yml` | not yet | `.github/scripts/check-gcc-pins.sh` |
 | `Submodule pins` | `submodule-pins.yml` | not yet | `.github/scripts/check-submodule-pins.sh` (needs `gh` logged in) |
 
+Each test leg is named after the runner and the CMake preset it runs, e.g.
+`Linux x86-64 / gcc-release`, so `cmake --preset gcc-release && cmake --build
+--preset gcc-release && ctest --preset gcc-release` reproduces it. Every leg
+runs the same steps, from `toolchain-test.yml`.
+
 `Clang tests` and `GCC tests` are summary jobs. Each passes only when its
-workflow's `toolchain` job, its three `test (<build type>)` legs (one per build
-type, so they match `--build-type all`) and its `sanitize (ASan+UBSan)` job
-pass.
+workflow's `toolchain` job and its four `Linux x86-64` legs pass: one per build
+type, so they match `--build-type all`, and the sanitize preset.
 
 The `toolchain` job restores the compiler from the Actions cache, or builds it
 on a miss: about 1.5 hours for clang, about 30 minutes for GCC. The cache key
@@ -442,6 +447,26 @@ Rulesets), which
 tracks. It applies only to pull requests into `main`, so one stacked on
 another pull request's branch shows as mergeable without a review until it is
 retargeted to `main`.
+
+## Reporting a compiler gap
+
+A bug or missing feature in one of the reflection forks is a compiler gap.
+The forks ([CppReflectionAD/clang-p4395](https://github.com/CppReflectionAD/clang-p4395),
+[CppReflectionAD/gcc](https://github.com/CppReflectionAD/gcc) and
+[CppReflectionAD/gcc-darwin-arm64](https://github.com/CppReflectionAD/gcc-darwin-arm64))
+have issues turned off, and their READMEs send bug reports here. Report one
+as an issue in this repository with the `CompilerGap` label:
+
+- Give a small reproducer that uses only `<meta>`, in the fork's own API, so a
+  fix can add it to the fork's tests (for GCC, as a `g++.dg/reflect` test).
+- Say which pin shows it, what the other compiler does, and what it blocks
+  here.
+- If code here runs into it, record it as a `known_gap/` test (see
+  [tests/README.md](tests/README.md)) that names the issue.
+
+A fix is a pull request into the fork's `p4395` branch. Then bump the pin
+here, moving the `known_gap/` test in the same pull request (see
+[Bumping a compiler pin](#bumping-a-compiler-pin)), and close the issue.
 
 ## Bumping a compiler pin
 
