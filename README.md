@@ -59,12 +59,10 @@ unchanged on both expr-reflect compilers, and fails on gcc trunk and on
 The libraries are header-only, under `include/`:
 
 - `include/ad/` — the AD engine (`autograd.h`, forward and reverse derivatives,
-  higher-order Taylor AD, `is_invertible.hpp`) and tensors (`tensor.h`,
-  `autograd_tensor.h`).
-- `include/ad/clang_only/` — the parts of the engine that need the clang
-  (`expr-reflect`) fork: the analyses (`is_continuous.hpp`,
-  `limit_algebra.hpp`, `discontinuity_analysis.hpp`,
-  `absolute_normal_form.hpp`).
+  higher-order Taylor AD, `is_invertible.hpp`), tensors (`tensor.h`,
+  `autograd_tensor.h`) and the analyses `is_continuous.hpp`,
+  `limit_algebra.hpp`, `discontinuity_analysis.hpp` and
+  `absolute_normal_form.hpp`.
 - `include/cx_std/` — `constexpr` maths (`exp`, `log`, `sqrt`, `erfc`, `sin`,
   `cos`) for use in constant evaluation.
 
