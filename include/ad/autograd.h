@@ -647,11 +647,15 @@ consteval std::size_t lower_body(Ctx &c, info body) {
   bool sawReturn = false;
   for (info s : m::statements_of(body)) {
     if (m::is_declaration_statement(s)) {
-      // declarators_of/initializers_of handle `T a, b = 5;` -- multiple
-      // declarators sharing one declaration-statement -- not just one.
+      // declarators_of/initializers_of handle `T a = x, b = a * a;` --
+      // several declarators sharing one declaration statement -- not just one.
+      // A declarator without an initializer has a null one, and nothing
+      // could give it a value later (assignment is unsupported).
       auto decls = m::declarators_of(s);
       auto inits = m::initializers_of(s);
       for (std::size_t i = 0; i < decls.size(); ++i) {
+        if (inits[i] == info{})
+          throw "reflection AD: declarator without an initializer";
         std::size_t slot = lower(c, inits[i]);
         c.envDecl.push_back(decls[i]);
         c.envSlot.push_back(slot);
