@@ -8,6 +8,8 @@
 // one, with the same meaning:
 //   - is_id_expression, is_operator_expression, is_conversion,
 //     return_operand_of: renames or combinations of the old predicates.
+//     Unlike clang's, is_operator_expression is false for an overloaded
+//     operator, which GCC reflects only as a call.
 //   - operands_of: on a call, the arguments only. GCC lists the callee first,
 //     if the call has one.
 //   - declaration_of: also accepts what GCC's callee_of returns.

@@ -43,7 +43,7 @@ If the other compiler already accepts a `known_gap/` test, don't copy it into
 `*_only/` for that compiler. Put `// TEST-PASSES-ON: clang` (or `gcc`) in the
 first 10 lines instead: both `ctest` and `run_tests.py` then build and run it
 as an ordinary test on that compiler, so one file checks the same asserts on
-both. See `known_gap/gcc/nontrivial_destructor_reflection.cpp`.
+both.
 
 When a known gap is fixed, the `known_gap/` test starts failing (the file
 compiles). Move the file to `common/` or the right `*_only/` directory, turn
