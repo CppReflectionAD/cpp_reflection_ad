@@ -80,15 +80,15 @@ static_assert(!m::is_expression_statement(statement(^^assigned, 0)) &&
                   m::is_expression_statement(statement(^^assigned, 1)) &&
                   !m::is_expression_statement(statement(^^assigned, 2)),
               "only the assignment is an expression statement");
-static_assert(m::is_operator_expression(m::expression_of(
-                  statement(^^assigned, 1))) &&
-                  m::expression_operator_of(m::expression_of(statement(
-                      ^^assigned, 1))) == m::operators::op_equals,
-              "the expression of `a = a * a;` is not the assignment");
-static_assert(m::is_id_expression(
-                  m::operands_of(m::expression_of(statement(^^assigned, 1)))
-                      .front()),
-              "the target of `a = a * a;` is not `a`");
+static_assert(
+    m::is_operator_expression(m::expression_of(statement(^^assigned, 1))) &&
+        m::expression_operator_of(m::expression_of(statement(^^assigned, 1))) ==
+            m::operators::op_equals,
+    "the expression of `a = a * a;` is not the assignment");
+static_assert(
+    m::is_id_expression(
+        m::operands_of(m::expression_of(statement(^^assigned, 1))).front()),
+    "the target of `a = a * a;` is not `a`");
 
 int main() {
   // d/dx (x^2 + x) = 2x + 1
