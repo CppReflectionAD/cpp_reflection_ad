@@ -10,12 +10,12 @@
 // written is smaller than for scalars (matmuls dominate), but the *absolute*
 // time saved per call is larger.
 //
-// Build/run: `run_tests.py --compiler clang --benchmarks ad_tensor_bench
-// --run-executables` (a Release build, -O3).
+// Build/run: `run_tests.py --benchmarks ad_tensor_bench --run-executables` (a
+// Release build, -O3).
 
-#include <ad/clang_only/autograd_tensor.h>
-#include <ad/clang_only/tensor.h>
-#include <ad/clang_only/tensor_rules.h>
+#include <ad/autograd_tensor.h>
+#include <ad/tensor.h>
+#include <ad/tensor_rules.h>
 
 #include <array>
 #include <chrono>
