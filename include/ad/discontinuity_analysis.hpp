@@ -353,20 +353,72 @@ struct IeeeCxMath {
     return (std::bit_cast<std::uint64_t>(x) >> 63) != 0;
   }
 
+  // GCC also rejects an overflow to infinity during constant evaluation, so
+  // there these say whether an operation on finite operands overflows
+  // without doing it. Each decides by the operation on operands scaled by a
+  // power of two, which rounds as the real one does: scaling is exact away
+  // from the subnormals, and every scaled value here is far from them.
+  static constexpr double kMax = std::numeric_limits<double>::max();
+  static constexpr double abs(double x) { return x < 0.0 ? -x : x; }
+  static constexpr bool sum_overflows(double a, double b) {
+    // Only a sum of like signs, each at least 1, can; their halves are exact.
+    if (!is_finite(a) || !is_finite(b) || abs(a) < 1.0 || abs(b) < 1.0 ||
+        sign_bit(a) != sign_bit(b))
+      return false;
+    return abs(a * 0.5 + b * 0.5) > kMax * 0.5;
+  }
+  static constexpr bool product_overflows(double a, double b) {
+    const double x = abs(a), y = abs(b);
+    if (!is_finite(a) || !is_finite(b) || x <= 1.0 || y <= 1.0)
+      return false;
+    const double t = kMax / y; // the boundary for x, to within an ulp
+    if (x <= 0.5 * t)
+      return false;
+    if (x * 0.5 > t)
+      return true;
+    return (x * 0.125) * y > kMax * 0.125; // at most kMax / 4 or so
+  }
+  static constexpr bool quotient_overflows(double a, double b) {
+    const double x = abs(a), y = abs(b);
+    if (!is_finite(a) || !is_finite(b) || y == 0.0 || y >= 1.0)
+      return false;
+    const double t = kMax * y; // at least 2^-50, so normal
+    if (x <= 0.5 * t)
+      return false;
+    if (x * 0.5 > t)
+      return true;
+    return (x * 0.125) / y > kMax * 0.125;
+  }
+  static constexpr double inf_with_sign(bool negative) {
+    return negative ? -kInf : kInf;
+  }
+
   [[gnu::always_inline]] static constexpr double add(double a, double b) {
     if (is_nan(a) || is_nan(b) || (is_inf(a) && is_inf(b) && a != b))
       return kNaN;
+    if consteval {
+      if (sum_overflows(a, b))
+        return inf_with_sign(sign_bit(a));
+    }
     return a + b;
   }
   [[gnu::always_inline]] static constexpr double sub(double a, double b) {
     if (is_nan(a) || is_nan(b) || (is_inf(a) && is_inf(b) && a == b))
       return kNaN;
+    if consteval {
+      if (sum_overflows(a, -b))
+        return inf_with_sign(sign_bit(a));
+    }
     return a - b;
   }
   [[gnu::always_inline]] static constexpr double mul(double a, double b) {
     if (is_nan(a) || is_nan(b) || (is_inf(a) && b == 0.0) ||
         (a == 0.0 && is_inf(b)))
       return kNaN;
+    if consteval {
+      if (product_overflows(a, b))
+        return inf_with_sign(sign_bit(a) != sign_bit(b));
+    }
     return a * b;
   }
   [[gnu::always_inline]] static constexpr double div(double a, double b) {
@@ -375,6 +427,10 @@ struct IeeeCxMath {
       return kNaN;
     if (b == 0.0)
       return sign_bit(a) != sign_bit(b) ? -kInf : kInf;
+    if consteval {
+      if (quotient_overflows(a, b))
+        return inf_with_sign(sign_bit(a) != sign_bit(b));
+    }
     return a / b;
   }
   [[gnu::always_inline]] static constexpr double neg(double a) { return -a; }
@@ -462,8 +518,9 @@ struct BallCxMath {
     const double least = is_finite(a.mid) ? abs(a.mid) - a.rad : kMax - a.rad;
     return least > 0.0 ? least : 0.0;
   }
-  // The most: a's reach from 0, for a finite mid.
-  static constexpr double most_of(Ball a) { return abs(a.mid) + a.rad; }
+  // The most: a's reach from 0, for a finite mid. (M::add, which GCC
+  // accepts when it overflows.)
+  static constexpr double most_of(Ball a) { return M::add(abs(a.mid), a.rad); }
   // An overflow to mid = ±inf whose exact value is at least `least` in
   // magnitude: no bound unless that is more than 0, which fixes the sign.
   static constexpr Ball overflow(double mid, double least) {
@@ -498,7 +555,7 @@ struct BallCxMath {
     if (unbounded(mid, a, b))
       return {mid, kInf};
     if (!is_finite(mid))
-      return overflow(mid, least_of(a) * least_of(b));
+      return overflow(mid, M::mul(least_of(a), least_of(b)));
     // A finite product has finite operands.
     const bool exact = a.mid == 0.0 || b.mid == 0.0;
     return {mid, abs(a.mid) * b.rad + abs(b.mid) * a.rad + a.rad * b.rad +
