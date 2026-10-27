@@ -24,7 +24,7 @@ target_include_directories(reflection_ad_cx_std INTERFACE
 target_link_libraries(reflection_ad_cx_std INTERFACE
     "$<BUILD_INTERFACE:reflection_ad::flags>")
 
-# The AD engine. The headers in include/ad/clang_only/ need the clang fork.
+# The AD engine.
 add_library(reflection_ad_ad INTERFACE)
 add_library(reflection_ad::ad ALIAS reflection_ad_ad)
 set_target_properties(reflection_ad_ad PROPERTIES EXPORT_NAME ad)
