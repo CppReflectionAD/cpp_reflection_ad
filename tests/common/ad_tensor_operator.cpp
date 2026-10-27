@@ -9,9 +9,9 @@
 
 #include <test_simple_include.hpp>
 
-#include <ad/clang_only/autograd_tensor.h>
-#include <ad/clang_only/tensor.h>
-#include <ad/clang_only/tensor_rules.h>
+#include <ad/autograd_tensor.h>
+#include <ad/tensor.h>
+#include <ad/tensor_rules.h>
 
 #include <cmath>
 #include <cstddef>

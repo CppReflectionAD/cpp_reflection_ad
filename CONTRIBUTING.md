@@ -89,13 +89,13 @@ first applies LLVM's fix for the sanitizers hanging at startup on macOS 26
 (`tools/toolchain/patches/`) to the submodule, which then shows as modified in
 `git status`.
 
-GCC comes from the `gcc-mirror` submodule, the `p4395` branch of
+GCC comes from the `gcc` submodule, the `p4395` branch of
 [CppReflectionAD/gcc](https://github.com/CppReflectionAD/gcc), into
 `build/gcc-p2996`. On macOS it is built from `gcc-darwin-reflect` instead: the
 `p4395` branch of
 [CppReflectionAD/gcc-darwin-arm64](https://github.com/CppReflectionAD/gcc-darwin-arm64),
 our fork of iains' Darwin port. That branch is an iains snapshot with
-`gcc-mirror`'s reflection commits cherry-picked on top (see
+`gcc`'s reflection commits cherry-picked on top (see
 [Bumping a compiler pin](#bumping-a-compiler-pin)).
 
 Clones made before the submodule moved to the fork still fetch it from iains,
@@ -105,13 +105,18 @@ and may hold commits from the old replay. Update them once, after pulling:
 git submodule sync gcc-darwin-reflect && git submodule update gcc-darwin-reflect
 ```
 
-Likewise, `gcc-mirror` moved from `yesmanchyk/gcc-mirror` (branch
-`autograd-capable`) to `CppReflectionAD/gcc` (branch `p4395`), and clones made
-before the move still fetch it from the old repository. Update them once,
-after pulling:
+Likewise, `gcc` moved from `yesmanchyk/gcc-mirror` (branch
+`autograd-capable`) to `CppReflectionAD/gcc` (branch `p4395`), and its
+directory was later renamed from `gcc-mirror` to `gcc` (#163). Its submodule
+name is still `gcc-mirror`, so existing clones keep their GCC history in
+`.git/modules/gcc-mirror`. Update clones made before either change once,
+after pulling, and point any `REFLECT_GCC_SOURCE_DIR` or `--gcc-source-dir`
+that names `gcc-mirror` at `gcc`:
 
 ```bash
-git submodule sync gcc-mirror && git submodule update gcc-mirror
+git submodule sync gcc && git submodule update --init gcc
+# the old checkout, once it's untracked; push any work in it first
+git ls-files --error-unmatch gcc-mirror 2>/dev/null || rm -rf gcc-mirror
 ```
 
 And `clang-p2996` moved from `siqiyyyy/clang-p2996` (branch `expr-reflect`) to
@@ -124,15 +129,15 @@ git submodule sync clang-p2996 && git submodule update clang-p2996
 
 To work on GCC on a Mac, branch from `p4395` in `gcc-darwin-reflect`:
 `--build-compilers` builds whatever is checked out there. Then move the
-commits to `gcc-mirror` and open the pull request against `p4395` in
+commits to `gcc` and open the pull request against `p4395` in
 CppReflectionAD/gcc, which Linux CI tests:
 
 ```bash
-git -C gcc-mirror fetch ../gcc-darwin-reflect <branch>
-git -C gcc-mirror cherry-pick <commits>
+git -C gcc fetch ../gcc-darwin-reflect <branch>
+git -C gcc cherry-pick <commits>
 ```
 
-Once `gcc-mirror` has them, they reach `gcc-darwin-reflect`'s `p4395` with the
+Once `gcc` has them, they reach `gcc-darwin-reflect`'s `p4395` with the
 next pin bump.
 
 The recipes live in `tools/toolchain/`, and CI's toolchain cache runs the same
@@ -358,17 +363,21 @@ changes a toolchain rebuilds it in the queue too.
 | `pre-commit` | `pre-commit.yml` | yes | `uv lock --check && uv run pre-commit run --all-files` |
 | `Clang tests` | `clang_prebuilt_cache.yml` | yes | `python3 run_tests.py --compiler clang --build-type all && python3 run_tests.py --compiler clang --sanitize` |
 | `GCC tests` | `gcc_prebuilt_cache.yml` | yes | `python3 run_tests.py --compiler gcc --build-type all && python3 run_tests.py --compiler gcc --sanitize` |
-| `sanitize (ASan+UBSan)` | both test workflows | yes, through `Clang tests` and `GCC tests` | `python3 run_tests.py --sanitize` |
-| `test (Release, x86-64-v3)` | both test workflows | not yet | `cmake --preset clang-x86-64-v3 && cmake --build --preset clang-x86-64-v3 && ctest --preset clang-x86-64-v3` (or `gcc-`) |
-| `test (<build type>, macOS arm64)` | both test workflows | not yet ([#94](https://github.com/CppReflectionAD/cpp_reflection_ad/issues/94) C9) | `python3 run_tests.py --build-type all` and `python3 run_tests.py --sanitize`, on a Mac |
-| `test (<build type>, Linux arm64)` | both test workflows | not yet ([#94](https://github.com/CppReflectionAD/cpp_reflection_ad/issues/94) C9) | `python3 run_tests.py --build-type all` and `python3 run_tests.py --sanitize`, on an arm64 Linux machine |
+| `Linux x86-64 / <compiler>-<preset>`, for the `release`, `relwithdebinfo`, `debug` and `sanitize` presets | both test workflows | yes, through `Clang tests` and `GCC tests` | `python3 run_tests.py --build-type all && python3 run_tests.py --sanitize` |
+| `Submodule pins` | `submodule-pins.yml` | yes | `.github/scripts/check-submodule-pins.sh` (needs `gh` logged in) |
+| `Linux x86-64-v3 / <compiler>-x86-64-v3` | both test workflows | not yet | `cmake --preset clang-x86-64-v3 && cmake --build --preset clang-x86-64-v3 && ctest --preset clang-x86-64-v3` (or `gcc-`) |
+| `macOS arm64 / <compiler>-<preset>`, for the same four presets | both test workflows | not yet ([#94](https://github.com/CppReflectionAD/cpp_reflection_ad/issues/94) C9) | `python3 run_tests.py --build-type all` and `python3 run_tests.py --sanitize`, on a Mac |
+| `Linux arm64 / <compiler>-<preset>`, for the same four presets | both test workflows | not yet ([#94](https://github.com/CppReflectionAD/cpp_reflection_ad/issues/94) C9) | `python3 run_tests.py --build-type all` and `python3 run_tests.py --sanitize`, on an arm64 Linux machine |
 | `GCC pins` | `gcc-pins.yml` | not yet | `.github/scripts/check-gcc-pins.sh` |
-| `Submodule pins` | `submodule-pins.yml` | not yet | `.github/scripts/check-submodule-pins.sh` (needs `gh` logged in) |
+
+Each test leg is named after the runner and the CMake preset it runs, e.g.
+`Linux x86-64 / gcc-release`, so `cmake --preset gcc-release && cmake --build
+--preset gcc-release && ctest --preset gcc-release` reproduces it. Every leg
+runs the same steps, from `toolchain-test.yml`.
 
 `Clang tests` and `GCC tests` are summary jobs. Each passes only when its
-workflow's `toolchain` job, its three `test (<build type>)` legs (one per build
-type, so they match `--build-type all`) and its `sanitize (ASan+UBSan)` job
-pass.
+workflow's `toolchain` job and its four `Linux x86-64` legs pass: one per build
+type, so they match `--build-type all`, and the sanitize preset.
 
 The `toolchain` job restores the compiler from the Actions cache, or builds it
 on a miss: about 1.5 hours for clang, about 30 minutes for GCC. The cache key
@@ -421,8 +430,9 @@ checks and don't run in the merge queue.
 `main` changes only through pull requests, and they are squash-merged through
 a merge queue. A pull request can join the queue once it has:
 
-- `pre-commit`, `Clang tests` and `GCC tests` passing (see
-  [CI checks](#ci-checks));
+- `pre-commit`, `Submodule pins`, `Clang tests` and `GCC tests` passing (see
+  [CI checks](#ci-checks)). So a pin bump can merge only after its pins are
+  merged into their fork branches;
 - an approving review from someone other than whoever pushed last. A push
   dismisses earlier approvals;
 - every review thread resolved.
@@ -467,11 +477,11 @@ here, moving the `known_gap/` test in the same pull request (see
 ## Bumping a compiler pin
 
 The compilers are the submodules `clang-p2996` (the `p4395` branch of
-`CppReflectionAD/clang-p4395`), `gcc-mirror` (the `p4395` branch of
+`CppReflectionAD/clang-p4395`), `gcc` (the `p4395` branch of
 `CppReflectionAD/gcc`) and, on macOS only, `gcc-darwin-reflect`. A bump is
 its own pull request, along with the test changes the new pin forces, such as
 moving a `known_gap/` test it fixes (see [tests/README.md](tests/README.md)).
-For `clang-p2996` or `gcc-mirror`:
+For `clang-p2996` or `gcc`:
 
 ```bash
 git -C clang-p2996 fetch origin p4395
@@ -489,7 +499,9 @@ changes, and then run `git submodule sync` too.
 Each fork pins from its `p4395` branch, which only moves forward, through pull
 requests merged with a merge commit. A rule on the branch enforces this in all
 three forks: no deletion or force push, and a pull request (no approval
-needed), merged with "Create a merge commit". A squash or rebase merge would give the
+needed), merged with "Create a merge commit". Squash and rebase merging are
+also turned off in each fork's settings, so every merge button there offers
+only a merge commit. A squash or rebase merge would give the
 pinned commit a new SHA and leave it on no branch, and a force push would drop
 it; either way, older commits of this repository could no longer check out
 their compiler.
@@ -498,16 +510,16 @@ CI rebuilds the toolchain on the pull request, and on `main` again after
 merging (see [CI checks](#ci-checks)). Open pull requests rebuild it as well
 once they test against the new `main`.
 
-`gcc-darwin-reflect` follows `gcc-mirror`, so when the `gcc-mirror` pin moves,
+`gcc-darwin-reflect` follows `gcc`, so when the `gcc` pin moves,
 bring its new commits over to `p4395` in the same pull request. `git cherry`
-matches commits by content, so this works from any clone, skips `gcc-mirror`'s
+matches commits by content, so this works from any clone, skips `gcc`'s
 merge commits, and picks only what `p4395` lacks:
 
 ```bash
-new=$(git rev-parse :gcc-mirror)
+new=$(git rev-parse :gcc)
 cd gcc-darwin-reflect
 git fetch origin p4395
-git fetch --no-tags ../gcc-mirror "$new"
+git fetch --no-tags ../gcc "$new"
 git checkout --detach origin/p4395
 git cherry HEAD "$new" "$(git merge-base HEAD "$new")" | sed -n 's/^+ //p' |
   git cherry-pick -x --stdin
@@ -522,14 +534,14 @@ repository's pull request merges. The pin can stay at `<pr-branch>`'s tip,
 since the merge commit keeps it on `p4395`.
 
 Run the `git cherry` line again afterwards: it should print only `-` lines,
-meaning every reflection commit in `gcc-mirror` is in `p4395`. If it already
+meaning every reflection commit in `gcc` is in `p4395`. If it already
 does before you start, `git cherry-pick` stops with "empty commit set passed":
 there is nothing to bring over. `.github/scripts/check-gcc-pins.sh` runs the
 same check on the staged pins, in a scratch clone, and the `GCC pins` CI check
 runs it on every pull request.
 
 The iains snapshot under `p4395` must have the same upstream GCC base as
-`gcc-mirror`. If `gcc-mirror` merged a newer upstream GCC, the `git cherry`
+`gcc`. If `gcc` merged a newer upstream GCC, the `git cherry`
 list above also holds upstream commits; move to a newer iains snapshot instead.
 The fork has only the branches someone pushed to it, so push the snapshot's
 branch from iains first, then rebuild the stack on it:
