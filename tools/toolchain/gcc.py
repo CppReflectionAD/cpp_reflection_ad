@@ -35,11 +35,11 @@ from .common import (
 )
 
 # The GCC checkout to build on this platform. On macOS that's
-# gcc-darwin-reflect, our fork of iains' Darwin port with gcc-mirror's
-# reflection commits on top (see CONTRIBUTING.md): gcc-mirror doesn't build
-# there. run_tests.py, the CI build script and the CI cache key all use this,
-# the last two through --print-source-submodule.
-SOURCE_SUBMODULE = "gcc-darwin-reflect" if sys.platform == "darwin" else "gcc-mirror"
+# gcc-darwin-reflect, our fork of iains' Darwin port with the gcc
+# submodule's reflection commits on top (see CONTRIBUTING.md): the gcc
+# submodule doesn't build there. run_tests.py, the CI build script and the CI
+# cache key all use this, the last two through --print-source-submodule.
+SOURCE_SUBMODULE = "gcc-darwin-reflect" if sys.platform == "darwin" else "gcc"
 
 
 def macos_sdk_path(verbose: bool) -> str:
@@ -117,7 +117,7 @@ def main() -> int:
         default=str(ROOT / SOURCE_SUBMODULE),
         help=(
             "GCC checkout. Default: the gcc-darwin-reflect submodule on macOS, "
-            "gcc-mirror elsewhere."
+            "the gcc submodule elsewhere."
         ),
     )
     parser.add_argument(
