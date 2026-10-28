@@ -28,238 +28,110 @@ jobs:
   toolchain:
     uses: ./.github/workflows/toolchain-cache-gcc.yml
 
+  # Release, RelWithDebInfo and Debug, so they match `--build-type all`, and
+  # ASan and UBSan (#94 T1) through the gcc-sanitize preset. All are in
+  # the summary job's needs, so they're required (#94 C8).
   test:
-    name: test (${{ matrix.build_type }})
+    name: Linux x86-64
     needs: toolchain
-    # Same label as the toolchain job, which builds the toolchain restored
-    # here; the cache key doesn't record the image.
-    runs-on: ${{ needs.toolchain.outputs.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        build_type: [Release, RelWithDebInfo, Debug]
-    env:
-      BUILD_TYPE: ${{ matrix.build_type }}
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
-
-      - name: Restore gcc toolchain from cache
-        uses: actions/cache/restore@v6
-        with:
-          path: /opt/toolchain-gcc
-          key: ${{ needs.toolchain.outputs.cache_key }}
-          fail-on-cache-miss: true
-
-      # The CMakePresets.json preset for this build type (gcc-release, ...),
-      # with the compiler swapped for the cached one.
-      - name: Configure CMake
-        run: |
-          echo "PRESET=gcc-${BUILD_TYPE,,}" >> "$GITHUB_ENV"
-          cmake --preset "gcc-${BUILD_TYPE,,}" \
-            -DCMAKE_CXX_COMPILER=/opt/toolchain-gcc/bin/g++
-
-      - name: Build tests
-        run: cmake --build --preset "$PRESET"
-
-      - name: Test AD with CTest
-        run: ctest --preset "$PRESET"
-
-  # ASan and UBSan (#94 T1), through the gcc-sanitize preset. It's in the
-  # summary job's needs, so it's required (#94 C8).
-  sanitize:
-    name: sanitize (ASan+UBSan)
-    needs: toolchain
-    # Same label as the toolchain job, like the test legs.
-    runs-on: ${{ needs.toolchain.outputs.runner }}
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
-
-      - name: Restore gcc toolchain from cache
-        uses: actions/cache/restore@v6
-        with:
-          path: /opt/toolchain-gcc
-          key: ${{ needs.toolchain.outputs.cache_key }}
-          fail-on-cache-miss: true
-
-      - name: Configure CMake
-        run: |
-          cmake --preset gcc-sanitize \
-            -DCMAKE_CXX_COMPILER=/opt/toolchain-gcc/bin/g++
-
-      - name: Build tests
-        run: cmake --build --preset gcc-sanitize
-
-      - name: Test AD with CTest
-        run: ctest --preset gcc-sanitize
+    uses: ./.github/workflows/toolchain-test.yml
+    with:
+      compiler: gcc
+      cache_key: ${{ needs.toolchain.outputs.cache_key }}
+      runner: ${{ needs.toolchain.outputs.runner }}
 
   # A Release build with -march=x86-64-v3 (#94 C9), through the
   # gcc-x86-64-v3 preset. It turns on FMA, which arm64 always has and plain
   # x86-64 lacks, so FMA contraction bugs like #95's show here too. It
   # isn't in the summary job's needs yet.
   x86-64-v3:
-    name: test (Release, x86-64-v3)
+    name: Linux x86-64-v3
     needs: toolchain
-    # Same label as the toolchain job, like the test legs.
-    runs-on: ${{ needs.toolchain.outputs.runner }}
+    uses: ./.github/workflows/toolchain-test.yml
+    with:
+      compiler: gcc
+      cache_key: ${{ needs.toolchain.outputs.cache_key }}
+      runner: ${{ needs.toolchain.outputs.runner }}
+      presets: '["x86-64-v3"]'
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
-
-      # Otherwise a runner without AVX2 or FMA fails every test with SIGILL.
-      - name: Check that the runner supports x86-64-v3
-        run: |
-          /lib64/ld-linux-x86-64.so.2 --help | grep -F 'x86-64-v3 (supported' || {
-            echo "::error::This runner's CPU doesn't support x86-64-v3."
-            exit 1
-          }
-
-      - name: Restore gcc toolchain from cache
-        uses: actions/cache/restore@v6
-        with:
-          path: /opt/toolchain-gcc
-          key: ${{ needs.toolchain.outputs.cache_key }}
-          fail-on-cache-miss: true
-
-      - name: Configure CMake
-        run: |
-          cmake --preset gcc-x86-64-v3 \
-            -DCMAKE_CXX_COMPILER=/opt/toolchain-gcc/bin/g++
-
-      - name: Build tests
-        run: cmake --build --preset gcc-x86-64-v3
-
-      - name: Test AD with CTest
-        run: ctest --preset gcc-x86-64-v3
-
-  # The toolchain, test and sanitize legs again on macOS arm64 (#94 C9), with
-  # GCC built from gcc-darwin-reflect. The sanitize leg runs the tests under
-  # GCC's own libasan and libubsan on macos-15. Unlike the Linux sanitize job,
-  # they aren't in the summary job's needs yet. GCC is built only on a cache
-  # miss: when the pin, the runner's SDK or linker, the build script or the
-  # recipe changes, or the cache was evicted after 7 days unused.
+  # The toolchain and test legs again on macOS arm64 (#94 C9), with GCC built
+  # from gcc-darwin-reflect. The sanitize leg runs the tests under GCC's own
+  # libasan and libubsan on macos-15. These jobs aren't in the summary job's
+  # needs yet. GCC is built only on a cache miss: when the pin, the runner's
+  # SDK or linker, the build script or the recipe changes, or the cache was
+  # evicted after 7 days unused.
   toolchain-macos:
     uses: ./.github/workflows/toolchain-cache-gcc.yml
     with:
       runner: macos-15
 
   test-macos:
-    name: test (${{ matrix.build_type }}, macOS arm64)
+    name: macOS arm64
     needs: toolchain-macos
-    # Same label as toolchain-macos, not necessarily the same image. The cache
-    # key records only the SDK and linker; the check below compares them.
-    runs-on: ${{ needs.toolchain-macos.outputs.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - build_type: Release
-            preset: gcc-release
-          - build_type: RelWithDebInfo
-            preset: gcc-relwithdebinfo
-          - build_type: Debug
-            preset: gcc-debug
-          - build_type: ASan+UBSan
-            preset: gcc-sanitize
+    uses: ./.github/workflows/toolchain-test.yml
+    with:
+      compiler: gcc
+      cache_key: ${{ needs.toolchain-macos.outputs.cache_key }}
+      runner: ${{ needs.toolchain-macos.outputs.runner }}
+      macos_sdk: ${{ needs.toolchain-macos.outputs.macos_sdk }}
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
-
-      # /opt belongs to root on macOS, so the cache can't create the prefix.
-      - name: Create the toolchain prefix
-        run: |
-          sudo mkdir -p /opt/toolchain-gcc
-          sudo chown "$(id -u):$(id -g)" /opt/toolchain-gcc
-
-      - name: Restore gcc toolchain from cache
-        uses: actions/cache/restore@v6
-        with:
-          path: /opt/toolchain-gcc
-          key: ${{ needs.toolchain-macos.outputs.cache_key }}
-          fail-on-cache-miss: true
-
-      # The restored g++ finds the macOS headers only through the SDK path it
-      # was configured with on the toolchain runner, and links with this
-      # runner's linker. During a runner image rollout this runner can have
-      # another Xcode, SDK or linker, so check here instead of failing later
-      # with missing headers or link errors.
-      - name: Check this runner has the toolchain's SDK and linker
-        env:
-          TOOLCHAIN_SDK: ${{ needs.toolchain-macos.outputs.macos_sdk }}
-        run: |
-          RUNNER_SDK="$(.github/scripts/macos-sdk-id.sh)"
-          if [ "$RUNNER_SDK" != "$TOOLCHAIN_SDK" ]; then
-            echo "::error::The cached g++ was built with '$TOOLCHAIN_SDK', but this runner has '$RUNNER_SDK'. The toolchain and test jobs ran on different runner images, which happens while GitHub rolls out a new image. Re-running can land on the same pair of images, so the reliable fix is to wait until the rollout finishes (see actions/runner-images) and then re-run all jobs."
-            exit 1
-          fi
-          echo "SDK and linker match: $RUNNER_SDK"
-
-      - name: Configure CMake
-        run: |
-          cmake --preset "${{ matrix.preset }}" \
-            -DCMAKE_CXX_COMPILER=/opt/toolchain-gcc/bin/g++
-
-      - name: Build tests
-        run: cmake --build --preset "${{ matrix.preset }}"
-
-      - name: Test AD with CTest
-        run: ctest --preset "${{ matrix.preset }}"
-
-  # The toolchain, test and sanitize legs again on Linux arm64 (#94 C9), on
-  # GitHub's hosted ubuntu-24.04-arm runners, with the same recipe as x86-64.
-  # arm64 always has FMA, so FMA contraction bugs like #95's show here, as on
-  # the group's Macs. runner.arch is in the cache key, so this leg has its own
-  # toolchain. Unlike sanitize, these jobs aren't in the summary job's needs yet.
+  # The toolchain and test legs again on Linux arm64 (#94 C9), on GitHub's
+  # hosted ubuntu-24.04-arm runners, with the same recipe as x86-64. arm64
+  # always has FMA, so FMA contraction bugs like #95's show here, as on the
+  # group's Macs. runner.arch is in the cache key, so this leg has its own
+  # toolchain. These jobs aren't in the summary job's needs yet.
   toolchain-arm64:
     uses: ./.github/workflows/toolchain-cache-gcc.yml
     with:
       runner: ubuntu-24.04-arm
 
   test-arm64:
-    name: test (${{ matrix.build_type }}, Linux arm64)
+    name: Linux arm64
     needs: toolchain-arm64
-    # The same runner label as toolchain-arm64: the cache key doesn't record
-    # the image.
-    runs-on: ${{ needs.toolchain-arm64.outputs.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - build_type: Release
-            preset: gcc-release
-          - build_type: RelWithDebInfo
-            preset: gcc-relwithdebinfo
-          - build_type: Debug
-            preset: gcc-debug
-          - build_type: ASan+UBSan
-            preset: gcc-sanitize
+    uses: ./.github/workflows/toolchain-test.yml
+    with:
+      compiler: gcc
+      cache_key: ${{ needs.toolchain-arm64.outputs.cache_key }}
+      runner: ${{ needs.toolchain-arm64.outputs.runner }}
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
+  # Each toolchain as a release asset for `run_tests.py --fetch-compilers`
+  # (#165): packed and checked until its pin and recipe are published, and
+  # published from main. Not in the summary's needs, so it never holds up the
+  # required check, and skipped in the merge queue, which can't publish.
+  # Publishing needs contents: write, which only the publish job inside gets.
+  archive:
+    needs: toolchain
+    if: github.event_name != 'merge_group'
+    uses: ./.github/workflows/toolchain-archive.yml
+    permissions:
+      contents: write
+    with:
+      compiler: gcc
+      cache_key: ${{ needs.toolchain.outputs.cache_key }}
+      runner: ${{ needs.toolchain.outputs.runner }}
 
-      - name: Restore gcc toolchain from cache
-        uses: actions/cache/restore@v6
-        with:
-          path: /opt/toolchain-gcc
-          key: ${{ needs.toolchain-arm64.outputs.cache_key }}
-          fail-on-cache-miss: true
+  archive-macos:
+    needs: toolchain-macos
+    if: github.event_name != 'merge_group'
+    uses: ./.github/workflows/toolchain-archive.yml
+    permissions:
+      contents: write
+    with:
+      compiler: gcc
+      cache_key: ${{ needs.toolchain-macos.outputs.cache_key }}
+      runner: ${{ needs.toolchain-macos.outputs.runner }}
+      macos_sdk: ${{ needs.toolchain-macos.outputs.macos_sdk }}
 
-      - name: Configure CMake
-        run: |
-          cmake --preset "${{ matrix.preset }}" \
-            -DCMAKE_CXX_COMPILER=/opt/toolchain-gcc/bin/g++
-
-      - name: Build tests
-        run: cmake --build --preset "${{ matrix.preset }}"
-
-      - name: Test AD with CTest
-        run: ctest --preset "${{ matrix.preset }}"
+  archive-arm64:
+    needs: toolchain-arm64
+    if: github.event_name != 'merge_group'
+    uses: ./.github/workflows/toolchain-archive.yml
+    permissions:
+      contents: write
+    with:
+      compiler: gcc
+      cache_key: ${{ needs.toolchain-arm64.outputs.cache_key }}
+      runner: ${{ needs.toolchain-arm64.outputs.runner }}
 
   # The one check for the ruleset to require (#94 C4), so it names this
   # workflow's result rather than each matrix leg. always() makes it report
@@ -267,7 +139,7 @@ jobs:
   # cancelled: a skipped required check would count as passing.
   summary:
     name: GCC tests
-    needs: [toolchain, test, sanitize]
+    needs: [toolchain, test]
     if: always()
     runs-on: ubuntu-24.04
     steps:
@@ -275,7 +147,7 @@ jobs:
         env:
           RESULTS: ${{ join(needs.*.result, ' ') }}
         run: |
-          echo "toolchain, test legs and sanitize: $RESULTS"
+          echo "toolchain and Linux x86-64 test legs: $RESULTS"
           for result in $RESULTS; do
             [ "$result" = success ] || exit 1
           done

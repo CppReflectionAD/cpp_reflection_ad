@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Checks that the gcc-darwin-reflect pin has every reflection commit in the
-# gcc-mirror pin (#94 C11). The darwin fork's p4395 branch cherry-picks them,
+# gcc pin (#94 C11). The darwin fork's p4395 branch cherry-picks them,
 # so this is `git cherry`, which matches commits by content and skips merge
 # commits, not an ancestry check. It passes when every line is `-`. See
 # "Bumping a compiler pin" in CONTRIBUTING.md for how to fix a failure.
@@ -14,7 +14,7 @@ set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 darwin="$(git rev-parse :gcc-darwin-reflect)"
-mirror="$(git rev-parse :gcc-mirror)"
+mirror="$(git rev-parse :gcc)"
 darwin_url="$(git config -f .gitmodules submodule.gcc-darwin-reflect.url)"
 mirror_url="$(git config -f .gitmodules submodule.gcc-mirror.url)"
 
@@ -33,10 +33,13 @@ fail() { echo "check-gcc-pins: $*" >&2; exit 1; }
 # base, and no shallow boundary is inside either side of the range. A boundary
 # there hides its parents, so git cherry could skip commits behind it, or reach
 # commits below the base through a merge and list them as missing.
+#
+# Not grep -q: it exits at the first match, git rev-list then dies of SIGPIPE,
+# pipefail fails the pipeline, and the ! turns that into "complete".
 complete() {
   base="$(git merge-base "$darwin" "$mirror")" || return 1
   [[ -s $work/shallow ]] || return 0
-  ! git rev-list "^$base" "$darwin" "$mirror" | grep -qxFf "$work/shallow"
+  ! git rev-list "^$base" "$darwin" "$mirror" | grep -xFf "$work/shallow" >/dev/null
 }
 depth=256
 while :; do
@@ -52,8 +55,8 @@ echo "Merge base: $(git log -1 --format='%h %cs %s' "$base")"
 cherry="$(git cherry -v "$darwin" "$mirror" "$base")"
 echo "$cherry"
 if grep -q '^+' <<<"$cherry"; then
-  fail "the gcc-darwin-reflect pin $darwin lacks the gcc-mirror commits" \
+  fail "the gcc-darwin-reflect pin $darwin lacks the commits of the gcc pin" \
     "marked + above. Bring them over to p4395 as described in" \
     "\"Bumping a compiler pin\" in CONTRIBUTING.md."
 fi
-echo "ok: the gcc-darwin-reflect pin has every gcc-mirror commit since their merge base"
+echo "ok: the gcc-darwin-reflect pin has every commit of the gcc pin since their merge base"

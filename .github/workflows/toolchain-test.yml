@@ -1,0 +1,107 @@
+# Builds and runs the tests with a cached toolchain, one leg per CMake preset.
+# Called by {clang,gcc}_prebuilt_cache.yml after each toolchain job, so every
+# runner's legs share these steps (#153). Each leg is named after its preset
+# (gcc-release, ...), which is what reproduces it locally.
+name: Test With Cached Toolchain
+
+on:
+  workflow_call:
+    inputs:
+      compiler:
+        description: clang or gcc
+        type: string
+        required: true
+      cache_key:
+        description: Cache key of the toolchain job, holding /opt/toolchain-<compiler>
+        type: string
+        required: true
+      runner:
+        description: >-
+          Runner the toolchain was built on. The legs use the same label: the
+          cache key doesn't record the image.
+        type: string
+        required: true
+      presets:
+        description: >-
+          JSON list of the presets to run, without the compiler prefix. The
+          default matches `run_tests.py --build-type all` plus `--sanitize`.
+        type: string
+        default: '["release", "relwithdebinfo", "debug", "sanitize"]'
+      macos_sdk:
+        description: >-
+          On macOS, the SDK and linker GCC was built with (macos-sdk-id.sh),
+          which each leg checks its own runner has
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ inputs.compiler }}-${{ matrix.preset }}
+    runs-on: ${{ inputs.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: ${{ fromJSON(inputs.presets) }}
+    env:
+      PRESET: ${{ inputs.compiler }}-${{ matrix.preset }}
+      PREFIX: /opt/toolchain-${{ inputs.compiler }}
+      CXX_NAME: ${{ inputs.compiler == 'gcc' && 'g++' || 'clang++' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      # Otherwise a runner without AVX2 or FMA fails every test with SIGILL.
+      - name: Check that the runner supports x86-64-v3
+        if: matrix.preset == 'x86-64-v3'
+        run: |
+          /lib64/ld-linux-x86-64.so.2 --help | grep -F 'x86-64-v3 (supported' || {
+            echo "::error::This runner's CPU doesn't support x86-64-v3."
+            exit 1
+          }
+
+      # /opt belongs to root on macOS, so the cache can't create the prefix.
+      - name: Create the toolchain prefix
+        if: runner.os == 'macOS'
+        run: |
+          sudo mkdir -p "$PREFIX"
+          sudo chown "$(id -u):$(id -g)" "$PREFIX"
+
+      - name: Restore ${{ inputs.compiler }} toolchain from cache
+        uses: actions/cache/restore@v6
+        with:
+          path: /opt/toolchain-${{ inputs.compiler }}
+          key: ${{ inputs.cache_key }}
+          fail-on-cache-miss: true
+
+      # The restored g++ finds the macOS headers only through the SDK path it
+      # was configured with on the toolchain runner, and links with this
+      # runner's linker. During a runner image rollout this runner can have
+      # another Xcode, SDK or linker, so check here instead of failing later
+      # with missing headers or link errors. (clang needs no check: CMake
+      # passes it -isysroot.)
+      - name: Check this runner has the toolchain's SDK and linker
+        if: inputs.macos_sdk != ''
+        env:
+          TOOLCHAIN_SDK: ${{ inputs.macos_sdk }}
+        run: |
+          RUNNER_SDK="$(.github/scripts/macos-sdk-id.sh)"
+          if [ "$RUNNER_SDK" != "$TOOLCHAIN_SDK" ]; then
+            echo "::error::The cached g++ was built with '$TOOLCHAIN_SDK', but this runner has '$RUNNER_SDK'. The toolchain and test jobs ran on different runner images, which happens while GitHub rolls out a new image. Re-running can land on the same pair of images, so the reliable fix is to wait until the rollout finishes (see actions/runner-images) and then re-run all jobs."
+            exit 1
+          fi
+          echo "SDK and linker match: $RUNNER_SDK"
+
+      # The CMakePresets.json preset, with the compiler swapped for the cached
+      # one.
+      - name: Configure CMake
+        run: cmake --preset "$PRESET" -DCMAKE_CXX_COMPILER="$PREFIX/bin/$CXX_NAME"
+
+      - name: Build tests
+        run: cmake --build --preset "$PRESET"
+
+      - name: Test AD with CTest
+        run: ctest --preset "$PRESET"

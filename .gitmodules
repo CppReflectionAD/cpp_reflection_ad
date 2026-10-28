@@ -1,15 +1,15 @@
 [submodule "clang-p2996"]
 	path = clang-p2996
-	url = https://github.com/siqiyyyy/clang-p2996.git
-	branch = expr-reflect
+	url = https://github.com/CppReflectionAD/clang-p4395.git
+	branch = p4395
 [submodule "gcc-mirror"]
-	path = gcc-mirror
-	url = https://github.com/yesmanchyk/gcc-mirror.git
-	branch = autograd-capable
+	path = gcc
+	url = https://github.com/CppReflectionAD/gcc.git
+	branch = p4395
 [submodule "gcc-darwin-reflect"]
 	path = gcc-darwin-reflect
 	url = https://github.com/CppReflectionAD/gcc-darwin-arm64.git
 	branch = p4395
-	# Our fork of iains/gcc-darwin-arm64: an iains snapshot with gcc-mirror's
+	# Our fork of iains/gcc-darwin-arm64: an iains snapshot with the gcc submodule's
 	# reflection commits cherry-picked on top. See "Bumping a compiler pin" in
 	# CONTRIBUTING.md.

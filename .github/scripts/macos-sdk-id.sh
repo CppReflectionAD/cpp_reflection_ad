@@ -6,7 +6,7 @@
 # changes the SDK or the linker inside the same Xcode.
 #
 # toolchain-cache-gcc.yml puts a hash of this in the macOS cache key, and the
-# macOS test legs in gcc_prebuilt_cache.yml compare it with their own runner's.
+# macOS test legs (toolchain-test.yml) compare it with their own runner's.
 set -euo pipefail
 
 sdk_path="$(xcrun --show-sdk-path)"
