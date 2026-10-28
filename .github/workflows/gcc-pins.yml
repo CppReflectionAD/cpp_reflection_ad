@@ -1,5 +1,5 @@
 # Checks that the gcc-darwin-reflect pin has every reflection commit in the
-# gcc-mirror pin (#94 C11), so macOS builds the same GCC as Linux. Reproduce it
+# gcc pin (#94 C11), so macOS builds the same GCC as Linux. Reproduce it
 # locally with .github/scripts/check-gcc-pins.sh.
 name: GCC pins
 
@@ -32,5 +32,5 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7
 
-      - name: Check that gcc-darwin-reflect has every gcc-mirror commit
+      - name: Check that gcc-darwin-reflect has every reflection commit of the gcc pin
         run: .github/scripts/check-gcc-pins.sh
