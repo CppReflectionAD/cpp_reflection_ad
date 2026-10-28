@@ -6,7 +6,7 @@ says which compilers it runs on and what it checks:
 | Directory | What goes here | Passes when |
 |---|---|---|
 | `common/` | Tests that run under **both** compilers | it compiles and runs without a failed check |
-| `clang_only/` | Tests that need the clang (`expr-reflect`) fork | as above, on clang only |
+| `clang_only/` | Tests that need the clang fork | as above, on clang only |
 | `gcc_only/` | Tests that need the GCC fork | as above, on GCC only |
 | `static_fail/` | Code the engine must **reject** (a `static_assert` it should trip) | it fails to compile with the errors in its `.fail.txt` |
 | `known_gap/clang/`, `known_gap/gcc/` | Code a compiler fork **should** accept but can't yet (a bug or missing feature in the fork) | it fails to compile on that compiler with the errors in its `.fail.txt` |
