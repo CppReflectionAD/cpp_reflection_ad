@@ -54,7 +54,6 @@ or refuses.
   path doesn't: with FMA on (arm64, or the `clang-x86-64-v3` preset), clang's
   default `-ffp-contract=on` fuses some of its `Ball` multiply-adds at run
   time, and `_rt` could then differ by an ulp.
-- **GCC cannot build this header** (it has no `?:` reflection), so its tests
-  are clang-only, and there are no `tests/static_fail` cases for its compile
-  errors: `static_fail` also runs on GCC, where they would pass for the wrong
-  reason.
+- **Its compile errors have no `tests/static_fail` cases yet.** They couldn't
+  be added while GCC couldn't build this header, since `static_fail` runs on
+  GCC too and they would have passed there for the wrong reason.

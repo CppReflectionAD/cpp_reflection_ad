@@ -6,7 +6,7 @@ says which compilers it runs on and what it checks:
 | Directory | What goes here | Passes when |
 |---|---|---|
 | `common/` | Tests that run under **both** compilers | it compiles and runs without a failed check |
-| `clang_only/` | Tests that need the clang (`expr-reflect`) fork, e.g. anything using `include/ad/clang_only/` | as above, on clang only |
+| `clang_only/` | Tests that need the clang (`expr-reflect`) fork | as above, on clang only |
 | `gcc_only/` | Tests that need the GCC fork | as above, on GCC only |
 | `static_fail/` | Code the engine must **reject** (a `static_assert` it should trip) | it fails to compile with the errors in its `.fail.txt` |
 | `known_gap/clang/`, `known_gap/gcc/` | Code a compiler fork **should** accept but can't yet (a bug or missing feature in the fork) | it fails to compile on that compiler with the errors in its `.fail.txt` |
@@ -43,7 +43,7 @@ If the other compiler already accepts a `known_gap/` test, don't copy it into
 `*_only/` for that compiler. Put `// TEST-PASSES-ON: clang` (or `gcc`) in the
 first 10 lines instead: both `ctest` and `run_tests.py` then build and run it
 as an ordinary test on that compiler, so one file checks the same asserts on
-both. See `known_gap/gcc/nontrivial_destructor_reflection.cpp`.
+both.
 
 When a known gap is fixed, the `known_gap/` test starts failing (the file
 compiles). Move the file to `common/` or the right `*_only/` directory, turn

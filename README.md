@@ -12,11 +12,11 @@ https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2025/p2996r13.html
 ## Try it on Compiler Explorer (godbolt)
 
 The `expr-reflect` clang fork this repo builds on
-([siqiyyyy/clang-p2996, branch `expr-reflect`](https://github.com/siqiyyyy/clang-p2996/tree/expr-reflect))
+([CppReflectionAD/clang-p4395, branch `p4395`](https://github.com/CppReflectionAD/clang-p4395/tree/p4395))
 is available on [Compiler Explorer](https://godbolt.org/) as
 **x86-64 clang (expr-reflect)**, so you can try expression reflection and this
 library in the browser without building a compiler. It is rebuilt nightly from
-the tip of the `expr-reflect` branch, the same way Bloomberg's P2996 fork is
+the tip of the `p4395` branch, the same way Bloomberg's P2996 fork is
 offered as "x86-64 clang (reflection - C++26)".
 
 Example: <https://godbolt.org/z/z3nsh4GcW>
@@ -43,10 +43,10 @@ newer Boost versions are not yet packaged for this compiler.
 ### The gcc fork
 
 The gcc fork
-([yesmanchyk/gcc-mirror, branch `autograd-capable`](https://github.com/yesmanchyk/gcc-mirror/tree/autograd-capable))
+([CppReflectionAD/gcc, branch `p4395`](https://github.com/CppReflectionAD/gcc/tree/p4395))
 is also on Compiler Explorer, as **x86-64 gcc (expr-reflect)**. It is in the
 x86-64 gcc list (type `expr-reflect` in the compiler picker to find it) and is
-rebuilt nightly from the tip of the `autograd-capable` branch. Its default
+rebuilt nightly from the tip of the `p4395` branch. Its default
 options are `-std=c++26 -freflection`.
 
 [This example](https://godbolt.org/z/8hroz6cnx) reflects the body of a small function and rebuilds its
@@ -59,11 +59,10 @@ unchanged on both expr-reflect compilers, and fails on gcc trunk and on
 The libraries are header-only, under `include/`:
 
 - `include/ad/` — the AD engine (`autograd.h`, forward and reverse derivatives,
-  higher-order Taylor AD, `is_invertible.hpp`).
-- `include/ad/clang_only/` — the parts of the engine that need the clang
-  (`expr-reflect`) fork: tensors (`tensor.h`, `autograd_tensor.h`) and the
-  analyses (`is_continuous.hpp`, `limit_algebra.hpp`,
-  `discontinuity_analysis.hpp`, `absolute_normal_form.hpp`).
+  higher-order Taylor AD, `is_invertible.hpp`), tensors (`tensor.h`,
+  `autograd_tensor.h`) and the analyses `is_continuous.hpp`,
+  `limit_algebra.hpp`, `discontinuity_analysis.hpp` and
+  `absolute_normal_form.hpp`.
 - `include/cx_std/` — `constexpr` maths (`exp`, `log`, `sqrt`, `erfc`, `sin`,
   `cos`) for use in constant evaluation.
 
