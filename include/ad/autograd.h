@@ -614,8 +614,8 @@ consteval std::size_t inline_call(Ctx &c, info call) {
   info callee = m::declaration_of(m::callee_of(call));
   auto params = m::parameters_of(callee);
   // A member function's object is an operand with no parameter: `f` in a
-  // function object's `f(x)`, or on GCC `s` in `s.mf(x)`. Its body can't use
-  // it (only parameters and locals resolve), so leave it out.
+  // function object's `f(x)`. Its body can't use it (only parameters and
+  // locals resolve), so leave it out.
   if (ops.size() == params.size() + 1)
     ops.erase(ops.begin());
 
