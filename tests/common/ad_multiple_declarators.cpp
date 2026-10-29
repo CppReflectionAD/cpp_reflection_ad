@@ -2,8 +2,8 @@
 // declarators in a reflected body, including one whose initializer uses an
 // earlier declarator of the same statement.
 //
-// clang reflects `T a = x, b = a * a;` as one statement with two declarators;
-// GCC reflects it as two statements. Either way the engine lowers each
+// Both compilers reflect `T a = x, b = a * a;` as one statement with two
+// declarators (GCC used to give two statements, #220). The engine lowers each
 // declarator in order.
 
 #include <test_simple_include.hpp>
