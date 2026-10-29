@@ -3,7 +3,9 @@
 // `C b(x); return b.v;` has two statements.
 //
 // GCC used to declare b without an initializer and call the constructor in a
-// second statement, `C::C(&b, x)` (#215). Fixed in CppReflectionAD/gcc#16.
+// second statement, `C::C(&b, x)` (#215). For a named return value returned
+// by invisible reference, only that call was left. Fixed in
+// CppReflectionAD/gcc#16.
 // Copy-initialization and a constant initialization were never split; they
 // are controls. The fork has the same checks in
 // g++.dg/reflect/ctor_local_init1.C.
@@ -70,6 +72,18 @@ double e_brace(double x, double y) {
   E b{x, y};
   return b.w;
 }
+C nrv_paren(double x) {
+  C b(x);
+  return b;
+}
+D nrv_d_paren(double x) {
+  D b(x);
+  return b;
+}
+D nrv_d_copy(double x) {
+  D b = x;
+  return b;
+}
 constexpr double cx(double x) {
   C b(x);
   return b.v;
@@ -115,6 +129,9 @@ static_assert(one_initialized_declaration(^^c0_brace));
 static_assert(one_initialized_declaration(^^d_paren));
 static_assert(one_initialized_declaration(^^e_paren));
 static_assert(one_initialized_declaration(^^e_brace));
+static_assert(one_initialized_declaration(^^nrv_paren));
+static_assert(one_initialized_declaration(^^nrv_d_paren));
+static_assert(one_initialized_declaration(^^nrv_d_copy));
 static_assert(one_initialized_declaration(^^cx));
 static_assert(one_initialized_declaration(^^tmpl<double>));
 
@@ -126,5 +143,6 @@ static_assert(constructed_from(^^c0_brace, 0));
 static_assert(constructed_from(^^d_paren, 1));
 static_assert(constructed_from(^^e_paren, 2));
 static_assert(constructed_from(^^e_brace, 2));
+static_assert(constructed_from(^^nrv_d_paren, 1));
 
 int main() {}
