@@ -1,7 +1,7 @@
-// ad::meta::operands_of on a call gives the arguments only, on both compilers.
+// operands_of on a call gives the arguments only, on both compilers.
 //
-// GCC's own operands_of lists the callee first when the call has one, and
-// ad/meta.h drops it. A call to an internal function (__builtin_launder) has
+// GCC's operands_of used to list the callee first when the call had one, and
+// ad/meta.h dropped it. A call to an internal function (__builtin_launder) has
 // none, so there the first operand is an argument and must stay.
 
 #include <ad/meta.h>
