@@ -1,0 +1,22 @@
+=== GCC ===
+tests/known_gap/gcc/block_declaration_statements.cpp:66:38: error: static assertion failed: a structured binding is not one non-simple declaration
+   66 | static_assert(declaration_then_return(^^f_binding),
+      |               ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~~~~~~~
+tests/known_gap/gcc/block_declaration_statements.cpp:68:38: error: static assertion failed: an alias declaration is not one non-simple declaration
+   68 | static_assert(declaration_then_return(^^f_alias),
+      |               ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~~~~~
+tests/known_gap/gcc/block_declaration_statements.cpp:70:38: error: static assertion failed: a typedef is not one non-simple declaration
+   70 | static_assert(declaration_then_return(^^f_typedef),
+      |               ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~~~~~~~
+tests/known_gap/gcc/block_declaration_statements.cpp:72:38: error: static assertion failed: a static_assert is not one non-simple declaration
+   72 | static_assert(declaration_then_return(^^f_assert),
+      |               ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~~~~~~
+tests/known_gap/gcc/block_declaration_statements.cpp:74:38: error: static assertion failed: a using-declaration is not one non-simple declaration
+   74 | static_assert(declaration_then_return(^^f_using),
+      |               ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~~~~~
+tests/known_gap/gcc/block_declaration_statements.cpp:76:38: error: static assertion failed: a using-directive is not one non-simple declaration
+   76 | static_assert(declaration_then_return(^^f_directive),
+      |               ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~~~~~~~~~
+tests/known_gap/gcc/block_declaration_statements.cpp:78:38: error: static assertion failed: a local class is not one non-simple declaration
+   78 | static_assert(declaration_then_return(^^f_class),
+      |               ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~~~~~
