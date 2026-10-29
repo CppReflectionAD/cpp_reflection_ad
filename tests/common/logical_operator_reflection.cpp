@@ -1,10 +1,9 @@
 // `||`, `&&` and `!` are operator expressions, with two, two and one operands.
 //
-// Clang reports is_operator_expression == true for them. GCC's
-// is_unary_operator and is_binary_operator leave them out, but its
-// expression_operator_of and operands_of handle them, and ad::meta's
-// is_operator_expression uses that on GCC (#162 step 12 aligns the GCC
-// fork's API). Without it, reflection AD on GCC took a condition such as
+// Both compilers report is_operator_expression == true for them. Before
+// CppReflectionAD/gcc#11, GCC had no is_operator_expression, and its
+// is_unary_operator and is_binary_operator left them out, so ad/meta.h
+// supplied one. Without that, reflection AD on GCC took a condition such as
 // `x != 0.0 && 1.0 / x > 0.5` for a constant and failed with "'x' is not a
 // constant expression".
 #include <ad/meta.h>
