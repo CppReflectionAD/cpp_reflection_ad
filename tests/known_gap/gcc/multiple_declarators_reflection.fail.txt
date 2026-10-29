@@ -1,0 +1,21 @@
+=== GCC ===
+tests/known_gap/gcc/multiple_declarators_reflection.cpp:50:70: error: static assertion failed: `a = x, b = a * a` is not one declaration statement
+   50 | static_assert(m::statements_of(m::body_of(^^two_declarators)).size() == 2,
+      |               ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~~
+  • the comparison reduces to '(3 == 2)'
+tests/known_gap/gcc/multiple_declarators_reflection.cpp:52:72: error: static assertion failed: `a = 2, b = 3, c = x * y` is not one declaration statement
+   52 | static_assert(m::statements_of(m::body_of(^^three_declarators)).size() == 2,
+      |               ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~~
+  • the comparison reduces to '(4 == 2)'
+tests/known_gap/gcc/multiple_declarators_reflection.cpp:57:21: error: static assertion failed: `a = x, b = a * a` does not list both declarators
+   56 |     m::declarators_of(m::statements_of(m::body_of(^^two_declarators))[0])
+      |     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   57 |             .size() == 2,
+      |             ~~~~~~~~^~~~
+  • the comparison reduces to '(1 == 2)'
+tests/known_gap/gcc/multiple_declarators_reflection.cpp:61:21: error: static assertion failed: `a = 2, b = 3, c = x * y` does not list all three declarators
+   60 |     m::declarators_of(m::statements_of(m::body_of(^^three_declarators))[0])
+      |     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   61 |             .size() == 3,
+      |             ~~~~~~~~^~~~
+  • the comparison reduces to '(1 == 3)'
