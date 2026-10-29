@@ -1,21 +1,21 @@
-// TEST-PASSES-ON: clang
-// Known GCC gap (#235): a declaration statement that declares no ordinary
-// variable is missing from statements_of, or has the wrong kind. On clang each
-// of these is a declaration statement that isn't a simple declaration, so
+// A block declaration that declares no ordinary variable is one declaration
+// statement that isn't a simple declaration, on both compilers, so
 // declarators_of gives none. P4395R0 §3.3 excludes structured bindings from
 // simple declarations because their names share one initializer; clang
 // excludes them since CppReflectionAD/clang-p4395#8 (#203).
 //
-// On GCC, the binding is a statement of no kind, the using-declaration is an
-// expression statement, and the others are missing. When GCC fixes the gap,
-// the test fails because the file compiles: move it to tests/common/ and
-// delete the .fail.txt.
+// GCC used to reflect the binding as a statement of no kind and the
+// using-declaration as an expression statement, and to leave the others out
+// of statements_of (#235). Fixed in CppReflectionAD/gcc#20. The fork has
+// the same checks, and template instances of each, in
+// g++.dg/reflect/block_decl[123].C.
 #include <ad/meta.h>
 
 namespace m = ad::meta;
 
 namespace N {
 inline double g(double x) { return x; }
+enum class E { a, b };
 } // namespace N
 struct P {
   double a, b;
@@ -51,6 +51,22 @@ double f_class(double x) {
   };
   return L{x}.v;
 }
+double f_enum(double x) {
+  enum E { a, b };
+  return x + int(b);
+}
+double f_namespace_alias(double x) {
+  namespace M = N;
+  return M::g(x);
+}
+double f_using_enum(double x) {
+  using enum N::E;
+  return x + int(b);
+}
+double f_consteval_block(double x) {
+  consteval {}
+  return x;
+}
 
 // Whether fn's body is a declaration statement with no declarators, then a
 // return.
@@ -77,5 +93,13 @@ static_assert(declaration_then_return(^^f_directive),
               "a using-directive is not one non-simple declaration");
 static_assert(declaration_then_return(^^f_class),
               "a local class is not one non-simple declaration");
+static_assert(declaration_then_return(^^f_enum),
+              "a local enumeration is not one non-simple declaration");
+static_assert(declaration_then_return(^^f_namespace_alias),
+              "a namespace alias is not one non-simple declaration");
+static_assert(declaration_then_return(^^f_using_enum),
+              "a using-enum-declaration is not one non-simple declaration");
+static_assert(declaration_then_return(^^f_consteval_block),
+              "a consteval block is not one non-simple declaration");
 
 int main() {}
