@@ -1,9 +1,9 @@
 #include <ad/forward_derivative.h>
 
 // An assignment can't be lowered: the engine takes straight-line bodies of
-// `T v = expr;` declarations and one return. GCC reports an assignment as a
-// declaration statement (#185), which once gave this a derivative of 2, not 7,
-// with no error (#189).
+// `T v = expr;` declarations and one return. GCC used to report an assignment
+// as a declaration statement (#185, fixed by CppReflectionAD/gcc#6), which gave
+// this a derivative of 2, not 7, with no error (#189).
 inline double assigned(double x) {
   double a = x;
   a = a * a;
