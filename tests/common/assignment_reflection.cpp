@@ -2,10 +2,9 @@
 // straight-line body (#213). Each rebinds `v` to the value it stores, so later
 // uses of `v` see it and earlier copies keep the old value.
 //
-// Clang reflects each as an expression statement whose expression is the
-// assignment, `+=` and the like included. GCC reflects one as the assignment
-// converted to void, with `a += b` already rewritten as `a = a + b`;
-// ad::meta::is_expression_statement and expression_of give the clang shape.
+// Both compilers reflect each as an expression statement whose expression is
+// the assignment. Clang keeps `+=` and the like; GCC has already rewritten
+// `a += b` as `a = a + b`.
 // Before #213 the engine rejected every assignment; before #185/#189, GCC took
 // `a = a * a;` for a declaration of `a` and gave assigned() a derivative of 2,
 // not 7, with no error.
