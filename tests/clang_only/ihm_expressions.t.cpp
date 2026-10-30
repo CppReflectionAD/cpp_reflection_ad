@@ -1,0 +1,507 @@
+// Checks the ihm expression-text layer
+// (include/ihm/clang_only/ihm_expressions.hpp): that a failure
+// names its operands by their source text. Checked with test_simple's macros.
+
+#include <ihm/clang_only/ihm_expressions.hpp>
+
+#include <test_simple_include.hpp>
+
+#include "output/output_of.hpp"
+
+#include <compare>
+#include <cstdlib>
+#include <limits>
+#include <string>
+#include <vector>
+
+double twice(double x) { return 2 * x; }
+
+double scaled(double x, double factor = 2.0) { return factor * x; }
+
+// A long double literal is spelled with the digits it needs, also where long
+// double is more precise than double (e.g. x86-64 Linux; on arm64 macOS it is
+// a double, so the second literal is 0.1 there).
+constexpr bool wide_long_double = std::numeric_limits<long double>::digits >
+                                  std::numeric_limits<double>::digits;
+static_assert(ihm::detail::floating_text(0.1L) == "0.1");
+static_assert(ihm::detail::floating_text(0.1000000000000000001L) ==
+              (wide_long_double ? "0.1000000000000000001" : "0.1"));
+// Exact also beyond the powers of ten a double holds exactly (1e22), and for
+// the extremes of each type.
+static_assert(ihm::detail::floating_text(1e300) == "1e300");
+static_assert(ihm::detail::floating_text(1e-300) == "1e-300");
+static_assert(ihm::detail::floating_text(1e23) == "1e23");
+static_assert(ihm::detail::floating_text(0.3) == "0.3");
+static_assert(ihm::detail::floating_text(2.5) == "2.5");
+static_assert(ihm::detail::floating_text(-1.5) == "-1.5");
+static_assert(ihm::detail::floating_text(100.0) == "100.0");
+static_assert(ihm::detail::floating_text(1e-13) == "1e-13");
+static_assert(ihm::detail::floating_text(0.1f) == "0.1");
+static_assert(ihm::detail::floating_text(3.4028235e38f) == "3.4028235e38");
+static_assert(ihm::detail::floating_text(1.7976931348623157e308) ==
+              "1.7976931348623157e308");
+static_assert(ihm::detail::floating_text(2.2250738585072014e-308) ==
+              "2.2250738585072014e-308");
+static_assert(ihm::detail::floating_text(5e-324) == "5e-324");
+static_assert(ihm::detail::floating_text(9007199254740993.0) ==
+              "9007199254740992.0");
+
+void passing_checks() {
+  double a = 1.0;
+  double b = 2.0;
+  ihm::expect_not_equal(a, b);
+  if (a < b) {
+    ihm::expect_not_equal(a + b, b);
+  }
+  for (int i = 0; i < 3; ++i)
+    ihm::expect_not_equal(i, 3);
+}
+
+void failing_checks() {
+  double a = 1.0;
+  double b = 1.0;
+  ihm::expect_not_equal(a, b);
+  if (a == b) {
+    ihm::expect_not_equal(twice(a), a + b);
+  }
+  for (int i = 0; i < 1; ++i)
+    ihm::expect_not_equal(-i, 0);
+}
+
+void passing_equal_checks() {
+  double a = 1.0;
+  double b = 1.0;
+  ihm::expect_equal(a, b);
+  if (a == b) {
+    ihm::expect_equal(twice(a), a + b);
+  }
+  for (int i = 0; i < 3; ++i)
+    ihm::expect_equal(i - i, 0);
+}
+
+// Mixes both checks in one body.
+void failing_equal_checks() {
+  double a = 1.0;
+  double b = 2.0;
+  ihm::expect_equal(a, b);
+  ihm::expect_not_equal(b, twice(a));
+  if (a < b) {
+    ihm::expect_equal(twice(a), a + b);
+  }
+}
+
+void near_checks() {
+  double a = 1.0;
+  double b = 2.0;
+  ihm::expect_near_abs(a + a, b, 1e-12);
+  ihm::expect_near_abs(twice(a), a, 0.5);
+  ihm::expect_near_abs(b, 2.5, 0.1);
+}
+
+// Operands that need parentheses in the message.
+void parenthesised_checks() {
+  double a = 1.0;
+  double b = 2.0;
+  ihm::expect_near_abs(b, a - b, 0.1);
+  ihm::expect_equal(a < b, a < b && b < a);
+}
+
+struct ordered {
+  int value;
+  auto operator<=>(const ordered &) const = default;
+};
+
+void rewritten_ordering_checks() {
+  const ordered p{1};
+  const ordered q{2};
+  ihm::expect_equal(p < q, false);
+  ihm::expect_equal(p <= q, false);
+  ihm::expect_equal(p > q, true);
+  ihm::expect_equal(p >= q, true);
+  // In C++26, libc++ compares std::string through operator<=> too.
+  const std::string s = "abc";
+  const std::string t = "abd";
+  ihm::expect_equal(s < t, false);
+  ihm::expect_equal(s >= t, true);
+}
+
+// A null pointer literal converted to `const char *` isn't a string.
+void null_pointer_checks() {
+  const char *p = "x";
+  ihm::expect_equal(p == nullptr, true);
+  ihm::expect_equal(p == 0, true);
+}
+
+// A literal operand prints as its value, without a value line of its own.
+void literal_checks() {
+  const unsigned n = 2u;
+  const long l = 4;
+  const float f = 1.5f;
+  const double d = 1.0;
+  ihm::expect_equal(n, 3u);
+  ihm::expect_equal(l, 5l);
+  ihm::expect_equal(f, 2.5f);
+  ihm::expect_equal(d, 1e16);
+  ihm::expect_equal(d, 1e300);
+}
+
+// A test function that throws.
+void throwing_checks() { throw 1; }
+
+// Two checks on one line, each with its own text.
+void same_line_checks() {
+  const double a = 1.0;
+  const double b = 2.0;
+  // clang-format off
+  ihm::expect_equal(a, 1.5); ihm::expect_equal(b, 3.0);
+  // clang-format on
+}
+
+// The failures in `lines`, each from its "<file>:<line> Failure" line to the
+// next one.
+std::vector<std::vector<std::string>>
+failures_in(const std::vector<std::string> &lines) {
+  std::vector<std::vector<std::string>> failures;
+  for (const std::string &line : lines) {
+    if (line.ends_with(" Failure") || failures.empty())
+      failures.emplace_back();
+    failures.back().push_back(line);
+  }
+  return failures;
+}
+
+int compare_side_by_side();
+
+int main() {
+  namespace detail = ihm::detail;
+  // side_by_side_same() fails more checks than the default limits.
+  ihm::max_errors = 100;
+  detail_test::max_errors = 100;
+
+  // Passing checks print nothing and count no error.
+  const auto passing =
+      output_of([] { ihm::run_with_text<^^passing_checks>(); });
+  EXPECT_EQUAL(passing.size(), 0u);
+  EXPECT_EQUAL(ihm::result(), 0);
+
+  // Each failing check prints where it is, its operands' text and the values
+  // of those that aren't literals.
+  const auto failing =
+      failures_in(output_of([] { ihm::run_with_text<^^failing_checks>(); }));
+  EXPECT_EQUAL(ihm::result(), 3);
+  EXPECT_EQUAL(failing.size(), 3u);
+  if (failing.size() == 3) {
+    EXPECT_TRUE(failing[0][0].ends_with("ihm_expressions.t.cpp:63 Failure"));
+    EXPECT_TRUE(failing[0] ==
+                std::vector<std::string>({failing[0][0], "Expected a != b",
+                                          "  a: 1.0", "  b: 1.0"}));
+    EXPECT_TRUE(failing[1][0].ends_with("ihm_expressions.t.cpp:65 Failure"));
+    EXPECT_TRUE(failing[1] == std::vector<std::string>(
+                                  {failing[1][0], "Expected twice(a) != a + b",
+                                   "  twice(a): 2.0", "  a + b: 2.0"}));
+    EXPECT_TRUE(failing[2][0].ends_with("ihm_expressions.t.cpp:68 Failure"));
+    EXPECT_TRUE(failing[2] ==
+                std::vector<std::string>(
+                    {failing[2][0], "Expected -i != 0", "  -i: 0"}));
+  }
+
+  // The same for expect_equal, mixed with expect_not_equal in one body.
+  const auto passing_equal =
+      output_of([] { ihm::run_with_text<^^passing_equal_checks>(); });
+  EXPECT_EQUAL(passing_equal.size(), 0u);
+  EXPECT_EQUAL(ihm::result(), 3);
+
+  const auto failing_equal = failures_in(
+      output_of([] { ihm::run_with_text<^^failing_equal_checks>(); }));
+  EXPECT_EQUAL(ihm::result(), 6);
+  EXPECT_EQUAL(failing_equal.size(), 3u);
+  if (failing_equal.size() == 3) {
+    EXPECT_TRUE(
+        failing_equal[0][0].ends_with("ihm_expressions.t.cpp:86 Failure"));
+    EXPECT_EQUAL(failing_equal[0][1], "Expected a == b");
+    EXPECT_TRUE(
+        failing_equal[1][0].ends_with("ihm_expressions.t.cpp:87 Failure"));
+    EXPECT_EQUAL(failing_equal[1][1], "Expected b != twice(a)");
+    EXPECT_TRUE(
+        failing_equal[2][0].ends_with("ihm_expressions.t.cpp:89 Failure"));
+    EXPECT_EQUAL(failing_equal[2][1], "Expected twice(a) == a + b");
+  }
+
+  // Outside run_with_text() a check prints `lhs` and `rhs`, as without this
+  // layer.
+  const auto outside = output_of([] { ihm::expect_not_equal(1, 1); });
+  EXPECT_EQUAL(ihm::result(), 7);
+  EXPECT_EQUAL(outside.size(), 4u);
+  if (outside.size() == 4)
+    EXPECT_EQUAL(outside[1], "Expected lhs != rhs");
+
+  // expect_near_abs names its operands too.
+  const auto near =
+      failures_in(output_of([] { ihm::run_with_text<^^near_checks>(); }));
+  EXPECT_EQUAL(ihm::result(), 9);
+  EXPECT_EQUAL(near.size(), 2u);
+  if (near.size() == 2) {
+    EXPECT_TRUE(near[0][0].ends_with("ihm_expressions.t.cpp:97 Failure"));
+    EXPECT_TRUE(near[0] ==
+                std::vector<std::string>(
+                    {near[0][0], "Expected |twice(a) - a| < 0.5",
+                     "  |twice(a) - a|: 1.0", "  twice(a): 2.0", "  a: 1.0"}));
+    EXPECT_TRUE(near[1][0].ends_with("ihm_expressions.t.cpp:98 Failure"));
+    EXPECT_TRUE(near[1] == std::vector<std::string>(
+                               {near[1][0], "Expected |b - 2.5| < 0.1",
+                                "  |b - 2.5|: 0.5", "  b: 2.0"}));
+  }
+
+  // A compound operand is parenthesised where the message needs it.
+  const auto parenthesised = failures_in(
+      output_of([] { ihm::run_with_text<^^parenthesised_checks>(); }));
+  EXPECT_EQUAL(ihm::result(), 11);
+  EXPECT_EQUAL(parenthesised.size(), 2u);
+  if (parenthesised.size() == 2) {
+    EXPECT_TRUE(parenthesised[0] ==
+                std::vector<std::string>(
+                    {parenthesised[0][0], "Expected |b - (a - b)| < 0.1",
+                     "  |b - (a - b)|: 3.0", "  b: 2.0", "  a - b: -1.0"}));
+    EXPECT_EQUAL(parenthesised[1][1], "Expected a < b == (a < b && b < a)");
+  }
+
+  const auto rewritten = failures_in(
+      output_of([] { ihm::run_with_text<^^rewritten_ordering_checks>(); }));
+  EXPECT_EQUAL(ihm::result(), 17);
+  EXPECT_EQUAL(rewritten.size(), 6u);
+  if (rewritten.size() == 6) {
+    EXPECT_TRUE(rewritten[0] == std::vector<std::string>(
+                                    {rewritten[0][0], "Expected p < q == false",
+                                     "  p < q: true"}));
+    EXPECT_TRUE(
+        rewritten[1] ==
+        std::vector<std::string>(
+            {rewritten[1][0], "Expected p <= q == false", "  p <= q: true"}));
+    EXPECT_TRUE(rewritten[2] == std::vector<std::string>(
+                                    {rewritten[2][0], "Expected p > q == true",
+                                     "  p > q: false"}));
+    EXPECT_TRUE(rewritten[3] == std::vector<std::string>(
+                                    {rewritten[3][0], "Expected p >= q == true",
+                                     "  p >= q: false"}));
+    EXPECT_TRUE(rewritten[4] == std::vector<std::string>(
+                                    {rewritten[4][0], "Expected s < t == false",
+                                     "  s < t: true"}));
+    EXPECT_TRUE(rewritten[5] == std::vector<std::string>(
+                                    {rewritten[5][0], "Expected s >= t == true",
+                                     "  s >= t: false"}));
+  }
+
+  const auto null_pointer = failures_in(
+      output_of([] { ihm::run_with_text<^^null_pointer_checks>(); }));
+  EXPECT_EQUAL(ihm::result(), 19);
+  EXPECT_EQUAL(null_pointer.size(), 2u);
+  if (null_pointer.size() == 2) {
+    EXPECT_TRUE(null_pointer[0] ==
+                std::vector<std::string>({null_pointer[0][0],
+                                          "Expected p == nullptr == true",
+                                          "  p == nullptr: false"}));
+    EXPECT_TRUE(
+        null_pointer[1] ==
+        std::vector<std::string>({null_pointer[1][0], "Expected p == 0 == true",
+                                  "  p == 0: false"}));
+  }
+
+  const auto literals =
+      failures_in(output_of([] { ihm::run_with_text<^^literal_checks>(); }));
+  EXPECT_EQUAL(ihm::result(), 24);
+  EXPECT_EQUAL(literals.size(), 5u);
+  if (literals.size() == 5) {
+    EXPECT_TRUE(literals[0] ==
+                std::vector<std::string>(
+                    {literals[0][0], "Expected n == 3", "  n: 2"}));
+    EXPECT_TRUE(literals[1] ==
+                std::vector<std::string>(
+                    {literals[1][0], "Expected l == 5", "  l: 4"}));
+    EXPECT_TRUE(literals[2] ==
+                std::vector<std::string>(
+                    {literals[2][0], "Expected f == 2.5", "  f: 1.5"}));
+    EXPECT_TRUE(literals[3] ==
+                std::vector<std::string>(
+                    {literals[3][0], "Expected d == 1e+16", "  d: 1.0"}));
+    EXPECT_TRUE(literals[4] ==
+                std::vector<std::string>(
+                    {literals[4][0], "Expected d == 1e+300", "  d: 1.0"}));
+  }
+
+  // A test function that throws leaves no operand names behind.
+  try {
+    ihm::run_with_text<^^throwing_checks>();
+  } catch (int) {
+  }
+  EXPECT_TRUE(detail::operand_names_at == nullptr);
+  EXPECT_EQUAL(detail::active_sites.size(), 0u);
+
+  const auto same_line =
+      failures_in(output_of([] { ihm::run_with_text<^^same_line_checks>(); }));
+  EXPECT_EQUAL(ihm::result(), 26);
+  EXPECT_EQUAL(same_line.size(), 2u);
+  if (same_line.size() == 2) {
+    EXPECT_TRUE(same_line[0] ==
+                std::vector<std::string>(
+                    {same_line[0][0], "Expected a == 1.5", "  a: 1.0"}));
+    EXPECT_TRUE(same_line[1] ==
+                std::vector<std::string>(
+                    {same_line[1][0], "Expected b == 3.0", "  b: 2.0"}));
+  }
+
+  for (const auto &failure : failing)
+    for (const std::string &line : failure)
+      std::cout << "  | " << line << std::endl;
+
+  detail::error_count = 0;
+
+  // The macros and the functions print the same first two lines in
+  // side_by_side_same(), and different ones in side_by_side_different(),
+  // where the text can't be recovered from the reflection.
+  EXPECT_EQUAL(compare_side_by_side(), 0);
+  TEST_END;
+}
+
+// Macros and functions side by side: each EXPECT_* is followed, on the next
+// line, by the same check through ihm. All checks fail.
+
+void side_by_side_same() {
+  double a = 1.0;
+  double b = 2.0;
+  double c = 3.0;
+  int i = 1;
+  std::string s = "abc";
+  std::vector<double> v = {1.0, 2.0};
+  double arr[2] = {1.0, 2.0};
+  EXPECT_EQUAL(a, b);
+  ihm::expect_equal(a, b);
+  EXPECT_EQUAL(a + b, c * b);
+  ihm::expect_equal(a + b, c * b);
+  EXPECT_EQUAL((a + b) * c, a - (b - c));
+  ihm::expect_equal((a + b) * c, a - (b - c));
+  EXPECT_EQUAL(twice(a), -b);
+  ihm::expect_equal(twice(a), -b);
+  EXPECT_EQUAL(a, 2.5);
+  ihm::expect_equal(a, 2.5);
+  EXPECT_EQUAL(b, 1e-13);
+  ihm::expect_equal(b, 1e-13);
+  EXPECT_NOT_EQUAL(c, 3.0);
+  ihm::expect_not_equal(c, 3.0);
+  EXPECT_EQUAL(a < b, false);
+  ihm::expect_equal(a < b, false);
+  EXPECT_EQUAL(i, 2);
+  ihm::expect_equal(i, 2);
+  EXPECT_EQUAL(i * (i + 1), 1);
+  ihm::expect_equal(i * (i + 1), 1);
+  EXPECT_EQUAL(i, 'b');
+  ihm::expect_equal(i, 'b');
+  EXPECT_EQUAL(i, '\n');
+  ihm::expect_equal(i, '\n');
+  EXPECT_EQUAL(s, "abd");
+  ihm::expect_equal(s, "abd");
+  EXPECT_EQUAL(s == "abc", false);
+  ihm::expect_equal(s == "abc", false);
+  EXPECT_EQUAL("abd" != s, false);
+  ihm::expect_equal("abd" != s, false);
+  EXPECT_EQUAL(v[0], 2.0);
+  ihm::expect_equal(v[0], 2.0);
+  EXPECT_EQUAL(scaled(v[1]), 1.0);
+  ihm::expect_equal(scaled(v[1]), 1.0);
+  EXPECT_EQUAL(arr[i], 1.0);
+  ihm::expect_equal(arr[i], 1.0);
+}
+
+// Where the text differs: see the header comment of
+// ihm_expressions.hpp.
+void side_by_side_different() {
+  double a = 1.0;
+  double b = 2.0;
+  double c = 3.0;
+  int i = 1;
+  unsigned n = 2u;
+  long double z = 0.2L;
+  std::string s = "abc";
+  std::vector<double> v = {1.0, 2.0};
+  EXPECT_EQUAL(n, 3u);
+  ihm::expect_equal(n, 3u);
+  EXPECT_EQUAL(z, 0.1L);
+  ihm::expect_equal(z, 0.1L);
+  EXPECT_EQUAL(a < b ? a : b, c);
+  ihm::expect_equal(a < b ? a : b, c);
+  EXPECT_EQUAL(std::abs(i - 3), 1);
+  ihm::expect_equal(std::abs(i - 3), 1);
+  EXPECT_EQUAL(v.size(), 3u);
+  ihm::expect_equal(v.size(), 3u);
+  EXPECT_EQUAL(static_cast<double>(i), 2.0);
+  ihm::expect_equal(static_cast<double>(i), 2.0);
+  EXPECT_EQUAL(0x10, i);
+  ihm::expect_equal(0x10, i);
+  EXPECT_EQUAL(1.e3, v[0]);
+  ihm::expect_equal(1.e3, v[0]);
+  EXPECT_NOT_EQUAL(s, std::string("abc"));
+  ihm::expect_not_equal(s, std::string("abc"));
+}
+
+// The file name and line of a "<file>:<line> Failure" line.
+std::string location_of(const std::string &failure) {
+  const std::size_t end = failure.rfind(' ');
+  const std::size_t start = failure.rfind('/', end);
+  return failure.substr(start == std::string::npos ? 0 : start + 1,
+                        end - (start == std::string::npos ? 0 : start + 1));
+}
+
+// "<file>:<line + 1>" for "<file>:<line>".
+std::string next_line(const std::string &location) {
+  const std::size_t colon = location.rfind(':');
+  return location.substr(0, colon + 1) +
+         std::to_string(std::stoi(location.substr(colon + 1)) + 1);
+}
+
+// Runs `Fn` and prints the failures of each macro check and of the function
+// check after it side by side, then the values the function prints. Returns
+// the number of pairs that aren't as `same_text` says: whose first two lines
+// differ (other than the function's line being the next one) if it's true,
+// or are the same if it's false.
+template <std::meta::info Fn>
+int side_by_side(const char *title, bool same_text) {
+  const int macro_errors = detail_test::_result;
+  detail_test::_result = 0;
+  const auto failures =
+      failures_in(output_of([] { ihm::run_with_text<Fn>(); }));
+  detail_test::_result = macro_errors;
+  ihm::detail::error_count = 0;
+
+  const auto column = [](std::string text) {
+    text.resize(std::max<std::size_t>(text.size(), 44), ' ');
+    return text;
+  };
+  std::cout << title << ":\n  " << column("EXPECT_*") << " | "
+            << "ihm::expect_*" << std::endl;
+  int unexpected = 0;
+  for (std::size_t i = 0; i + 1 < failures.size(); i += 2) {
+    const auto &macro = failures[i];
+    const auto &function = failures[i + 1];
+    if (macro.size() != 2 || function.size() < 2) {
+      ++unexpected;
+      continue;
+    }
+    const std::string macro_at = location_of(macro[0]);
+    const std::string function_at = location_of(function[0]);
+    const bool same =
+        function_at == next_line(macro_at) && macro[1] == function[1];
+    unexpected += same == same_text ? 0 : 1;
+    std::cout << "  " << column(macro_at) << " | " << function_at << "\n  "
+              << column(macro[1]) << " | " << function[1]
+              << (same ? "" : "   <- differs") << std::endl;
+    for (std::size_t j = 2; j < function.size(); ++j)
+      std::cout << "  " << column("") << " | " << function[j] << std::endl;
+  }
+  if (failures.size() % 2 != 0)
+    ++unexpected;
+  return unexpected;
+}
+
+int compare_side_by_side() {
+  return side_by_side<^^side_by_side_same>("same text", true) +
+         side_by_side<^^side_by_side_different>("different text", false);
+}

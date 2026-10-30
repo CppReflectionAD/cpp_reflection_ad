@@ -52,10 +52,13 @@ inline auto expect_near_rel(D1 val1, D2 val2, Tol tol)
 
 static inline int _result = 0;
 
+// The number of failed checks at which a test stops (it throws). A test that
+// needs more sets it before its checks run, e.g. at the start of main().
+inline int max_errors = 10;
+
 inline void increase_error_count() {
-  constexpr int limit = 10;
   _result++;
-  if (_result == limit) {
+  if (_result >= max_errors) {
     std::cout << "maximum number of errors exceeded" << std::endl;
     throw std::runtime_error("maximum number of errors exceeded");
   }
