@@ -15,6 +15,7 @@ namespace m = ad::meta;
 
 namespace N {
 inline double g(double x) { return x; }
+inline constexpr double v = 2.0;
 enum class E { a, b };
 } // namespace N
 struct P {
@@ -40,6 +41,10 @@ double f_assert(double x) {
 double f_using(double x) {
   using N::g;
   return g(x);
+}
+double f_using_list(double x) {
+  using N::g, N::v;
+  return v * g(x);
 }
 double f_directive(double x) {
   using namespace N;
@@ -89,6 +94,9 @@ static_assert(declaration_then_return(^^f_assert),
               "a static_assert is not one non-simple declaration");
 static_assert(declaration_then_return(^^f_using),
               "a using-declaration is not one non-simple declaration");
+static_assert(declaration_then_return(^^f_using_list),
+              "a using-declaration with two declarators is not one "
+              "non-simple declaration");
 static_assert(declaration_then_return(^^f_directive),
               "a using-directive is not one non-simple declaration");
 static_assert(declaration_then_return(^^f_class),
