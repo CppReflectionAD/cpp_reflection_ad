@@ -30,7 +30,8 @@
 // feed only the function value -- e.g. d/dy of `x*y + exp(x)` emits just `x`,
 // with no exp call.
 //
-// Scope: straight-line bodies (parameters, `T v = expr;` locals, one
+// Scope: straight-line bodies (parameters, `T v = expr;` locals, `v = expr;`
+// and `v op= expr;` assignments to them for op in + - * /, one
 // `return expr;`), scalar T, ops + - * / unary-minus and unary calls
 // sin/cos/exp/log/sqrt/erfc. The core is rule-driven so more ops / tensors are
 // additive. Calls to user-defined helpers are inlined (the callee's body is
@@ -307,6 +308,9 @@ struct Ctx {
   // The guard in force while lowering. UNGUARDED at the top level; a ternary
   // narrows it for the duration of each branch.
   std::size_t curGuard = UNGUARDED;
+  // Where the bindings of the body being lowered start in envDecl: 0 for the
+  // reflected function, its first parameter while a callee is inlined.
+  std::size_t scopeBase = 0;
 };
 
 // Append a node carrying the guard currently in force.
@@ -331,16 +335,18 @@ consteval std::size_t lower(Ctx &c, info e);
 consteval std::size_t lower_body(Ctx &c, info body);
 consteval std::size_t inline_call(Ctx &c, info call);
 
-// Resolve a referenced variable to its SSA slot by identifier name. We match by
-// name (unique within a straight-line body) rather than reflection identity
-// because parameters_of yields ReflectionKind::Parameter while a decl_ref's
-// declaration_of yields ReflectionKind::Declaration — different kinds that
-// never compare equal. Last-wins so a local shadowing an outer name resolves to
-// the most recent binding. An unresolved name (e.g. a global) has no slot;
-// erroring beats returning a sentinel that would index the node array out of
-// bounds.
+// Resolve a parameter or local of the body being lowered to its SSA slot by
+// identifier name. We match by name (unique within a straight-line body) rather
+// than reflection identity because parameters_of yields
+// ReflectionKind::Parameter while a decl_ref's declaration_of yields
+// ReflectionKind::Declaration — different kinds that never compare equal.
+// Last-wins so a local shadowing an outer name, or a name assigned to since,
+// resolves to the most recent binding. Only the body's own bindings count, so
+// an inlined helper can't reach a caller's local of the same name. An
+// unresolved name (e.g. a global) has no slot; erroring beats returning a
+// sentinel that would index the node array out of bounds.
 consteval std::size_t findSlot(const Ctx &c, std::string_view name) {
-  for (std::size_t i = c.envDecl.size(); i-- > 0;)
+  for (std::size_t i = c.envDecl.size(); i-- > c.scopeBase;)
     if (m::identifier_of(c.envDecl[i]) == name)
       return c.envSlot[i];
   throw "reflection AD: name is not a parameter or local of the reflected body";
@@ -374,6 +380,32 @@ consteval OpKind binOp(m::operators op) {
   if (op == m::operators::op_pipe_pipe)
     return OpKind::Or;
   throw "reflection AD: unsupported binary operator";
+}
+
+consteval bool is_assignment_op(m::operators op) {
+  return op == m::operators::op_equals || op == m::operators::op_plus_equals ||
+         op == m::operators::op_minus_equals ||
+         op == m::operators::op_star_equals ||
+         op == m::operators::op_slash_equals ||
+         op == m::operators::op_percent_equals ||
+         op == m::operators::op_caret_equals ||
+         op == m::operators::op_ampersand_equals ||
+         op == m::operators::op_pipe_equals ||
+         op == m::operators::op_less_less_equals ||
+         op == m::operators::op_greater_greater_equals;
+}
+
+// `a op= e` stores `a op e`.
+consteval OpKind compoundOp(m::operators op) {
+  if (op == m::operators::op_plus_equals)
+    return OpKind::Add;
+  if (op == m::operators::op_minus_equals)
+    return OpKind::Sub;
+  if (op == m::operators::op_star_equals)
+    return OpKind::Mul;
+  if (op == m::operators::op_slash_equals)
+    return OpKind::Div;
+  throw "reflection AD: unsupported compound assignment operator";
 }
 
 // Peel "transparent" wrapper nodes so we reach the real subexpression:
@@ -507,6 +539,9 @@ consteval std::size_t lower(Ctx &c, info e) {
         return emit(c, OpKind::Not, a);
       throw "reflection AD: unsupported unary operator";
     }
+    if (is_assignment_op(m::expression_operator_of(e)))
+      throw "reflection AD: an assignment inside an expression is not "
+            "supported; make it a statement of its own";
     OpKind op = binOp(m::expression_operator_of(e));
     std::size_t a = lower(c, ops[0]);
     // Short-circuit: lower the right operand under the guard saying the left
@@ -563,12 +598,50 @@ consteval std::size_t lower(Ctx &c, info e) {
   return emit(c, OpKind::Const, 0, 0, m::constant_of(e));
 }
 
+// A built-in assignment, `v = e` or `v op= e`. Assigning a class object calls
+// its operator=, which clang reflects as a call.
+consteval bool is_builtin_assignment(info e) {
+  return m::is_operator_expression(e) && !m::is_function_call(e) &&
+         is_assignment_op(m::expression_operator_of(e));
+}
+
+// Lower `v = e;` or `v op= e;` by binding `v` to the slot of the value it
+// stores, so later uses of `v` see that value: the DAG stays SSA, with no new
+// node kinds. GCC reflects `v op= e` as `v = v op e`, which lowers to the same
+// nodes. `v` must be a parameter or local of this body, by value: a store
+// through a reference would have to reach the caller's variable, and an
+// inlined callee's bindings are dropped when it returns.
+consteval void lower_assignment(Ctx &c, info e) {
+  const auto ops = m::operands_of(e);
+  const info target = stripCasts(ops[0]);
+  if (!m::is_id_expression(target))
+    throw "reflection AD: unsupported assignment target; assign to a "
+          "parameter or local by name";
+  const info var = m::declaration_of(target);
+  // The declaration's type: an expression naming a reference has the
+  // referred-to type.
+  if (m::is_reference_type(m::type_of(var)))
+    throw "reflection AD: cannot assign through a reference; assign to a "
+          "local or a by-value parameter";
+  // GCC reflects a trivial copy assignment as built-in, and clang as a call.
+  if (m::is_class_type(m::remove_cv(m::type_of(var))))
+    throw "reflection AD: cannot assign to a class-type variable";
+  const std::size_t old = findSlot(c, m::identifier_of(var));
+  std::size_t value = lower(c, ops[1]);
+  const m::operators op = m::expression_operator_of(e);
+  if (op != m::operators::op_equals)
+    value = emit(c, compoundOp(op), old, value);
+  c.envDecl.push_back(var);
+  c.envSlot.push_back(value);
+}
+
 // Lower the statements of a straight-line body into `c`, resolving names
 // against the current environment; returns the slot of the (single) return
 // value. Shared by build_nodes (top-level function) and inline_call (inlined
-// callee). Anything outside that shape (control flow, assignment, a second
-// return, no return at all) is rejected: skipping it would silently build a DAG
-// that does not match the source, i.e. a wrong derivative with no diagnostic.
+// callee). Anything outside that shape (control flow, an expression statement
+// other than an assignment, a second return, no return at all) is rejected:
+// skipping it would silently build a DAG that does not match the source, i.e. a
+// wrong derivative with no diagnostic.
 consteval std::size_t lower_body(Ctx &c, info body) {
   std::size_t root = 0;
   bool sawReturn = false;
@@ -576,8 +649,8 @@ consteval std::size_t lower_body(Ctx &c, info body) {
     if (m::is_declaration_statement(s)) {
       // declarators_of/initializers_of handle `T a = x, b = a * a;` --
       // several declarators sharing one declaration statement -- not just one.
-      // A declarator without an initializer has a null one, and nothing
-      // could give it a value later (assignment is unsupported).
+      // A declarator without an initializer has a null one. It's rejected even
+      // if an assignment gives it a value later.
       auto decls = m::declarators_of(s);
       auto inits = m::initializers_of(s);
       for (std::size_t i = 0; i < decls.size(); ++i) {
@@ -593,9 +666,13 @@ consteval std::size_t lower_body(Ctx &c, info body) {
               "only)";
       root = lower(c, m::return_operand_of(s));
       sawReturn = true;
+    } else if (m::is_expression_statement(s) &&
+               is_builtin_assignment(stripCasts(m::expression_of(s)))) {
+      lower_assignment(c, stripCasts(m::expression_of(s)));
     } else {
       throw "reflection AD: unsupported statement; straight-line bodies only "
-            "(`T v = expr;` declarations and one `return expr;`)";
+            "(`T v = expr;` declarations, `v = expr;` and `v op= expr;` "
+            "assignments, and one `return expr;`)";
     }
   }
   if (!sawReturn)
@@ -644,10 +721,13 @@ consteval std::size_t inline_call(Ctx &c, info call) {
   }
 
   // (c) lower the callee body into the same DAG (nested calls inline via
-  // lower).
+  // lower). Its assignments can rebind only its own parameters and locals.
+  const std::size_t outerBase = c.scopeBase;
+  c.scopeBase = mark;
   c.callStack.push_back(callee);
   std::size_t ret = lower_body(c, body);
   c.callStack.pop_back();
+  c.scopeBase = outerBase;
 
   // (d) close the scope: drop callee params + locals, restoring the caller env.
   c.envDecl.resize(mark);
