@@ -469,6 +469,14 @@ as an issue in this repository with the `CompilerGap` label:
   here.
 - If code here runs into it, record it as a `known_gap/` test (see
   [tests/README.md](tests/README.md)) that names the issue.
+- If code here works around it instead, as a wrapper in `include/ad/meta.h`
+  does, still report it, and name the issue in a comment at the workaround.
+  This repository's tests pass through the workaround, so they can't tell
+  when a fork change breaks the case it covers. The fork's tests can, once
+  the reproducer is one of them.
+  [#226](https://github.com/CppReflectionAD/cpp_reflection_ad/issues/226) is
+  a case nobody had reported: the wrappers hid it until they were deleted,
+  after the fork change that broke it had merged.
 
 A fix is a pull request into the fork's `p4395` branch. Then bump the pin
 here, moving the `known_gap/` test in the same pull request (see
