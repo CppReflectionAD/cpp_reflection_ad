@@ -346,6 +346,8 @@ int main(int argc, char **argv) {
   std::size_t sim_per_path = 1;
   double tolerance = 1e-2;
   std::string csv_output_path = "black_scholes_simulated_convergence.csv";
+  // The convergence CSVs stop at this many paths. The default runs them all.
+  std::size_t convergence_max_paths = std::numeric_limits<std::size_t>::max();
 
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
@@ -354,7 +356,8 @@ int main(int argc, char **argv) {
         std::cerr << "Missing value after " << flag << std::endl;
         std::cerr << "Usage: " << argv[0]
                   << " [--width W|-w W] [--paths N] [--sim-per-path N]"
-                  << " [--tolerance X] [--csv FILE]" << std::endl;
+                  << " [--tolerance X] [--csv FILE]"
+                  << " [--convergence-max-paths N]" << std::endl;
         std::exit(1);
       }
       return argv[++i];
@@ -370,16 +373,20 @@ int main(int argc, char **argv) {
       tolerance = std::stod(require_value(arg.c_str()));
     } else if (arg == "--csv") {
       csv_output_path = require_value(arg.c_str());
+    } else if (arg == "--convergence-max-paths") {
+      convergence_max_paths = std::stoul(require_value(arg.c_str()));
     } else if (arg == "--help" || arg == "-h") {
       std::cout << "Usage: " << argv[0]
                 << " [--width W|-w W] [--paths N] [--sim-per-path N]"
-                << " [--tolerance X] [--csv FILE]" << std::endl;
+                << " [--tolerance X] [--csv FILE]"
+                << " [--convergence-max-paths N]" << std::endl;
       return 0;
     } else {
       std::cerr << "Unknown argument: " << arg << std::endl;
       std::cerr << "Usage: " << argv[0]
                 << " [--width W|-w W] [--paths N] [--sim-per-path N]"
-                << " [--tolerance X] [--csv FILE]" << std::endl;
+                << " [--tolerance X] [--csv FILE]"
+                << " [--convergence-max-paths N]" << std::endl;
       return 1;
     }
   }
@@ -740,6 +747,9 @@ int main(int argc, char **argv) {
         write_convergence_csv_header(csv_output);
 
         for (std::size_t paths : path_counts) {
+          if (paths > convergence_max_paths) {
+            break;
+          }
           const auto [mc_price, mc_delta_raw, mc_correction] =
               monte_carlo_engine<PayoffFn>(spot0, rate, vol, maturity_years,
                                            paths, sim_per_path, seed);
