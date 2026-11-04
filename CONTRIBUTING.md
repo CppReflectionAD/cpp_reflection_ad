@@ -414,6 +414,12 @@ Those legs are required, so merges wait too. If a rollout would hold them up for
 too long, a pull request can take `test-macos` out of the summary job's `needs`
 until it's over: the summary job comes from the pull request's own workflow file.
 
+A macOS leg can also end as cancelled with "The job was not acquired by Runner
+of type hosted even after multiple attempts". That is GitHub running out of
+macOS arm64 runners, not a problem with the change. On a pull request, re-run
+the failed jobs. In the merge queue it removes the pull request from the queue,
+so click "Merge when ready" again.
+
 Both workflows also build and cache their compiler on Linux arm64
 (`ubuntu-24.04-arm`) in a `toolchain-arm64` job, with the same recipe and key
 as on x86-64. The key records the runner's architecture, so the two don't
