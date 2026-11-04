@@ -441,7 +441,7 @@ Then click "Merge when ready". GitHub runs the required checks again on the
 pull request combined with `main` and the pull requests queued ahead of it,
 and merges it if they pass. If they fail, it leaves the queue and stays open.
 The branch doesn't need updating from `main`, so an approval isn't lost to an
-update push. A queue run that has
+update push, unless it is stacked (see below). A queue run that has
 to rebuild a toolchain can take a couple of hours; the queue waits up to 4
 hours for the checks.
 
@@ -453,6 +453,15 @@ Rulesets), which
 tracks. It applies only to pull requests into `main`, so one stacked on
 another pull request's branch shows as mergeable without a review until it is
 retargeted to `main`.
+
+Avoid stacking a pull request on another one's branch. The queue squashes the
+base into one new commit on `main`, so the commits on the base's branch never
+reach `main`. The stacked branch still has them, so git can't tell that `main`
+already has their changes, and any line both branches changed conflicts. If
+you do stack one, then once the base lands, GitHub retargets it to `main`.
+Merge `main` into it, resolve the conflicts, and expect a re-review: the push
+dismisses its approvals. Pin bumps don't stack (see
+[Bumping a compiler pin](#bumping-a-compiler-pin)).
 
 ## Reporting a compiler gap
 
@@ -469,32 +478,67 @@ as an issue in this repository with the `CompilerGap` label:
   here.
 - If code here runs into it, record it as a `known_gap/` test (see
   [tests/README.md](tests/README.md)) that names the issue.
+- If code here works around it instead, as a wrapper in `include/ad/meta.h`
+  does, still report it, and name the issue in a comment at the workaround.
+  This repository's tests pass through the workaround, so they can't tell
+  when a fork change breaks the case it covers. The fork's tests can, once
+  the reproducer is one of them.
+  [#226](https://github.com/CppReflectionAD/cpp_reflection_ad/issues/226) is
+  a case nobody had reported: the wrappers hid it until they were deleted,
+  after the fork change that broke it had merged.
 
-A fix is a pull request into the fork's `p4395` branch. Then bump the pin
-here, moving the `known_gap/` test in the same pull request (see
-[Bumping a compiler pin](#bumping-a-compiler-pin)), and close the issue.
+A fix is a pull request into the fork's `p4395` branch, tested here through
+the integration pull request. Once it has merged, a pin bump here picks it up,
+possibly with other fixes, moves the `known_gap/` test and closes the issue
+(see [Bumping a compiler pin](#bumping-a-compiler-pin)).
 
 ## Bumping a compiler pin
 
 The compilers are the submodules `clang-p2996` (the `p4395` branch of
 `CppReflectionAD/clang-p4395`), `gcc` (the `p4395` branch of
-`CppReflectionAD/gcc`) and, on macOS only, `gcc-darwin-reflect`. A bump is
-its own pull request, along with the test changes the new pin forces, such as
-moving a `known_gap/` test it fixes (see [tests/README.md](tests/README.md)).
+`CppReflectionAD/gcc`) and, on macOS only, `gcc-darwin-reflect`. A compiler
+change goes through three kinds of pull request:
+
+- **Fork pull requests**, one fix each, into the fork's `p4395` branch, with
+  the fix's reproducer as a fork test. A fix that needs another unmerged one
+  is stacked on that one's branch. Each `gcc` pull request has a twin in
+  `gcc-darwin-arm64` with the same commits (see below), opened with it and
+  merged straight after it.
+- **An integration pull request** here, kept as a draft, one per fork (the GCC
+  one moves `gcc` and `gcc-darwin-reflect` together). It pins the top of the
+  fork's open stack, with the test changes those fixes force here, and is
+  re-pinned whenever the stack changes. Its CI is the test gate for the fork
+  pull requests: approve one only once the integration pull request passes
+  with that pull request's head in its stack. A green run proves the stack as
+  a whole, not each pull request in it alone. A lower fix can merge before
+  the ones above it, so the pin bump's own CI is what tests the fixes that
+  actually merged. The integration pull request is never merged, so
+  `Submodule pins` fails on it by design, and each re-pin rebuilds the
+  toolchain (see [CI checks](#ci-checks)).
+- **A pin bump** here, its own pull request, along with the test changes the
+  new pin forces, such as moving a `known_gap/` test it fixes (see
+  [tests/README.md](tests/README.md)). It pins only commits already on the
+  fork's `p4395` branch, normally its tip, so `Submodule pins` passes from its
+  first run. It is opened from `main`, not stacked on another pull request
+  (see [Merging a pull request](#merging-a-pull-request)), and can cover
+  several fork pull requests at once. There's no fixed cadence: bump when a
+  fix is needed here, or when enough has merged to be worth it.
+
 For `clang-p2996` or `gcc`:
 
 ```bash
 git -C clang-p2996 fetch origin p4395
-git -C clang-p2996 checkout --detach <commit>
+git -C clang-p2996 checkout --detach <commit>  # on p4395, normally origin/p4395
 git add clang-p2996
 
 # rebuild the compiler from the new pin and run every test with it
 python3 run_tests.py --compiler clang --build-compilers --build-type all
 ```
 
-In the pull request, say what the bump brings in and compare the test results
-of the old and new pins. Change `.gitmodules` only if the URL or branch
-changes, and then run `git submodule sync` too.
+In the pull request, list each fork pull request the bump brings in, with the
+issue it fixes (`Closes #N`) and the tests it moves here, and compare the test
+results of the old and new pins. Change `.gitmodules` only if the URL or
+branch changes, and then run `git submodule sync` too.
 
 Each fork pins from its `p4395` branch, which only moves forward, through pull
 requests merged with a merge commit. A rule on the branch enforces this in all
@@ -510,35 +554,40 @@ CI rebuilds the toolchain on the pull request, and on `main` again after
 merging (see [CI checks](#ci-checks)). Open pull requests rebuild it as well
 once they test against the new `main`.
 
-`gcc-darwin-reflect` follows `gcc`, so when the `gcc` pin moves,
-bring its new commits over to `p4395` in the same pull request. `git cherry`
-matches commits by content, so this works from any clone, skips `gcc`'s
-merge commits, and picks only what `p4395` lacks:
+`gcc-darwin-reflect` follows `gcc`: the two pins move together, in the same
+pull request. Each `gcc` fork pull request's twin brings its commits over to
+`gcc-darwin-arm64`. `git cherry` matches commits by content, so this works
+from any clone, skips `gcc`'s merge commits, and picks only what the base
+lacks. The base is `p4395`, or the twin's branch below it if the `gcc` pull
+request is stacked:
 
 ```bash
-new=$(git rev-parse :gcc)
+git -C gcc fetch origin <gcc-pr-branch>
+new=$(git -C gcc rev-parse FETCH_HEAD)
 cd gcc-darwin-reflect
-git fetch origin p4395
+git fetch origin <base>
 git fetch --no-tags ../gcc "$new"
-git checkout --detach origin/p4395
+git checkout --detach origin/<base>
 git cherry HEAD "$new" "$(git merge-base HEAD "$new")" | sed -n 's/^+ //p' |
   git cherry-pick -x --stdin
 git push origin HEAD:refs/heads/<pr-branch>
 cd ..
-git add gcc-darwin-reflect
 ```
 
-Then open a pull request from `<pr-branch>` into `p4395` in
-CppReflectionAD/gcc-darwin-arm64, and merge it with a merge commit before this
-repository's pull request merges. The pin can stay at `<pr-branch>`'s tip,
-since the merge commit keeps it on `p4395`.
+Then open a pull request from `<pr-branch>` into `<base>` in
+CppReflectionAD/gcc-darwin-arm64, and pin its head in the integration pull
+request with the `gcc` one's. Merge it with a merge commit straight after its
+`gcc` pull request. A pin bump then pins the `gcc` and `gcc-darwin-reflect`
+commits whose reflection commits match, normally both `p4395` tips once every
+twin has merged.
 
 Run the `git cherry` line again afterwards: it should print only `-` lines,
-meaning every reflection commit in `gcc` is in `p4395`. If it already
+meaning every reflection commit in `$new` is in the twin. If it already
 does before you start, `git cherry-pick` stops with "empty commit set passed":
 there is nothing to bring over. `.github/scripts/check-gcc-pins.sh` runs the
 same check on the staged pins, in a scratch clone, and the `GCC pins` CI check
-runs it on every pull request.
+runs it on every pull request. `GCC pins` isn't a required check yet, so check
+that it passes before approving a pin bump.
 
 The iains snapshot under `p4395` must have the same upstream GCC base as
 `gcc`. If `gcc` merged a newer upstream GCC, the `git cherry`

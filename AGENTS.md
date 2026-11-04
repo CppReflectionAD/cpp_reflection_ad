@@ -20,13 +20,13 @@ lists only the points that are easy to get wrong.
 - **Leave the toolchain recipe alone unless that's the task.** Any edit to
   `tools/toolchain/` or `.github/scripts/build-*-toolchain.sh` rebuilds the CI
   toolchains, which takes hours (see "CI checks" in CONTRIBUTING.md).
-- **Don't commit submodule changes** except in a pin bump. On macOS,
+- **Don't commit submodule changes** except in a pin bump or an integration
+  pull request (see "Bumping a compiler pin" in CONTRIBUTING.md). On macOS,
   `clang-p2996` shows as modified after a compiler build; that is expected.
-- **Reflect function bodies through `ad::meta`, not `std::meta`.** The GCC
-  fork's `<meta>` still has the older expression-reflection API, and
-  `include/ad/meta.h` supplies the clang fork's on top of it. Code outside
-  `clang_only/` that calls `std::meta::operands_of`, `is_id_expression` and
-  the like directly breaks every GCC build.
+- **Reflect function bodies through `ad::meta`, not `std::meta`.** Both forks
+  now have the same statement and expression API, so `ad::meta` is
+  `std::meta`. `include/ad/meta.h` is where a workaround for one fork goes if
+  it ever needs one again.
 - **Constant evaluation quirks in the forks:**
   - `<cmath>` isn't `constexpr`. Use `include/cx_std/` (`cx::exp`, `log`,
     `sqrt`, `erfc`, `sin`, `cos`).

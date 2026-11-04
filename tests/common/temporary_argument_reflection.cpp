@@ -2,14 +2,13 @@
 // `std::max(x - y, 0.5)`, is that expression once its conversions are peeled
 // off.
 //
-// Clang reflects the temporary as an implicit conversion of the expression.
-// GCC reflects it as a construct whose operands are the temporary's unnamed
-// variable and then the expression. For a temporary of non-class type,
-// ad::meta::operands_of drops the variable on GCC, so the construct is a
-// conversion with the expression as its operand, as on clang. Without it,
-// reflection AD on GCC took `x - y` for a constant and failed with "'x' is
-// not a constant expression" (#199). A named variable or a literal argument
-// was already fine.
+// Both compilers reflect the temporary as an implicit conversion of the
+// expression. GCC used to reflect it as a construct whose operands were the
+// temporary's unnamed variable and then the expression, and ad/meta.h dropped
+// the variable (#199). CppReflectionAD/gcc#11 made it an untyped temporary
+// whose operands_of skipped the `-` (#226). Either way, reflection AD on GCC
+// took `x - y` for a constant and failed with "'x' is not a constant
+// expression". A named variable or a literal argument was already fine.
 #include <test_simple_include.hpp>
 
 #include <ad/autograd.h>

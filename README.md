@@ -11,7 +11,7 @@ https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2025/p2996r13.html
 
 ## Try it on Compiler Explorer (godbolt)
 
-The `expr-reflect` clang fork this repo builds on
+The P4395 clang fork this repo builds on
 ([CppReflectionAD/clang-p4395, branch `p4395`](https://github.com/CppReflectionAD/clang-p4395/tree/p4395))
 is available on [Compiler Explorer](https://godbolt.org/) as
 **x86-64 clang (expr-reflect)**, so you can try expression reflection and this
