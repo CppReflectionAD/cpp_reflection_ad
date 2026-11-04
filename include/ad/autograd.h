@@ -480,6 +480,11 @@ consteval std::size_t lower(Ctx &c, info e) {
       if (m::identifier_of(c.envDecl[i]) == name)
         return c.envSlot[i];
 
+    // A structured binding's declaration statement has no declarators, so
+    // lower_body bound no name; say so rather than fail in constant_of.
+    if (m::is_structured_binding(m::declaration_of(e)))
+      throw "reflection AD: structured bindings are unsupported";
+
     // External constexpr variables (e.g. std::numbers constants) are not in
     // the local environment; fold them to literal constants in the DAG.
     return emit(c, OpKind::Const, 0, 0, m::constant_of(e));
