@@ -54,7 +54,7 @@ double callg(double x) { return g(x); }
 DUMP(doSomething<int>, 4);
 #endif
 #if WHICH == 2
-DUMP(kinds_fn, 3);
+DUMP(kinds_fn, 6);
 #endif
 #if WHICH == 3
 DUMP(multi, 3);
@@ -69,7 +69,7 @@ DUMP(max, 5);
 DUMP(ovl, 4);
 #endif
 #if WHICH == 7
-DUMP(update, 5);
+DUMP(update, 7);
 #endif
 #if WHICH == 8
 DUMP(incs, 4);

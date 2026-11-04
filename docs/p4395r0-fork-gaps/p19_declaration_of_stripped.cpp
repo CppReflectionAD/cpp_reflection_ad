@@ -1,15 +1,13 @@
-// §3.5: declaration_of(id) == declarators_of(decl)[0], after stripping the
-// implicit conversion clang puts around a value use.
+// §3.5: declaration_of(id) == declarators_of(decl)[0], after stripping any
+// implicit conversion around a value use (clang has one here, GCC doesn't).
 #include "probe.h"
 double f(double x) {
   double v = x * 2;
   return v + 1;
 }
 consteval m::info strip(m::info e) {
-#ifdef __clang__
   while (m::is_conversion(e))
     e = m::operands_of(e)[0];
-#endif
   return e;
 }
 constexpr m::info ret = m::return_operand_of(stmt<1>(^^f));

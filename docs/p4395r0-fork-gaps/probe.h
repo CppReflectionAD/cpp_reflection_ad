@@ -1,12 +1,6 @@
-// Probes use the paper's spelling (std::meta) unless USE_AD selects the
-// repo's ad::meta compatibility shim.
-#ifdef USE_AD
-#include <ad/meta.h>
-namespace m = ad::meta;
-#else
+// Probes use the paper's spelling, std::meta.
 #include <meta>
 namespace m = std::meta;
-#endif
 #include <cstddef>
 #include <vector>
 

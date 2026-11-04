@@ -1,18 +1,16 @@
 #!/usr/bin/env bash
-# Compile one probe on clang and GCC (and GXX_FIXED, if set) and show the
-# diagnostics, e.g.
+# Compile one probe on clang and GCC and show the diagnostics, e.g.
 #   compile.sh d01_dumps.cpp -DWHICH=5          # dump the tree for case 5
-#   compile.sh r07_gcc_body_operands_ice.cpp -DWHICH=4
+#   compile.sh p24_loop_statement.cpp
 # The dumps print through a failing static_assert, so an error is expected.
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd)
 CLANGXX=${CLANGXX:-$root/build/clang-p2996/bin/clang++}
 GXX=${GXX:-$root/build/gcc-p2996/artifacts/bin/g++}
-GXX_FIXED=${GXX_FIXED:-}
 f=$here/$1
 shift
-inc="-I$here -I$root/include"
+inc="-I$here"
 ulimit -v 6000000
 
 clean() {
@@ -25,7 +23,3 @@ timeout 120 "$CLANGXX" -std=c++2c -freflection -fparameter-reflection -fexpansio
   -stdlib=libc++ -isystem "$(dirname "$CLANGXX")/../include/c++/v1" -fsyntax-only $inc "$@" "$f" 2>&1 | clean
 echo "### gcc"
 timeout 120 "$GXX" -std=c++2c -freflection -fsyntax-only $inc "$@" "$f" 2>&1 | clean
-if [ -n "$GXX_FIXED" ]; then
-  echo "### gcc-fixed"
-  timeout 120 "$GXX_FIXED" -std=c++2c -freflection -fsyntax-only $inc "$@" "$f" 2>&1 | clean
-fi

@@ -1,4 +1,5 @@
-// §3.1: without has_body, can a failing body_of be caught and used as a test?
+// §3.1: can a failing body_of be caught? (Informational: has_body is the
+// paper's precondition, so the paper promises nothing here.)
 #include "probe.h"
 double defined(double x) { return x; }
 double declared_only(double x);

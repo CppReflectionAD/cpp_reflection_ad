@@ -1,5 +1,6 @@
-// §3.1/§4.1: without has_body, what does body_of do on a function with no
-// definition? (Informational: the paper makes has_body the precondition.)
+// §3.1/§4.1: what does body_of do on a function with no definition?
+// (Informational: has_body is the paper's precondition, so the paper promises
+// nothing here.)
 #include "probe.h"
 double declared_only(double x);
 constexpr m::info b = m::body_of(^^declared_only);
