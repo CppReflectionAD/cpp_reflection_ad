@@ -55,9 +55,11 @@ jobs:
 
   # The toolchain and test legs again on macOS arm64 (#94 C9), with GCC built
   # from gcc-darwin-reflect. The sanitize leg runs the tests under GCC's own
-  # libasan and libubsan on macos-15. GCC is built only on a cache miss: when
-  # the pin, the runner's SDK or linker, the build script or the recipe changes,
-  # or the cache was evicted after 7 days unused.
+  # libasan and libubsan on macos-15. These jobs aren't in the summary job's
+  # needs: GitHub sometimes has no macOS arm64 runner for them, which would
+  # remove a pull request from the merge queue. GCC is built only on a cache
+  # miss: when the pin, the runner's SDK or linker, the build script or the
+  # recipe changes, or the cache was evicted after 7 days unused.
   toolchain-macos:
     uses: ./.github/workflows/toolchain-cache-gcc.yml
     with:
@@ -135,15 +137,13 @@ jobs:
   # workflow's result rather than each matrix leg. always() makes it report
   # even when the toolchain fails and the legs are skipped, or the run is
   # cancelled: a skipped required check would count as passing.
-  # Every test leg is in its needs, so they're all required (#94 C9).
+  # Every test leg but macOS's is in its needs, so they're required (#94 C9).
   summary:
     name: GCC tests
     needs:
       - toolchain
       - test
       - x86-64-v3
-      - toolchain-macos
-      - test-macos
       - toolchain-arm64
       - test-arm64
     if: always()
@@ -153,7 +153,7 @@ jobs:
         env:
           RESULTS: ${{ join(needs.*.result, ' ') }}
         run: |
-          echo "toolchain and test jobs on every runner: $RESULTS"
+          echo "required toolchain and test jobs: $RESULTS"
           for result in $RESULTS; do
             [ "$result" = success ] || exit 1
           done
