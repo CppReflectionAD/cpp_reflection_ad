@@ -8,9 +8,9 @@
 // and no error. GCC reflects a read of a constexpr variable as its value, so it
 // never looked `k` up.
 //
-// The same check keeps two kinds of declaration away from identifier_of, which
-// rejects both: a variable template specialization on clang, and an unnamed
-// parameter on both compilers.
+// The lookup also keeps two kinds of declaration away from identifier_of, which
+// rejects both. The parent check leaves out a variable template specialization,
+// on clang, and has_identifier skips an unnamed parameter, on both compilers.
 #include <test_simple_include.hpp>
 
 #include <ad/forward_derivative.h>
