@@ -28,7 +28,7 @@ struct GenerationContext {
     return "temp_" + int_to_string(temporary_counter);
   }
 
-  consteval std::string format(std::string line) {
+  constexpr std::string format(std::string line) {
     if (line.empty()) {
       return "";
     }

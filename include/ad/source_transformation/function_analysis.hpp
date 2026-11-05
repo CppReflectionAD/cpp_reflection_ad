@@ -22,36 +22,90 @@ using std::meta::info;
 namespace m = ad::meta;
 namespace su = ad::string_util;
 
-struct ToCppWalker : public AstWalker {
-
+struct ExpressionToCppWalker : public AstWalker {
   std::string code = {};
 
   using AstWalker::walk;
+  using AstWalker::handle;
 
-  constexpr void handle(OperatorExpression* expr) override {
+  constexpr void walk(OperatorExpression* expr) override {
+    std::vector<std::string> operands = handleOperators(expr->operands);
+
     OperatorInfo op = getOperatorInfo(expr->op);
-    code += su::joinE(op.symbol, " ");
+    if (operands.size() == 1) {
+      // TODO: Prefix and postfix distinction.
+      code += su::joinE(op.symbol, " ", operands[0]);
+    } else if (operands.size() == 2) {
+      code += su::joinE(operands[0], " ", op.symbol, " ", operands[1]);
+    } else {
+      throw "Unhandled number of operands";
+    }
   }
 
-  constexpr void handle(IdExpression* expr) override {
-    code += su::joinE(expr->id, " ");
+  constexpr void walk(IdExpression* expr) override {
+    code += expr->id;
   }
+
+  constexpr void walk(LiteralExpression* expr) override {
+    code += expr->literal;
+  }
+
+  constexpr void walk(FunctionCallExpression* expr) override {
+    std::vector<std::string> operands = handleOperators(expr->operands);
+
+    code += su::joinE(expr->func_name, "(");
+    bool first = true;
+    for (std::string const& op : operands) {
+      if (!first) {
+        code += ", ";
+      }
+      code += op;
+
+      first = false;
+    }
+    code += ")";
+  }
+
+private:
+  constexpr std::vector<std::string> handleOperators(std::vector<Expression*>& ops) {
+    std::vector<std::string> operands(ops.size());
+
+    for (size_t i = 0; i < operands.size(); i += 1) {
+      ExpressionToCppWalker w = {};
+      w.walk(ops[i]);
+      operands[i] = w.code;
+    }
+
+    return operands;
+  }
+};
+
+struct ToCppWalker : public AstWalker {
+
+  std::string code = {};
+  GenerationContext* ctx = nullptr;
+
+  using AstWalker::walk;
 
   constexpr void walk(DeclarationStatement* stmt) override {
-    code += su::joinE(stmt->type_name, " ", stmt->var_name, " = ");
-    walk(stmt->initializer);
-    code += ";\n";
+    ExpressionToCppWalker init_str = {};
+    init_str.walk(stmt->initializer);
+
+    code += ctx->format(su::joinE(stmt->type_name, " ", stmt->var_name, " = ", init_str.code, ";\n"));
   }
 
   constexpr void walk(ExpressionStatement* stmt) override {
-    walk(stmt->expression);
-    code += ";\n";
+    ExpressionToCppWalker expr_str = {};
+    expr_str.walk(stmt->expression);
+
+    code += ctx->format(su::joinE(expr_str.code, ";\n"));
   }
 
   constexpr void walk(ReturnStatement* stmt) override {
-    code += "return ";
-    walk(stmt->return_expression);
-    code += ";\n";
+    ExpressionToCppWalker expr_str = {};
+    expr_str.walk(stmt->return_expression);
+
+    code += ctx->format(su::joinE("return ", expr_str.code, ";\n"));
   }
 };
 
@@ -69,18 +123,18 @@ struct FunctionAnalysis {
 
     r += su::join(m::display_string_of(ret_type), " ", m::identifier_of(func), "(", params_s, ") {\n");
 
+    std::vector<Statement*> stmts = fromFunctionBody(m::body_of(func));
+    ToCppWalker walker = {};
+    walker.ctx = &ctx;
     ctx.addIndent();
-    for (info stmt : m::statements_of(m::body_of(func))) {
-      r += ctx.format(StatementAnalysis::generatePrimal(stmt, ctx) + "\n");
-    }
+
+    walker.walk(&stmts);
+    r += walker.code;
+
     ctx.removeIndent();
     r += "}\n";
 
-    std::vector<Statement*> stmts = fromFunctionBody(m::body_of(func));
-    ToCppWalker walker = {};
-    walker.walk(&stmts);
 
-    r += walker.code;
 
     releaseFunctionBody(stmts);
 
