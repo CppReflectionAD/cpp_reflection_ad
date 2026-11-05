@@ -41,6 +41,10 @@
 // operator is such a call too, whatever its symbol: `a * b` is lowered as the
 // primitive or body of the `operator*` it calls.
 //
+// Names resolve to the parameters and locals of the body that uses them, never
+// to a caller's. Any other name must be a constexpr variable, and is folded to
+// a constant; assigning to it is rejected.
+//
 // Control flow so far means `c ? a : b`, the operators building `c`, and
 // abs/max/min; `if` and loops are not supported. Branches are predicated, not
 // eager: each node carries its branch's condition (Node::guard) and every
@@ -507,8 +511,10 @@ consteval std::size_t lower(Ctx &c, info e) {
   e = stripCasts(e);
 
   if (m::is_id_expression(e)) {
+    // Only this body's bindings, as in findSlot: an inlined helper's `k` must
+    // not find a caller's local `k`.
     const std::string_view name = m::identifier_of(m::declaration_of(e));
-    for (std::size_t i = c.envDecl.size(); i-- > 0;)
+    for (std::size_t i = c.envDecl.size(); i-- > c.scopeBase;)
       if (m::identifier_of(c.envDecl[i]) == name)
         return c.envSlot[i];
 
