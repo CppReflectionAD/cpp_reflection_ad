@@ -60,6 +60,8 @@ struct IdExpression : public Expression {
 
   std::string id;
 
+  constexpr IdExpression(std::string const& id) : Expression(ExpressionKind::Id), id(id) {}
+
   consteval IdExpression(info expr) : Expression(ExpressionKind::Id),
     id(m::identifier_of(m::declaration_of(expr))) {}
 
@@ -80,7 +82,7 @@ struct OperatorExpression : public Expression {
   }
 
   constexpr ~OperatorExpression() {
-    for (Expression* expr : operands) {
+    for (Expression*& expr : operands) {
       freeExpression(expr);
     }
   }
@@ -89,7 +91,7 @@ struct OperatorExpression : public Expression {
 
   template<typename Walker>
   constexpr void walk(Walker* walker) {
-    for (Expression* expr : operands) {
+    for (Expression*& expr : operands) {
       walker->walk(expr);
     }
   }
@@ -109,7 +111,7 @@ struct FunctionCallExpression : public Expression {
   }
 
   constexpr ~FunctionCallExpression() {
-    for (Expression* expr : operands) {
+    for (Expression*& expr : operands) {
       freeExpression(expr);
     }
   }
@@ -118,7 +120,7 @@ struct FunctionCallExpression : public Expression {
 
   template<typename Walker>
   constexpr void walk(Walker* walker) {
-    for (Expression* expr : operands) {
+    for (Expression*& expr : operands) {
       walker->walk(expr);
     }
   }
@@ -194,6 +196,12 @@ struct DeclarationStatement : public Statement {
   std::string var_name;
 
   Expression* initializer;
+
+  constexpr DeclarationStatement(std::string const& type_name, std::string const& var_name, Expression* initializer) :
+    Statement(StatementKind::Declaration),
+      type_name(type_name),
+      var_name(var_name),
+      initializer(initializer) {}
 
   consteval DeclarationStatement(info stmt) : Statement(StatementKind::Declaration),
     type_name(m::display_string_of(m::type_of(m::declared_variable_of(stmt)))),
@@ -276,6 +284,12 @@ constexpr void releaseStatement(Statement*& stmt) {
 
 struct AstWalker {
 
+  using StmtVector = std::vector<Statement*>;
+  using StmtIter = typename StmtVector::iterator;
+  using StmtStackEntry = std::pair<StmtVector*, StmtIter*>;
+
+  std::vector<StmtStackEntry> stmtInsertStack = {};
+
 #define DECL_HANDLE(type, name) \
   constexpr virtual void handle(type* name) { \
     (void)name; \
@@ -296,7 +310,7 @@ struct AstWalker {
 
 #undef DECL_HANDLE
 
-  constexpr void walk(Expression* expr) {
+  constexpr virtual void walk(Expression*& expr) {
     if (expr->isOperator()) {
       walk(OperatorExpression::cast(expr));
     } else if (expr->isLiteral()) {
@@ -308,12 +322,15 @@ struct AstWalker {
     } else {
       throw "Unknown expression";
     }
-
-    expr = nullptr;
   }
 
   constexpr virtual void walk(std::vector<Statement*>* stmts) {
-    for (Statement*& stmt : *stmts) {
+    StmtIter iter = stmts->begin();
+
+    pushInsertStack(stmts, &iter);
+    for (; iter != stmts->end(); ++iter) {
+      Statement* stmt = *iter;
+
       if (stmt->isDeclaration()) {
         walk(DeclarationStatement::cast(stmt));
       }
@@ -327,6 +344,35 @@ struct AstWalker {
         throw "Unknown expression.";
       }
     }
+    popInsertStack();
+  }
+
+
+
+  constexpr void pushInsertStack(StmtVector* vec, StmtIter* iter) {
+    stmtInsertStack.push_back({vec, iter});
+  }
+
+  constexpr void popInsertStack() {
+    if (stmtInsertStack.empty()) {
+      throw "Can not pop from empty insert stack.";
+    }
+    stmtInsertStack.pop_back();
+  }
+
+  constexpr void insertStatement(Statement* stmt) {
+    if (stmtInsertStack.empty()) {
+      throw "No statement body for insertion.";
+    }
+
+    StmtVector* vec = stmtInsertStack.back().first;
+    StmtIter* iter = stmtInsertStack.back().second;
+
+    StmtIter new_iter = vec->insert(*iter, stmt);
+
+    // Advance again to the cur_element
+    ++new_iter;
+    *iter = new_iter;
   }
 };
 

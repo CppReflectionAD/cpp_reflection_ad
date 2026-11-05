@@ -22,7 +22,7 @@ struct GenerationContext {
   bool reverse_generation = false;
   std::vector<std::string> function_temporary_stack = {};
 
-  consteval std::string generateTemporary() {
+  constexpr std::string generateTemporary() {
     temporary_counter += 1;
     // TODO: use to_string: return "temp_" + std::to_string(temporary_counter);
     return "temp_" + int_to_string(temporary_counter);
@@ -92,7 +92,7 @@ struct GenerationContext {
   }
 
 private:
-  consteval std::string int_to_string(int num)  {
+  constexpr std::string int_to_string(int num)  {
     std::array<char, 12> buf{};
     auto [ptr, ec] = std::to_chars(buf.data(), buf.data() + buf.size() - 1, num);
 

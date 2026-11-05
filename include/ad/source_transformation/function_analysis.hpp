@@ -83,7 +83,9 @@ private:
 struct ToCppWalker : public AstWalker {
 
   std::string code = {};
-  GenerationContext* ctx = nullptr;
+  GenerationContext* ctx;
+
+  constexpr ToCppWalker(GenerationContext* ctx) : ctx(ctx) {}
 
   using AstWalker::walk;
 
@@ -109,6 +111,36 @@ struct ToCppWalker : public AstWalker {
   }
 };
 
+struct ExtractFunctionWalker : public AstWalker {
+
+  std::string code = {};
+  GenerationContext* ctx;
+
+  constexpr ExtractFunctionWalker(GenerationContext* ctx) : ctx(ctx) {}
+
+  using AstWalker::walk;
+
+  constexpr void walk(Expression*& e) override {
+    if (e->isFunctionCall()) {
+      FunctionCallExpression* expr = FunctionCallExpression::cast(e);
+
+      // First walk children
+      AstWalker::walk(expr);
+
+      std::string temporary_name = ctx->generateTemporary();
+      DeclarationStatement* temporary_decl = new DeclarationStatement("double", temporary_name, expr);
+      AstWalker::insertStatement(temporary_decl);
+
+      IdExpression* temporary_id = new IdExpression(temporary_name);
+
+      // Replace the expression
+      e = temporary_id;
+    } else {
+      AstWalker::walk(e);
+    }
+  }
+};
+
 struct FunctionAnalysis {
   static consteval auto generatePrimal(info func) {
     GenerationContext ctx = {};
@@ -124,8 +156,7 @@ struct FunctionAnalysis {
     r += su::join(m::display_string_of(ret_type), " ", m::identifier_of(func), "(", params_s, ") {\n");
 
     std::vector<Statement*> stmts = fromFunctionBody(m::body_of(func));
-    ToCppWalker walker = {};
-    walker.ctx = &ctx;
+    ToCppWalker walker = {&ctx};
     ctx.addIndent();
 
     walker.walk(&stmts);
@@ -133,8 +164,6 @@ struct FunctionAnalysis {
 
     ctx.removeIndent();
     r += "}\n";
-
-
 
     releaseFunctionBody(stmts);
 
@@ -156,13 +185,28 @@ struct FunctionAnalysis {
 
     r += su::join("std::pair<", m::display_string_of(ret_type), ", ", m::display_string_of(ret_type), "> ", m::identifier_of(func), "_d(", params_s, ") {\n");
 
+    std::vector<Statement*> stmts = fromFunctionBody(m::body_of(func));
+
+    // Replace function calls with temporaries.
+    ExtractFunctionWalker extFnc = {&ctx};
+    extFnc.walk(&stmts);
+
+    ToCppWalker walker = {&ctx};
     ctx.addIndent();
-    for (info stmt : m::statements_of(m::body_of(func))) {
-      StatementAnalysis::generateForward(stmt, ctx);
-    }
-    r += ctx.flushStatements();
+
+    walker.walk(&stmts);
+    r += walker.code;
+
     ctx.removeIndent();
+    // ctx.addIndent();
+    // for (info stmt : m::statements_of(m::body_of(func))) {
+    //   StatementAnalysis::generateForward(stmt, ctx);
+    // }
+    // r += ctx.flushStatements();
+    // ctx.removeIndent();
     r += "}\n";
+
+    releaseFunctionBody(stmts);
 
     return std::define_static_string(r);
   }
