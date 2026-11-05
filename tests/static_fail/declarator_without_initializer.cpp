@@ -1,7 +1,7 @@
 #include <ad/forward_derivative.h>
 
-// A declarator without an initializer can't be lowered: nothing in a
-// straight-line body could give it a value later.
+// A declarator without an initializer can't be lowered, even if an assignment
+// gives it a value later (assigned_after_declaration.cpp).
 inline double no_initializer(double x) {
   [[maybe_unused]] double unused;
   return x;
