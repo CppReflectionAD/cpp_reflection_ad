@@ -15,10 +15,45 @@
 #include "expression_analysis.hpp"
 #include "function_analysis.hpp"
 
+#include "meta_ast.hpp"
+
 namespace ad {
 using std::meta::info;
 namespace m = ad::meta;
 namespace su = ad::string_util;
+
+struct ToCppWalker : public AstWalker {
+
+  std::string code = {};
+
+  using AstWalker::walk;
+
+  constexpr void handle(OperatorExpression* expr) override {
+    OperatorInfo op = getOperatorInfo(expr->op);
+    code += su::joinE(op.symbol, " ");
+  }
+
+  constexpr void handle(IdExpression* expr) override {
+    code += su::joinE(expr->id, " ");
+  }
+
+  constexpr void walk(DeclarationStatement* stmt) override {
+    code += su::joinE(stmt->type_name, " ", stmt->var_name, " = ");
+    walk(stmt->initializer);
+    code += ";\n";
+  }
+
+  constexpr void walk(ExpressionStatement* stmt) override {
+    walk(stmt->expression);
+    code += ";\n";
+  }
+
+  constexpr void walk(ReturnStatement* stmt) override {
+    code += "return ";
+    walk(stmt->return_expression);
+    code += ";\n";
+  }
+};
 
 struct FunctionAnalysis {
   static consteval auto generatePrimal(info func) {
@@ -40,6 +75,14 @@ struct FunctionAnalysis {
     }
     ctx.removeIndent();
     r += "}\n";
+
+    std::vector<Statement*> stmts = fromFunctionBody(m::body_of(func));
+    ToCppWalker walker = {};
+    walker.walk(&stmts);
+
+    r += walker.code;
+
+    releaseFunctionBody(stmts);
 
     return std::define_static_string(r);
   }

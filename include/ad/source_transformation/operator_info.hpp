@@ -16,7 +16,7 @@ struct OperatorInfo {
   std::string symbol;
 };
 
-consteval OperatorInfo getOperatorInfo(m::operators op) {
+constexpr OperatorInfo getOperatorInfo(m::operators op) {
   if (op == m::operators::op_equals) {
     return {OperatorKind::Assign, "="};
   } else if (op == m::operators::op_star) {
