@@ -143,6 +143,7 @@ struct ExtractFunctionWalker : public AstWalker {
 
     if (handle) {
       FunctionCallExpression* expr = FunctionCallExpression::cast(e);
+      ASTItem* parent = expr->parent;
 
       // First walk children
       AstWalker::walk(expr);
@@ -152,6 +153,7 @@ struct ExtractFunctionWalker : public AstWalker {
       AstWalker::insertStatement(temporary_decl);
 
       IdExpression* temporary_id = new IdExpression(temporary_name);
+      temporary_id->parent = parent;
 
       // Replace the expression
       e = temporary_id;
