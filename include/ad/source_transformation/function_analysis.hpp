@@ -15,7 +15,7 @@
 #include "expression_analysis.hpp"
 #include "function_analysis.hpp"
 
-#include "meta_ast.hpp"
+#include "ast/meta_ast.hpp"
 
 namespace ad {
 using std::meta::info;
