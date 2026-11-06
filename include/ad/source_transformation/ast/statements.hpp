@@ -43,6 +43,8 @@ struct Statement : public ASTItem {
   constexpr void walk(Walker* walker) {
     (void)walker;
   }
+
+  constexpr Statement* clone() override = 0;
 };
 
 struct DeclarationStatement : public Statement {
@@ -52,11 +54,11 @@ struct DeclarationStatement : public Statement {
 
   Expression* initializer;
 
-  constexpr DeclarationStatement(std::string_view const& type_name, std::string_view const& var_name, Expression* initializer) :
+  constexpr DeclarationStatement(std::string_view const& type_name, std::string_view const& var_name, Expression* init) :
     Statement(StatementKind::Declaration),
       type_name(type_name),
       var_name(var_name),
-      initializer(initializer) {
+      initializer(init) {
     initializer->parent = this;
   }
 
@@ -77,14 +79,18 @@ struct DeclarationStatement : public Statement {
   constexpr void walk(Walker* walker) {
     walker->walk(initializer);
   }
+
+  constexpr DeclarationStatement* clone() override {
+    return new DeclarationStatement(type_name, var_name, initializer->clone());
+  }
 };
 
 struct ExpressionStatement : public Statement {
 
   Expression* expression;
 
-  constexpr ExpressionStatement(Expression* expression) : Statement(StatementKind::Expression),
-    expression(expression) {
+  constexpr ExpressionStatement(Expression* expr) : Statement(StatementKind::Expression),
+    expression(expr) {
     expression->parent = this;
   }
 
@@ -102,16 +108,22 @@ struct ExpressionStatement : public Statement {
   constexpr void walk(Walker* walker) {
     walker->walk(expression);
   }
+
+  constexpr ExpressionStatement* clone() override {
+    return new ExpressionStatement(expression->clone());
+  }
 };
 
 struct ReturnStatement : public Statement {
 
   Expression* return_expression;
 
-  consteval ReturnStatement(info stmt) : Statement(StatementKind::Return),
-    return_expression(expressionFromInfo(m::return_operand_of(stmt))) {
+  constexpr ReturnStatement(Expression* expr) : Statement(StatementKind::Return),
+  return_expression(expr) {
     return_expression->parent = this;
   }
+
+  consteval ReturnStatement(info stmt) : ReturnStatement(expressionFromInfo(m::return_operand_of(stmt))) {}
 
   static constexpr ReturnStatement* cast(Statement* stmt) {
     return static_cast<ReturnStatement*>(stmt);
@@ -125,9 +137,15 @@ struct ReturnStatement : public Statement {
   constexpr void walk(Walker* walker) {
     walker->walk(return_expression);
   }
+
+  constexpr ReturnStatement* clone() override {
+    return new ReturnStatement(return_expression->clone());
+  }
 };
 
 constexpr void releaseStatement(Statement*& stmt) {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdelete-non-abstract-non-virtual-dtor"
   if (stmt->isDeclaration()) {
     delete DeclarationStatement::cast(stmt);
   }
@@ -142,6 +160,7 @@ constexpr void releaseStatement(Statement*& stmt) {
   }
 
   stmt = nullptr;
+#pragma GCC diagnostic pop
 }
 
 consteval std::vector<Statement*> fromFunctionBody(info body) {

@@ -43,6 +43,8 @@ struct Expression : public ASTItem {
   constexpr static Expression* cast(ASTItem* item) {
     return static_cast<Expression*>(item);
   }
+
+  constexpr Expression* clone() override = 0;
 };
 
 #define DECL_BODY(name) \
@@ -51,6 +53,7 @@ static constexpr name* cast(Expression* expr) { \
 }
 
 consteval Expression* expressionFromInfo(info expr);
+constexpr std::vector<Expression*> cloneExpressionVec(std::vector<Expression*> const& vec);
 constexpr void freeExpression(Expression*& expr);
 
 consteval std::vector<Expression*> expressionsFromInfoVec(auto&& vec) {
@@ -69,10 +72,16 @@ struct LiteralExpression : public Expression {
 
   std::string literal;
 
-  consteval LiteralExpression(info expr) : Expression(ExpressionKind::Literal),
-    literal(m::display_string_of(m::constant_of(expr))) {}
+  constexpr LiteralExpression(std::string_view const& literal) : Expression(ExpressionKind::Literal),
+    literal(literal) {}
+
+  consteval LiteralExpression(info expr) : LiteralExpression(m::display_string_of(m::constant_of(expr))) {}
 
   DECL_BODY(LiteralExpression)
+
+  constexpr LiteralExpression* clone() override {
+    return new LiteralExpression(literal);
+  }
 };
 
 struct IdExpression : public Expression {
@@ -84,6 +93,10 @@ struct IdExpression : public Expression {
   consteval IdExpression(info expr) : IdExpression(m::identifier_of(m::declaration_of(expr))) {}
 
   DECL_BODY(IdExpression)
+
+  constexpr IdExpression* clone() override {
+    return new IdExpression(id);
+  }
 };
 
 struct OperatorExpression : public Expression {
@@ -91,14 +104,16 @@ struct OperatorExpression : public Expression {
   std::vector<Expression*> operands;
   m::operators op;
 
-  consteval OperatorExpression(info expr) : Expression(ExpressionKind::Operator),
-    operands(),
-    op(m::expression_operator_of(expr)) {
-    for (info operand : m::operands_of(expr)) {
-      operands.push_back(expressionFromInfo(operand));
-      operands.back()->parent = this;
+  constexpr OperatorExpression(m::operators op, std::vector<Expression*> const& ops) :
+    Expression(ExpressionKind::Operator), operands(ops), op(op) {
+    for (Expression* operand : operands) {
+      operand->parent = this;
     }
   }
+
+  consteval OperatorExpression(info expr) : OperatorExpression(
+    m::expression_operator_of(expr),
+    expressionsFromInfoVec(m::operands_of(expr))) {}
 
   constexpr ~OperatorExpression() {
     for (Expression*& expr : operands) {
@@ -114,6 +129,10 @@ struct OperatorExpression : public Expression {
       walker->walk(expr);
     }
   }
+
+  constexpr OperatorExpression* clone() override {
+    return new OperatorExpression(op, cloneExpressionVec(operands));
+  }
 };
 
 struct FunctionCallExpression : public Expression {
@@ -121,8 +140,8 @@ struct FunctionCallExpression : public Expression {
   std::vector<Expression*> operands;
   std::string func_name;
 
-  constexpr FunctionCallExpression(std::string_view const& func_name, std::vector<Expression*> const& operands) :
-    Expression(ExpressionKind::FunctionCall), operands(operands), func_name(func_name) {
+  constexpr FunctionCallExpression(std::string_view const& func_name, std::vector<Expression*> const& ops) :
+    Expression(ExpressionKind::FunctionCall), operands(ops), func_name(func_name) {
     for (Expression* operand : operands) {
       operand->parent = this;
     }
@@ -145,6 +164,10 @@ struct FunctionCallExpression : public Expression {
     for (Expression*& expr : operands) {
       walker->walk(expr);
     }
+  }
+
+  constexpr FunctionCallExpression* clone() override {
+    return new FunctionCallExpression(func_name, cloneExpressionVec(operands));
   }
 };
 
@@ -169,7 +192,21 @@ consteval Expression* expressionFromInfo(info e) {
   }
 }
 
+constexpr std::vector<Expression*> cloneExpressionVec(std::vector<Expression*> const& vec) {
+  std::vector<Expression*> r = {};
+  r.reserve(vec.size());
+
+  for (Expression* cur : vec) {
+    r.push_back(cur->clone());
+  }
+
+  return r;
+}
+
 constexpr void freeExpression(Expression*& expr) {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdelete-non-abstract-non-virtual-dtor"
+
   if (expr->isOperator()) {
     delete OperatorExpression::cast(expr);
   }
@@ -187,6 +224,7 @@ constexpr void freeExpression(Expression*& expr) {
   }
 
   expr = nullptr;
+#pragma GCC diagnostic pop
 }
 
 #undef DECL_BODY

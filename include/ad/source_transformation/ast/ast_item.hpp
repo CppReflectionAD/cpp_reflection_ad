@@ -25,6 +25,8 @@ struct ASTItem {
     return nullptr != parent;
   }
 
+  constexpr virtual ASTItem* clone() = 0;
+
 #define DECL_IS(name) \
   constexpr bool is ## name() { \
     return ASTKind:: name == kind; \
