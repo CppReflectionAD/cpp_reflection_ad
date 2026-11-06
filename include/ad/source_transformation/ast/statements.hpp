@@ -83,10 +83,12 @@ struct ExpressionStatement : public Statement {
 
   Expression* expression;
 
-  consteval ExpressionStatement(info stmt) : Statement(StatementKind::Expression),
-    expression(expressionFromInfo(m::expression_of(stmt))) {
+  constexpr ExpressionStatement(Expression* expression) : Statement(StatementKind::Expression),
+    expression(expression) {
     expression->parent = this;
   }
+
+  consteval ExpressionStatement(info stmt) : ExpressionStatement(expressionFromInfo(m::expression_of(stmt))) {}
 
   static constexpr ExpressionStatement* cast(Statement* stmt) {
     return static_cast<ExpressionStatement*>(stmt);

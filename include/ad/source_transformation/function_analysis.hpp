@@ -113,7 +113,6 @@ struct ToCppWalker : public AstWalker {
 
 struct ExtractFunctionWalker : public AstWalker {
 
-  std::string code = {};
   GenerationContext* ctx;
 
   constexpr ExtractFunctionWalker(GenerationContext* ctx) : ctx(ctx) {}
@@ -162,6 +161,48 @@ struct ExtractFunctionWalker : public AstWalker {
     }
   }
 };
+
+struct ForwardADExpressionWalker : public AstWalker {
+
+};
+
+struct ForwardADWalker : public AstWalker {
+  GenerationContext* ctx;
+
+  constexpr ForwardADWalker(GenerationContext* ctx) : ctx(ctx) {}
+
+  using AstWalker::walk;
+
+  constexpr void walk(DeclarationStatement* stmt) override {
+    // ForwardADExpressionWalker init_ad_expr = {};
+    // init_ad_expr.walk(stmt->initializer);
+
+    AstWalker::insertStatement(new DeclarationStatement(stmt->type_name, genADName(stmt->var_name), new IdExpression("temp")));
+  }
+
+  constexpr void walk(ExpressionStatement* stmt) override {
+    // ForwardADExpressionWalker expr_ad_expr = {};
+    // expr_ad_expr.walk(stmt->expression);
+    (void)stmt;
+
+    AstWalker::insertStatement(new ExpressionStatement(new IdExpression("temp")));
+  }
+
+  constexpr void walk(ReturnStatement* stmt) override {
+    // ForwardADExpressionWalker expr_ad_expr = {};
+    // expr_ad_expr.walk(stmt->return_expression);
+
+    Expression* primal_expr = stmt->return_expression;
+    stmt->return_expression = new FunctionCallExpression("std::make_pair", {primal_expr, new IdExpression("temp")});
+    stmt->return_expression->parent = stmt;
+  }
+
+  constexpr std::string genADName(std::string const& name) {
+    return su::joinE(name, "_d");
+  }
+
+};
+
 
 struct FunctionAnalysis {
   static consteval auto generatePrimal(info func) {
@@ -212,6 +253,9 @@ struct FunctionAnalysis {
     // Replace function calls with temporaries.
     ExtractFunctionWalker extFnc = {&ctx};
     extFnc.walk(&stmts);
+
+    ForwardADWalker ad = {&ctx};
+    ad.walk(&stmts);
 
     ToCppWalker walker = {&ctx};
     ctx.addIndent();

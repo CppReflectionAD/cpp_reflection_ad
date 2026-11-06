@@ -53,6 +53,17 @@ static constexpr name* cast(Expression* expr) { \
 consteval Expression* expressionFromInfo(info expr);
 constexpr void freeExpression(Expression*& expr);
 
+consteval std::vector<Expression*> expressionsFromInfoVec(auto&& vec) {
+  std::vector<Expression*> r = {};
+  r.reserve(vec.size());
+
+  for (info cur : vec) {
+    r.push_back(expressionFromInfo(cur));
+  }
+
+  return r;
+}
+
 
 struct LiteralExpression : public Expression {
 
@@ -110,14 +121,16 @@ struct FunctionCallExpression : public Expression {
   std::vector<Expression*> operands;
   std::string func_name;
 
-  consteval FunctionCallExpression(info expr) : Expression(ExpressionKind::FunctionCall),
-    operands(),
-    func_name(m::identifier_of(m::declaration_of(m::callee_of(expr)))) {
-    for (info operand : m::operands_of(expr)) {
-      operands.push_back(expressionFromInfo(operand));
-      operands.back()->parent = this;
+  constexpr FunctionCallExpression(std::string_view const& func_name, std::vector<Expression*> const& operands) :
+    Expression(ExpressionKind::FunctionCall), operands(operands), func_name(func_name) {
+    for (Expression* operand : operands) {
+      operand->parent = this;
     }
   }
+
+  consteval FunctionCallExpression(info expr) : FunctionCallExpression(
+    m::identifier_of(m::declaration_of(m::callee_of(expr))),
+    expressionsFromInfoVec(m::operands_of(expr))) {}
 
   constexpr ~FunctionCallExpression() {
     for (Expression*& expr : operands) {
