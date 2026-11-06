@@ -36,10 +36,14 @@
 // sin/cos/exp/log/sqrt/erfc. The core is rule-driven so more ops / tensors are
 // additive. Calls to user-defined helpers are inlined (the callee's body is
 // reflected into the same DAG), so ordinary functions compose; the callee must
-// itself be straight-line and non-recursive, and use only its parameters (free
-// functions, and lambdas or function objects without state). An overloaded
-// operator is such a call too, whatever its symbol: `a * b` is lowered as the
-// primitive or body of the `operator*` it calls.
+// itself be straight-line and non-recursive (free functions, and lambdas or
+// function objects without state). An overloaded operator is such a call too,
+// whatever its symbol: `a * b` is lowered as the primitive or body of the
+// `operator*` it calls.
+//
+// Names resolve to the parameters and locals of the body that uses them, never
+// to a caller's. Any other name, qualified or not, must be usable in a constant
+// expression, and is folded to a constant; assigning to it is rejected.
 //
 // Control flow so far means `c ? a : b`, the operators building `c`, and
 // abs/max/min; `if` and loops are not supported. Branches are predicated, not
@@ -57,6 +61,7 @@
 #include <cstddef>
 #include <meta>
 #include <numbers>
+#include <optional>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -342,13 +347,29 @@ consteval std::size_t inline_call(Ctx &c, info call);
 // ReflectionKind::Declaration — different kinds that never compare equal.
 // Last-wins so a local shadowing an outer name, or a name assigned to since,
 // resolves to the most recent binding. Only the body's own bindings count, so
-// an inlined helper can't reach a caller's local of the same name. An
-// unresolved name (e.g. a global) has no slot; erroring beats returning a
-// sentinel that would index the node array out of bounds.
-consteval std::size_t findSlot(const Ctx &c, std::string_view name) {
+// an inlined helper can't reach a caller's local of the same name.
+//
+// A name match alone would let `::k` find a local `k`, so only a declaration
+// whose parent is a function is looked up at all. That leaves out globals,
+// static members, enumerators and variable templates, whatever they're called.
+// An unnamed parameter is bound, so that the arguments line up, but nothing can
+// name it.
+consteval std::optional<std::size_t> boundSlot(const Ctx &c, info var) {
+  if (!m::is_function(m::parent_of(var)))
+    return std::nullopt;
+  const std::string_view name = m::identifier_of(var);
   for (std::size_t i = c.envDecl.size(); i-- > c.scopeBase;)
-    if (m::identifier_of(c.envDecl[i]) == name)
+    if (m::has_identifier(c.envDecl[i]) &&
+        m::identifier_of(c.envDecl[i]) == name)
       return c.envSlot[i];
+  return std::nullopt;
+}
+
+// As boundSlot, for a name that must have a slot. Erroring beats returning a
+// sentinel that would index the node array out of bounds.
+consteval std::size_t findSlot(const Ctx &c, info var) {
+  if (const auto slot = boundSlot(c, var))
+    return *slot;
   throw "reflection AD: name is not a parameter or local of the reflected body";
 }
 
@@ -507,14 +528,13 @@ consteval std::size_t lower(Ctx &c, info e) {
   e = stripCasts(e);
 
   if (m::is_id_expression(e)) {
-    const std::string_view name = m::identifier_of(m::declaration_of(e));
-    for (std::size_t i = c.envDecl.size(); i-- > 0;)
-      if (m::identifier_of(c.envDecl[i]) == name)
-        return c.envSlot[i];
+    const info decl = m::declaration_of(e);
+    if (const auto slot = boundSlot(c, decl))
+      return *slot;
 
     // A structured binding's declaration statement has no declarators, so
     // lower_body bound no name; say so rather than fail in constant_of.
-    if (m::is_structured_binding(m::declaration_of(e)))
+    if (m::is_structured_binding(decl))
       throw "reflection AD: structured bindings are unsupported";
 
     // External constexpr variables (e.g. std::numbers constants) are not in
@@ -631,7 +651,7 @@ consteval void lower_assignment(Ctx &c, info e) {
   // GCC reflects a trivial copy assignment as built-in, and clang as a call.
   if (m::is_class_type(m::remove_cv(m::type_of(var))))
     throw "reflection AD: cannot assign to a class-type variable";
-  const std::size_t old = findSlot(c, m::identifier_of(var));
+  const std::size_t old = findSlot(c, var);
   std::size_t value = lower(c, ops[1]);
   const m::operators op = m::expression_operator_of(e);
   if (op != m::operators::op_equals)
