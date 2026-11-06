@@ -227,5 +227,25 @@ constexpr void freeExpression(Expression*& expr) {
 #pragma GCC diagnostic pop
 }
 
+struct Wrap {
+  Expression* wrap;
+
+  constexpr Wrap operator=(this Wrap&& self, Wrap&& o) noexcept {
+    return {new OperatorExpression(m::operators::op_equals, {self.wrap, o.wrap})};
+  }
+};
+
+constexpr Wrap wrap(Expression* expr) {
+  return {expr};
+}
+
+constexpr Wrap operator+(Wrap arg1, Wrap arg2) {
+  return {new OperatorExpression(m::operators::op_plus, {arg1.wrap, arg2.wrap})};
+}
+
+constexpr Wrap operator*(Wrap arg1, Wrap arg2) {
+  return {new OperatorExpression(m::operators::op_star, {arg1.wrap, arg2.wrap})};
+}
+
 #undef DECL_BODY
 }

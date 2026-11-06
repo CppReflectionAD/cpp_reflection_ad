@@ -162,7 +162,67 @@ struct ExtractFunctionWalker : public AstWalker {
   }
 };
 
+constexpr std::string genForwardADName(std::string const& name) {
+  return su::joinE(name, "_d");
+}
+
 struct ForwardADExpressionWalker : public AstWalker {
+  Expression* ad_expr = nullptr;
+
+  using AstWalker::walk;
+  using AstWalker::handle;
+
+  constexpr void walk(OperatorExpression* expr) override {
+
+
+    std::vector<Expression*> op_d = handleOperators(expr->operands);
+
+    OperatorInfo op = getOperatorInfo(expr->op);
+    if (op_d.size() == 1) {
+      throw "Handle unary operators";
+    } else if (op_d.size() == 2) {
+      if (OperatorKind::Add == op.kind) {
+        ad_expr = (wrap(op_d[0]) + wrap(op_d[1])).wrap;
+      }
+      else if (OperatorKind::Assign == op.kind) {
+        ad_expr = (wrap(op_d[0]) = wrap(op_d[1])).wrap;
+      }
+      else if (OperatorKind::Mul == op.kind) {
+        ad_expr = (wrap(expr->operands[1]->clone()) * wrap(op_d[0]) + wrap(expr->operands[0]->clone()) * wrap(op_d[1])).wrap;
+      }
+    } else {
+      throw "Unhandled number of operands";
+    }
+  }
+
+  constexpr void walk(IdExpression* expr) override {
+    ad_expr = new IdExpression(genForwardADName(expr->id));
+  }
+
+  constexpr void walk(LiteralExpression* expr) override {
+    (void) expr;
+
+    ad_expr = new LiteralExpression("0.0");
+  }
+
+  constexpr void walk(FunctionCallExpression* expr) override {
+    (void)expr;
+
+    ad_expr = new IdExpression("TODO");
+  }
+
+private:
+  constexpr std::vector<Expression*> handleOperators(std::vector<Expression*>& ops) {
+    std::vector<Expression*> operands(ops.size());
+
+    for (size_t i = 0; i < operands.size(); i += 1) {
+      ForwardADExpressionWalker w = {};
+      w.walk(ops[i]);
+      operands[i] = w.ad_expr;
+    }
+
+    return operands;
+  }
 
 };
 
@@ -174,33 +234,27 @@ struct ForwardADWalker : public AstWalker {
   using AstWalker::walk;
 
   constexpr void walk(DeclarationStatement* stmt) override {
-    // ForwardADExpressionWalker init_ad_expr = {};
-    // init_ad_expr.walk(stmt->initializer);
+    ForwardADExpressionWalker init_ad_expr = {};
+    init_ad_expr.walk(stmt->initializer);
 
-    AstWalker::insertStatement(new DeclarationStatement(stmt->type_name, genADName(stmt->var_name), new IdExpression("temp")));
+    AstWalker::insertStatement(new DeclarationStatement(stmt->type_name, genForwardADName(stmt->var_name), init_ad_expr.ad_expr));
   }
 
   constexpr void walk(ExpressionStatement* stmt) override {
-    // ForwardADExpressionWalker expr_ad_expr = {};
-    // expr_ad_expr.walk(stmt->expression);
-    (void)stmt;
+    ForwardADExpressionWalker expr_ad_expr = {};
+    expr_ad_expr.walk(stmt->expression);
 
-    AstWalker::insertStatement(new ExpressionStatement(new IdExpression("temp")));
+    AstWalker::insertStatement(new ExpressionStatement(expr_ad_expr.ad_expr));
   }
 
   constexpr void walk(ReturnStatement* stmt) override {
-    // ForwardADExpressionWalker expr_ad_expr = {};
-    // expr_ad_expr.walk(stmt->return_expression);
+    ForwardADExpressionWalker expr_ad_expr = {};
+    expr_ad_expr.walk(stmt->return_expression);
 
     Expression* primal_expr = stmt->return_expression;
-    stmt->return_expression = new FunctionCallExpression("std::make_pair", {primal_expr, new IdExpression("temp")});
+    stmt->return_expression = new FunctionCallExpression("std::make_pair", {primal_expr, expr_ad_expr.ad_expr});
     stmt->return_expression->parent = stmt;
   }
-
-  constexpr std::string genADName(std::string const& name) {
-    return su::joinE(name, "_d");
-  }
-
 };
 
 

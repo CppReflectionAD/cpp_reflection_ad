@@ -7,6 +7,7 @@ using std::meta::info;
 namespace m = ad::meta;
 
 enum class OperatorKind {
+  Add,
   Assign,
   Mul
 };
@@ -17,7 +18,9 @@ struct OperatorInfo {
 };
 
 constexpr OperatorInfo getOperatorInfo(m::operators op) {
-  if (op == m::operators::op_equals) {
+  if (op == m::operators::op_plus) {
+    return {OperatorKind::Add, "+"};
+  } else if (op == m::operators::op_equals) {
     return {OperatorKind::Assign, "="};
   } else if (op == m::operators::op_star) {
     return {OperatorKind::Mul, "*"};
