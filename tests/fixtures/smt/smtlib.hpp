@@ -33,6 +33,10 @@
 // and then the result. There an int is a mathematical integer, and every `+ -
 // *` in f is checked to fit in 32 bits, which makes it mean the same as on the
 // hardware; pre, post and the invariants are mathematics, with no overflow.
+// A pointer parameter is an array, `a[i]` a read of it, checked to be within
+// the array (whose length is unknown unless pre bounds it with
+// smt::valid_range), and smt::forall(lo, hi, [&](int k) { return ...; }) in a
+// specification or an invariant a quantifier over lo <= k < hi.
 //
 // See docs/smt-verification.md for how to check the output with a solver.
 
@@ -53,6 +57,19 @@ namespace smt {
 // isn't evaluated and can't overflow. verify reads cond from the body of the
 // lambda's call operator, where a captured variable is the function's own.
 template <class F> inline void invariant(F &&) noexcept {}
+
+// For specifications and invariants: whether f(k) holds for every k with
+// lo <= k < hi. It can also run, which tests a specification on an input.
+template <class F> constexpr bool forall(int lo, int hi, F f) {
+  for (int k = lo; k < hi; ++k)
+    if (!f(k))
+      return false;
+  return true;
+}
+
+// For specifications: a points to at least n ints. Running, it can't tell,
+// so it says yes.
+constexpr bool valid_range(const int *, int) { return true; }
 
 namespace m = ad::meta;
 
@@ -148,6 +165,8 @@ struct context {
   std::string decls;
   std::vector<std::string> hyps;
   std::vector<obligation> obligations;
+  std::vector<std::pair<std::string, std::string>> arrays; // symbol -> length
+  bool quantified = false;
 };
 
 consteval std::string bv(int v) {
@@ -301,22 +320,51 @@ consteval m::info callee(m::info e) {
   return m::is_function(f) ? f : m::declaration_of(f);
 }
 
+// Whether F, a function, is a specialization of the function template TMPL.
+consteval bool specializes(m::info f, m::info tmpl) {
+  return f != m::info{} && m::has_template_arguments(f) &&
+         m::template_of(f) == tmpl;
+}
+
+// The call operator of the lambda whose closure type is the first template
+// argument of F, a specialization such as smt::invariant<closure>.
+consteval m::info lambda_operator(m::info f) {
+  const m::info closure = m::remove_cvref(m::template_arguments_of(f).front());
+  for (m::info mem : m::members_of(closure, m::access_context::unchecked()))
+    if (m::is_function(mem) && m::has_body(mem) &&
+        !m::is_special_member_function(mem))
+      return mem;
+  throw "smt: expected a lambda";
+}
+
+// The operand of the return statement in the block BODY, or a null
+// reflection.
+consteval m::info return_in(m::info body) {
+  for (m::info s : m::statements_of(body)) {
+    if (m::is_return_statement(s))
+      return m::return_operand_of(s);
+    if (m::is_compound_statement(s))
+      if (m::info r = return_in(s); r != m::info{})
+        return r;
+  }
+  return {};
+}
+
+// The operand of the return statement of the function OP.
+consteval m::info returned_by(m::info op) {
+  if (m::info r = return_in(m::body_of(op)); r != m::info{})
+    return r;
+  throw "smt: a lambda in a specification must return its condition";
+}
+
 // The condition of smt::invariant([&] { return cond; }), if E is one: the
 // operand of the return statement of the lambda's call operator, found from
 // the specialization of smt::invariant that E calls.
 consteval m::info invariant_of(m::info e) {
   const m::info f = callee(e);
-  if (f == m::info{} || !m::has_template_arguments(f) ||
-      m::template_of(f) != ^^smt::invariant)
+  if (!specializes(f, ^^smt::invariant))
     return {};
-  const m::info closure = m::remove_cvref(m::template_arguments_of(f).front());
-  for (m::info mem : m::members_of(closure, m::access_context::unchecked()))
-    if (m::is_function(mem) && m::has_body(mem) &&
-        !m::is_special_member_function(mem))
-      for (m::info s : m::statements_of(m::body_of(mem)))
-        if (m::is_return_statement(s))
-          return m::return_operand_of(s);
-  throw "smt: write an invariant as smt::invariant([&] { return ...; })";
+  return returned_by(lambda_operator(f));
 }
 
 consteval term expr(context &c, m::info e, const state &s);
@@ -347,6 +395,30 @@ consteval term binary(context &c, const state &s, m::operators op,
     return arith("bvsub", "-");
   if (op == op_star || op == op_star_equals)
     return arith("bvmul", "*");
+  if (op == op_slash || op == op_slash_equals) {
+    if (!c.ints)
+      return arith("bvsdiv", "div");
+    // C++ rounds toward zero; SMT-LIB's div rounds so that the remainder
+    // isn't negative. They agree on non-negative operands.
+    const std::string x = as_num(c, l), y = as_num(c, r);
+    // A positive constant divisor can neither fail nor overflow, and only
+    // the sign of x matters.
+    const bool safe = !y.empty() && y != "0" &&
+                      y.find_first_not_of("0123456789") == std::string::npos;
+    const std::string ax = "(ite (>= " + x + " 0) " + x + " (- " + x + "))";
+    const std::string ay =
+        safe ? y : "(ite (>= " + y + " 0) " + y + " (- " + y + "))";
+    const std::string q = "(div " + ax + " " + ay + ")";
+    const std::string same_sign =
+        safe ? "(>= " + x + " 0)" : "(= (>= " + x + " 0) (> " + y + " 0))";
+    term t{"(ite " + same_sign + " " + q + " (- " + q + "))", false};
+    if (!c.ghost && !safe) {
+      require(c, "no division by zero in (/ " + x + " " + y + ")",
+              implies(and_(s.path, not_(skip(s))), "(not (= " + y + " 0))"));
+      check_fits(c, s, t.text);
+    }
+    return t;
+  }
   if (op == op_less)
     return cmp("bvslt", "<");
   if (op == op_less_equals)
@@ -366,12 +438,59 @@ consteval term binary(context &c, const state &s, m::operators op,
   throw "smt: unsupported binary operator";
 }
 
+// The length symbol of the array SYMBOL.
+consteval std::string length_of(const context &c, const std::string &symbol) {
+  for (const auto &a : c.arrays)
+    if (a.first == symbol)
+      return a.second;
+  throw "smt: subscript of something that isn't an array parameter";
+}
+
+// The array that E names.
+consteval std::string array_of(const context &c, m::info e, const state &s) {
+  e = strip(e);
+  if (!m::is_id_expression(e))
+    throw "smt: only an array parameter can be subscripted";
+  const std::string symbol = lookup(s, name_of(e));
+  length_of(c, symbol);
+  return symbol;
+}
+
 consteval term expr(context &c, m::info e, const state &s) {
   e = strip(e);
   if (m::is_literal(e))
     return {num(c, m::extract<int>(m::constant_of(e))), false};
-  if (m::is_id_expression(e))
-    return {lookup(s, name_of(e)), false};
+  if (m::is_id_expression(e)) {
+    const std::string symbol = lookup(s, name_of(e));
+    for (const auto &a : c.arrays)
+      if (a.first == symbol)
+        throw "smt: an array is only supported subscripted";
+    return {symbol, false};
+  }
+  if (const m::info f = callee(e); f != m::info{}) {
+    const std::vector<m::info> args = m::operands_of(strip(e));
+    if (specializes(f, ^^smt::forall)) {
+      if (!c.ghost)
+        throw "smt: smt::forall is for specifications and invariants";
+      const std::string lo = as_num(c, expr(c, args[0], s));
+      const std::string hi = as_num(c, expr(c, args[1], s));
+      const m::info op = lambda_operator(f);
+      const std::string k(m::identifier_of(m::parameters_of(op).front()));
+      const std::string bound = k + "!" + std::to_string(++c.fresh);
+      state inner = s;
+      inner.env.push_back({k, bound});
+      const std::string body = as_bool(c, expr(c, returned_by(op), inner));
+      c.quantified = true;
+      return {"(forall ((" + bound + " Int)) (=> (and (<= " + lo + " " + bound +
+                  ") (< " + bound + " " + hi + ")) " + body + "))",
+              true};
+    }
+    if (f == ^^smt::valid_range)
+      return {"(>= " + length_of(c, array_of(c, args[0], s)) + " " +
+                  as_num(c, expr(c, args[1], s)) + ")",
+              true};
+    throw "smt: unsupported call";
+  }
   if (m::is_conditional_operator(e)) {
     term k = expr(c, m::condition_of(e), s);
     term t = expr(c, m::true_expression_of(e), s);
@@ -400,6 +519,18 @@ consteval term expr(context &c, m::info e, const state &s) {
       if (op == m::operators::op_exclamation)
         return {"(not " + as_bool(c, a) + ")", true};
       throw "smt: unsupported unary operator";
+    }
+    if (op == m::operators::op_square_brackets && ops.size() == 2) {
+      if (!c.ints)
+        throw "smt: arrays are supported by verify only";
+      const std::string a = array_of(c, ops[0], s);
+      const std::string i = as_num(c, expr(c, ops[1], s));
+      if (!c.ghost)
+        require(c, "index in bounds: " + a + "[" + i + "]",
+                implies(and_(s.path, not_(skip(s))),
+                        "(and (<= 0 " + i + ") (< " + i + " " +
+                            length_of(c, a) + "))"));
+      return {"(select " + a + " " + i + ")", false};
     }
     if (ops.size() == 2 && !is_assignment(op))
       return binary(c, s, op, expr(c, ops[0], s), expr(c, ops[1], s));
@@ -883,8 +1014,16 @@ consteval std::string verify(m::info fn, m::info pre, m::info post) {
   std::vector<std::string> args;
   for (m::info p : m::parameters_of(fn)) {
     const std::string name(m::identifier_of(p));
-    c.decls += "(declare-const " + name + " Int)\n";
-    detail::hypothesis(c, "(fits " + name + ")");
+    if (m::is_pointer_type(m::remove_cvref(m::type_of(p)))) {
+      // An array, of a length that only pre can tell.
+      c.decls += "(declare-const " + name + " (Array Int Int))\n";
+      c.decls += "(declare-const " + name + "!len Int)\n";
+      detail::hypothesis(c, "(>= " + name + "!len 0)");
+      c.arrays.push_back({name, name + "!len"});
+    } else {
+      c.decls += "(declare-const " + name + " Int)\n";
+      detail::hypothesis(c, "(fits " + name + ")");
+    }
     s.env.push_back({name, name});
     args.push_back(name);
   }
@@ -896,8 +1035,9 @@ consteval std::string verify(m::info fn, m::info pre, m::info post) {
 
   const std::string name(m::identifier_of(fn));
   std::string r = "; Verification conditions for " + name +
-                  ": every check-sat should be unsat.\n"
-                  "(set-logic QF_NIA)\n"
+                  ": every check-sat should be unsat.\n" +
+                  (c.quantified || !c.arrays.empty() ? "(set-logic ALL)\n"
+                                                     : "(set-logic QF_NIA)\n") +
                   "(define-fun fits ((x Int)) Bool\n"
                   "  (and (<= (- 2147483648) x) (<= x 2147483647)))\n" +
                   c.decls;

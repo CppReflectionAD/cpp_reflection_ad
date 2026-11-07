@@ -1,7 +1,8 @@
 # Verifying functions with an SMT solver
 
-`tests/gcc_only/smtlib_verification.cpp`, `smtlib_loops.cpp` and
-`smtlib_invariants.cpp` turn C++ functions into SMT-LIB, using
+`tests/gcc_only/smtlib_verification.cpp`, `smtlib_loops.cpp`,
+`smtlib_invariants.cpp` and `smtlib_binary_search.cpp` turn C++ functions
+into SMT-LIB, using
 reflection on their bodies, and write scripts that a solver such as
 [Z3](https://github.com/Z3Prover/z3) can check. This page says what the
 translation covers, how to run it, and how to read the results. It was run
@@ -26,10 +27,12 @@ Z3 4.16.0.
 | `return e` | `ret!k`, guarded by `returned!k`: the condition that an earlier return already happened |
 | `while`, `do`/`while`, `for` | unrolled a fixed number of times (see [Loops](#loops)) |
 | `break`, `continue` | `broken!k`, `jump!k`: where the rest of the body is skipped |
+| `x / y` | `bvsdiv`; for `verify`, `div` adjusted to round toward zero as C++ does, checked for a zero divisor and for overflow (`INT_MIN / -1`) unless `y` is a positive constant |
+| a pointer parameter, `a[i]` | for `verify` only: an `(Array Int Int)` and `(select a i)`, checked to be within the array (see [Arrays](#arrays-binary-search)) |
 
-Anything else, such as a call or a division, makes `define_fun` throw, so
-the test fails to compile rather than produce a formula with a different
-meaning.
+Anything else, such as a call other than the specification helpers, `%` or
+a write to an array, makes `define_fun` throw, so the test fails to compile
+rather than produce a formula with a different meaning.
 
 Two quirks of the GCC fork matter here:
 
@@ -133,6 +136,63 @@ seconds on `sum_to` for `2s == n(n+1)` (nonlinear), and also for the linear
 one-variable counter at once. Checking an invariant someone wrote takes
 milliseconds.
 
+## Arrays: binary search
+
+`verify` treats a pointer parameter `a` as an array, `(Array Int Int)`, of
+an unknown length `a!len`. A read `a[i]` is `(select a i)`, and in the code
+(not in the specifications) each one is checked to be within the array:
+`0 <= i < a!len`. Two more helpers, for specifications and invariants:
+
+- `smt::valid_range(a, n)`: `a` points to at least `n` ints, `a!len >= n`.
+  It can't be checked when the program runs, so there it returns true.
+- `smt::forall(lo, hi, [&](int k) { return ...; })`: a quantifier over
+  `lo <= k < hi`, found through the lambda as for `smt::invariant`. It also
+  runs, as a loop, so a specification can be tested on an input.
+
+Then the script uses `(set-logic ALL)`. Reading `a[i]` needs the fork to
+reflect a subscript as written, operator `[]` with the pointer and the
+index, rather than the `*(a + (long) i * 4)` the front end builds: the
+`gcc-mirror` commit "Reflect a subscript of a pointer as written" does that.
+
+`smtlib_binary_search` proves this for every sorted array and key:
+
+```cpp
+constexpr bool search_pre(const int *a, int n, [[maybe_unused]] int key) {
+  return 0 <= n && smt::valid_range(a, n) &&
+         smt::forall(0, n, [&](int i) {
+           return smt::forall(i, n, [&](int j) { return a[i] <= a[j]; });
+         });
+}
+constexpr bool search_post(const int *a, int n, int key, int r) {
+  return (0 <= r && r < n && a[r] == key) ||
+         (r == -1 && smt::forall(0, n, [&](int k) { return a[k] != key; }));
+}
+
+int binary_search(const int *a, int n, int key) {
+  int lo = 0;
+  int hi = n;
+  while (lo < hi) {
+    smt::invariant([&] {
+      return 0 <= lo && lo <= hi && hi <= n &&
+             smt::forall(0, lo, [&](int k) { return a[k] < key; }) &&
+             smt::forall(hi, n, [&](int k) { return a[k] > key; });
+    });
+    int mid = lo + (hi - lo) / 2;
+    if (a[mid] < key)
+      lo = mid + 1;
+    else if (a[mid] > key)
+      hi = mid;
+    else
+      return mid;
+  }
+  return -1;
+}
+```
+
+"Sorted" is stated for every pair `i <= j` rather than for adjacent
+elements: from `a[k] <= a[k + 1]` alone, getting `a[k] <= a[mid]` for every
+`k < mid` takes induction, which the solver doesn't do.
+
 ## The scripts
 
 Each script defines one or two functions, states a claim about them, and
@@ -171,6 +231,18 @@ The last one is there to show the solver catching a real bug, the
 | `sum_to_weak_invariant.smt2` | with an invariant that leaves out `i <= n + 1`: true, but too weak | `sat` for post only |
 | `sum_capped.smt2` | the loop with a break gives 21 once `n >= 6` | all `unsat` |
 
+`smtlib_binary_search`:
+
+| Script | Claim | Expected |
+|---|---|---|
+| `binary_search.smt2` | the index of `key`, or -1 when it isn't in the array, for every sorted array | all `unsat` |
+| `binary_search_overflow.smt2` | the midpoint as `(lo + hi) / 2`, the bug that was in the JDK's binary search for nine years | `sat` for the overflow of `lo + hi` only |
+| `binary_search_weak_invariant.smt2` | an invariant that says nothing about the elements from `hi` on | `sat` for post only |
+| `binary_search_out_of_bounds.smt2` | `while (lo <= hi)` with `hi` starting at `n`, which reads `a[n]` | `sat` for the bounds checks of `a[mid]` (and for `mid + 1` and post) |
+
+Leaving the precondition out of `binary_search.smt2` makes the entry check,
+the bounds checks and preservation `sat`, so the proof does use it.
+
 ## Running it
 
 The SMT-LIB is generated at compile time, so you need the GCC fork; the
@@ -184,15 +256,17 @@ solver can run anywhere. On a Mac, GCC runs in the Linux container (see
    docker exec -w /src -e LC_ALL=C <container> \
      python3 run_tests.py --compiler gcc \
        --gcc-executable /src/build/gcc-mirror/artifacts/bin/g++ \
-       --tests smtlib_verification smtlib_loops smtlib_invariants
+       --tests smtlib_verification smtlib_loops smtlib_invariants \
+         smtlib_binary_search
    docker exec -w /src <container> sh -c 'mkdir -p build/smt &&
-     for t in smtlib_verification smtlib_loops smtlib_invariants; do
+     for t in smtlib_verification smtlib_loops smtlib_invariants \
+              smtlib_binary_search; do
        build/cmake/gcc-release/tests/$t build/smt > /dev/null; done'
    ```
 
-   `--gcc-executable` picks the GCC built from `gcc-mirror`, which the loop
-   and invariant scripts need; leave it out to use the pinned one, which
-   only produces the loop-free scripts.
+   `--gcc-executable` picks the GCC built from `gcc-mirror`, which the loop,
+   invariant and array scripts need; leave it out to use the pinned one,
+   which only produces the loop-free scripts.
 
    The tests also check the translation itself: `static_assert`s compare
    the generated `define-fun`s of `max_branchy` and `max_branchless` with
