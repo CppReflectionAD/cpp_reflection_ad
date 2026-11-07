@@ -299,9 +299,10 @@ one of those files.
 
 ## Benchmarks
 
-Benchmarks are built with the tests, but aren't registered with CTest. For
-timings, build Release (the default) and run one, setting the workload with
-`ITERATIONS`:
+Benchmarks are built with the tests. CTest runs each one only as a
+`benchmark_smoke.<name>` test with a tiny workload, so a benchmark that stops
+running fails CI. For timings, build Release (the default) and run one, setting
+the workload with `ITERATIONS`:
 
 ```bash
 ITERATIONS=1000000 python3 run_tests.py --compiler clang --benchmarks black_scholes_timing --run-executables

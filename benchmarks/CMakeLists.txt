@@ -1,7 +1,8 @@
 # ---------------------------------------------------------------------------
-# Benchmarks — built as executables but NOT registered with CTest.
-# Files here are intentionally excluded from add_test() so they never
-# appear in `ctest` runs or the tests/ discovery glob.
+# Benchmarks — each is an executable outside the tests/ discovery glob. CTest
+# runs each one only as a smoke test with a tiny workload (#94 T5), so a
+# benchmark that stops running fails CI. For timings, see "Benchmarks" in
+# CONTRIBUTING.md.
 # ---------------------------------------------------------------------------
 
 # The engine (reflection_ad::ad, which carries the flag profile) is defined in
@@ -19,6 +20,14 @@ else()
         -fconstexpr-ops-limit=96000000)
 endif()
 
+# Each smoke test's arguments, shrinking its workload to well under a second in
+# Release. black_scholes_timing reads ITERATIONS, which every smoke test gets. A
+# new benchmark needs an entry here unless it reads ITERATIONS too: otherwise its
+# full workload runs, up to the smoke test's TIMEOUT.
+set(_smoke_args_ad_bench 1000)
+set(_smoke_args_ad_tensor_bench 10)
+set(_smoke_args_black_scholes_simulated --paths 1000 --convergence-max-paths 1000)
+
 # ---------------------------------------------------------------------------
 # Helper: register one benchmark executable
 # ---------------------------------------------------------------------------
@@ -32,7 +41,11 @@ function(add_reflect_benchmark name source)
     set_target_properties(${name} PROPERTIES COMPILE_WARNING_AS_ERROR ON)
     # The Black-Scholes model (mc_sim/) is shared with the tests.
     target_include_directories(${name} PRIVATE "${CMAKE_SOURCE_DIR}/tests/fixtures")
-    # Intentionally no add_test() — benchmarks are run manually.
+    add_test(NAME benchmark_smoke.${name} COMMAND ${name} ${_smoke_args_${name}})
+    set_tests_properties(benchmark_smoke.${name} PROPERTIES
+        ENVIRONMENT ITERATIONS=100
+        TIMEOUT 120
+    )
 endfunction()
 
 # ---------------------------------------------------------------------------
