@@ -1,0 +1,32 @@
+=== Clang ===
+include/ad/forward_derivative.h:17:25: error: constexpr variable 'nodes' must be initialized by a constant expression
+   17 |   static constexpr auto nodes =
+      |                         ^
+   18 |       std::define_static_array(build_marked_nodes<Fn, (1ull << Wrt)>());
+      |       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+include/ad/forward_derivative.h:19:25: error: constexpr variable 'N' must be initialized by a constant expression
+   19 |   constexpr std::size_t N = nodes.size();
+      |                         ^   ~~~~~~~~~~~~
+include/ad/forward_derivative.h:22:9: error: variable-sized object may not be initialized
+   22 |   T val[N] = {};
+      |         ^
+include/ad/forward_derivative.h:23:10: error: variable-sized object may not be initialized
+   23 |   T tang[N] = {};
+      |          ^
+include/ad/forward_derivative.h:25:36: error: constexpr variable '__range' must be initialized by a constant expression
+   25 |   template for (constexpr auto n : nodes) {
+      |                                    ^~~~~
+include/ad/forward_derivative.h:25:36: error: could not compute size of expansion
+   25 |   template for (constexpr auto n : nodes) {
+      |                                    ^
+
+=== GCC ===
+include/ad/forward_derivative.h:17:25: error: uncaught exception '(const char*)"reflection AD: an assignment inside an expression is not supported; make it a statement of its own"'
+   17 |   static constexpr auto nodes =
+      |                         ^~~~~
+include/ad/forward_derivative.h:22:9: error: size of array is not an integral constant-expression
+   22 |   T val[N] = {};
+      |         ^
+include/ad/forward_derivative.h:23:10: error: size of array is not an integral constant-expression
+   23 |   T tang[N] = {};
+      |          ^

@@ -84,10 +84,7 @@ toolchain driver, builds the `libc++`/`libc++abi` runtimes (plus `libunwind`
 except on macOS, where the system unwinder is used) with that clang, and syncs
 the fork's `<meta>` header. It also builds what the sanitizer, coverage and
 static-analysis checks need: compiler-rt's ASan, UBSan and profile runtimes,
-`clang-tidy`, `llvm-cov`, `llvm-profdata` and `llvm-symbolizer`. On macOS it
-first applies LLVM's fix for the sanitizers hanging at startup on macOS 26
-(`tools/toolchain/patches/`) to the submodule, which then shows as modified in
-`git status`.
+`clang-tidy`, `llvm-cov`, `llvm-profdata` and `llvm-symbolizer`.
 
 GCC comes from the `gcc` submodule, the `p4395` branch of
 [CppReflectionAD/gcc](https://github.com/CppReflectionAD/gcc), into
@@ -125,6 +122,15 @@ clones made before the move once, after pulling:
 
 ```bash
 git submodule sync clang-p2996 && git submodule update clang-p2996
+```
+
+Until `clang-p2996` included LLVM's fix for the sanitizers hanging at startup
+on macOS 26, a macOS build applied it to the submodule and left it modified.
+The pin has the fix now, so on a Mac clone built before that, discard the old
+copy once, after pulling, or `git submodule update` stops at the local changes:
+
+```bash
+git -C clang-p2996 checkout -- compiler-rt && git submodule update clang-p2996
 ```
 
 To work on GCC on a Mac, branch from `p4395` in `gcc-darwin-reflect`:
