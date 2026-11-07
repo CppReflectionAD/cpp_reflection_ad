@@ -25,14 +25,14 @@
 // continue) skips the statements up to that label.
 //
 // smt::verify(^^f, ^^pre, ^^post) proves f for every input instead, with a
-// loop invariant written in the loop as SMT_INVARIANT(...). It gives a script
-// of verification conditions, each of which a solver should find unsat: the
-// invariant holds when the loop is entered and after each iteration, no
-// arithmetic in f overflows, and the result satisfies post. pre and post are
-// constexpr bool functions: pre takes f's parameters, post those and then the
-// result. There an int is a mathematical integer, and every `+ - *` in f is
-// checked to fit in 32 bits, which makes it mean the same as on the hardware;
-// pre, post and the invariants are mathematics, with no overflow.
+// loop invariant written in the loop as smt::invariant([&] { return ...; }).
+// It gives a script of verification conditions, each of which a solver should
+// find unsat: the invariant holds when the loop is entered and after each
+// iteration, no arithmetic in f overflows, and the result satisfies post. pre
+// and post are constexpr bool functions: pre takes f's parameters, post those
+// and then the result. There an int is a mathematical integer, and every `+ -
+// *` in f is checked to fit in 32 bits, which makes it mean the same as on the
+// hardware; pre, post and the invariants are mathematics, with no overflow.
 //
 // See docs/smt-verification.md for how to check the output with a solver.
 
@@ -47,16 +47,12 @@
 
 namespace smt {
 
-// SMT_INVARIANT(cond), as a statement of a loop's body, says that cond holds
-// whenever the loop's condition is about to be checked. It does nothing when
-// the program runs: unevaluated() is false, so cond isn't evaluated and can't
-// overflow, and it isn't constexpr, so the compiler keeps it for reflection to
-// see.
-inline void invariant(bool) noexcept {}
-inline bool unevaluated() noexcept { return false; }
-
-#define SMT_INVARIANT(...)                                                     \
-  ::smt::invariant(::smt::unevaluated() && (__VA_ARGS__))
+// smt::invariant([&] { return cond; }), as a statement of a loop's body, says
+// that cond holds whenever the loop's condition is about to be checked. It
+// does nothing when the program runs: the lambda is never called, so cond
+// isn't evaluated and can't overflow. verify reads cond from the body of the
+// lambda's call operator, where a captured variable is the function's own.
+template <class F> inline void invariant(F &&) noexcept {}
 
 namespace m = ad::meta;
 
@@ -296,28 +292,31 @@ consteval bool is_assignment(m::operators op) {
          op == m::operators::op_star_equals;
 }
 
-// Whether E is a call of FN.
-consteval bool calls(m::info e, m::info fn) {
+// The function that E calls, or a null reflection if E isn't a call.
+consteval m::info callee(m::info e) {
   e = strip(e);
   if (!m::is_expression(e) || !m::is_function_call(e))
-    return false;
-  m::info callee = m::callee_of(e);
-  if (!m::is_function(callee))
-    callee = m::declaration_of(callee);
-  return callee == fn;
+    return {};
+  m::info f = m::callee_of(e);
+  return m::is_function(f) ? f : m::declaration_of(f);
 }
 
-// The condition of SMT_INVARIANT(cond), if E is one.
+// The condition of smt::invariant([&] { return cond; }), if E is one: the
+// operand of the return statement of the lambda's call operator, found from
+// the specialization of smt::invariant that E calls.
 consteval m::info invariant_of(m::info e) {
-  if (!calls(e, ^^smt::invariant))
+  const m::info f = callee(e);
+  if (f == m::info{} || !m::has_template_arguments(f) ||
+      m::template_of(f) != ^^smt::invariant)
     return {};
-  const m::info arg = strip(m::operands_of(strip(e)).back());
-  const auto ops = m::operands_of(arg);
-  if (!m::is_operator_expression(arg) ||
-      m::expression_operator_of(arg) != m::operators::op_ampersand_ampersand ||
-      !calls(ops[0], ^^smt::unevaluated))
-    throw "smt: write an invariant as SMT_INVARIANT(...)";
-  return ops[1];
+  const m::info closure = m::remove_cvref(m::template_arguments_of(f).front());
+  for (m::info mem : m::members_of(closure, m::access_context::unchecked()))
+    if (m::is_function(mem) && m::has_body(mem) &&
+        !m::is_special_member_function(mem))
+      for (m::info s : m::statements_of(m::body_of(mem)))
+        if (m::is_return_statement(s))
+          return m::return_operand_of(s);
+  throw "smt: write an invariant as smt::invariant([&] { return ...; })";
 }
 
 consteval term expr(context &c, m::info e, const state &s);
@@ -634,20 +633,33 @@ consteval void run_loop(context &c, state &s, const std::vector<m::info> &k,
   s.broken = outer_broken;
 }
 
-// The invariant of a loop: SMT_INVARIANT(...) among the top-level statements
-// of its body.
+// Set INV to the invariant among statement ST and the blocks in it, but not
+// in a nested loop's body or an if's branches. The lambda's closure is a
+// temporary, which makes a loop's body a block of its own.
+consteval void find_invariant(m::info st, m::info &inv) {
+  if (m::is_compound_statement(st)) {
+    for (m::info k : m::statements_of(st))
+      find_invariant(k, inv);
+    return;
+  }
+  if (!m::is_expression_statement(st))
+    return;
+  if (m::info i = invariant_of(m::expression_of(st)); i != m::info{}) {
+    if (inv != m::info{})
+      throw "smt: a loop has more than one smt::invariant";
+    inv = i;
+  }
+}
+
+// The invariant of a loop: the smt::invariant among the statements of its
+// body.
 consteval m::info loop_invariant(const std::vector<m::info> &k,
                                  const loop_match &lm) {
   m::info inv;
   for (std::size_t j = lm.body_begin; j < lm.body_end; ++j)
-    if (m::is_expression_statement(k[j]))
-      if (m::info i = invariant_of(m::expression_of(k[j])); i != m::info{}) {
-        if (inv != m::info{})
-          throw "smt: a loop has more than one SMT_INVARIANT";
-        inv = i;
-      }
+    find_invariant(k[j], inv);
   if (inv == m::info{})
-    throw "smt: verify needs an SMT_INVARIANT(...) in each loop";
+    throw "smt: verify needs an smt::invariant(...) in each loop";
   return inv;
 }
 

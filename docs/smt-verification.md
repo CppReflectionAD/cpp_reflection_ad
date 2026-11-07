@@ -83,7 +83,7 @@ int sum_to(int n) {
   int s = 0;
   int i = 1;
   while (i <= n) {
-    SMT_INVARIANT(1 <= i && i <= n + 1 && 2 * s == i * (i - 1));
+    smt::invariant([&] { return 1 <= i && i <= n + 1 && 2 * s == i * (i - 1); });
     s += i;
     ++i;
   }
@@ -93,12 +93,16 @@ int sum_to(int n) {
 
 - `pre` takes `f`'s parameters and `post` those and then the result; each is
   a `constexpr bool` function of one `return`.
-- `SMT_INVARIANT(cond)` says that `cond` holds each time the loop's condition
-  is about to be checked. It expands to
-  `smt::invariant(smt::unevaluated() && (cond))`: when the program runs,
-  `unevaluated()` is false, so `cond` isn't evaluated and can't overflow;
-  reflection sees all of it, because `unevaluated` isn't `constexpr` and so
-  isn't folded away.
+- `smt::invariant([&] { return cond; })` says that `cond` holds each time
+  the loop's condition is about to be checked. `smt::invariant` is an empty
+  function template that never calls the lambda, so when the program runs
+  `cond` isn't evaluated and can't overflow (`2 * s == i * (i - 1)` would,
+  for large `i`). `verify` finds the lambda's type as the template argument
+  of the `smt::invariant` specialization the statement calls, and reads
+  `cond` from the `return` of its call operator, where `i` and `s` are the
+  function's own variables, through the by-reference capture. The closure is
+  a temporary, so the loop's body becomes a block; that changes nothing
+  else.
 
 The result is a script of checks, each labelled by an `echo`, each of which
 should be `unsat` (QF_NIA: integer arithmetic with multiplication):
@@ -261,5 +265,6 @@ loops), and add a script: declare its arguments with `declare-const`,
 (…))` to see a counterexample). In a test with loops, keep the call to
 `define_fun` dependent on a template parameter, as `smtlib_loops` does, so
 that a compiler without `label_of` skips it instead of failing. To prove a
-loop for every input, write `SMT_INVARIANT(...)` in it and use
+loop for every input, write `smt::invariant([&] { return ...; })` in it and
+use
 `smt::verify(^^f, ^^pre, ^^post)` instead.

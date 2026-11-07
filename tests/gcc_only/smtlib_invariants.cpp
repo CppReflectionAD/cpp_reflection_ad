@@ -1,7 +1,8 @@
 // Verification conditions from loop invariants, for every input.
 //
 // smt::verify(^^f, ^^pre, ^^post) (tests/fixtures/smt/smtlib.hpp) replaces
-// each loop of f by the invariant written in it with SMT_INVARIANT(...), and
+// each loop of f by the invariant written in it with
+// smt::invariant([&] { return ...; }), and
 // gives a script with one check per verification condition: the invariant
 // holds on entry and is preserved, no `+ - *` in f overflows, and f returns a
 // result that satisfies post. Every check is unsat when f is correct.
@@ -33,7 +34,8 @@ int sum_to(int n) {
   int s = 0;
   int i = 1;
   while (i <= n) {
-    SMT_INVARIANT(1 <= i && i <= n + 1 && 2 * s == i * (i - 1));
+    smt::invariant(
+        [&] { return 1 <= i && i <= n + 1 && 2 * s == i * (i - 1); });
     s += i;
     ++i;
   }
@@ -43,7 +45,8 @@ int sum_to(int n) {
 int sum_to_for(int n) {
   int s = 0;
   for (int i = 1; i <= n; ++i) {
-    SMT_INVARIANT(1 <= i && i <= n + 1 && 2 * s == i * (i - 1));
+    smt::invariant(
+        [&] { return 1 <= i && i <= n + 1 && 2 * s == i * (i - 1); });
     s += i;
   }
   return s;
@@ -53,7 +56,7 @@ int sum_to_wrong_invariant(int n) {
   int s = 0;
   int i = 1;
   while (i <= n) {
-    SMT_INVARIANT(2 * s == i * i);
+    smt::invariant([&] { return 2 * s == i * i; });
     s += i;
     ++i;
   }
@@ -64,7 +67,7 @@ int sum_to_weak_invariant(int n) {
   int s = 0;
   int i = 1;
   while (i <= n) {
-    SMT_INVARIANT(1 <= i && 2 * s == i * (i - 1));
+    smt::invariant([&] { return 1 <= i && 2 * s == i * (i - 1); });
     s += i;
     ++i;
   }
@@ -76,7 +79,8 @@ int sum_capped(int n) {
   int s = 0;
   int i = 1;
   while (i <= n) {
-    SMT_INVARIANT(1 <= i && i <= n + 1 && 2 * s == i * (i - 1) && s < 20);
+    smt::invariant(
+        [&] { return 1 <= i && i <= n + 1 && 2 * s == i * (i - 1) && s < 20; });
     s += i;
     if (s >= 20)
       break;
@@ -163,7 +167,7 @@ template <class D> struct invariant_scripts<true, D> {
 
 int main(int argc, char **argv) {
   // The functions compute what the specifications say, on a few inputs; the
-  // invariants don't run.
+  // invariants' lambdas are never called.
   EXPECT_EQUAL(sum_to(0), 0);
   EXPECT_EQUAL(sum_to(10), 55);
   EXPECT_EQUAL(sum_to(65535), 2147450880);
