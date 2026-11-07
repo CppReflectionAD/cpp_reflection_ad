@@ -24,6 +24,16 @@
 // body a goto to the exit label is a break, and one to a later label (a
 // continue) skips the statements up to that label.
 //
+// smt::verify(^^f, ^^pre, ^^post) proves f for every input instead, with a
+// loop invariant written in the loop as SMT_INVARIANT(...). It gives a script
+// of verification conditions, each of which a solver should find unsat: the
+// invariant holds when the loop is entered and after each iteration, no
+// arithmetic in f overflows, and the result satisfies post. pre and post are
+// constexpr bool functions: pre takes f's parameters, post those and then the
+// result. There an int is a mathematical integer, and every `+ - *` in f is
+// checked to fit in 32 bits, which makes it mean the same as on the hardware;
+// pre, post and the invariants are mathematics, with no overflow.
+//
 // See docs/smt-verification.md for how to check the output with a solver.
 
 #ifndef SMT_SMTLIB_HPP
@@ -36,6 +46,17 @@
 #include <vector>
 
 namespace smt {
+
+// SMT_INVARIANT(cond), as a statement of a loop's body, says that cond holds
+// whenever the loop's condition is about to be checked. It does nothing when
+// the program runs: unevaluated() is false, so cond isn't evaluated and can't
+// overflow, and it isn't constexpr, so the compiler keeps it for reflection to
+// see.
+inline void invariant(bool) noexcept {}
+inline bool unevaluated() noexcept { return false; }
+
+#define SMT_INVARIANT(...)                                                     \
+  ::smt::invariant(::smt::unevaluated() && (__VA_ARGS__))
 
 namespace m = ad::meta;
 
@@ -108,15 +129,29 @@ struct loop_labels {
   m::info exit;
 };
 
+// Something verify's script asks the solver to refute: WHAT for the reader,
+// CLAIM, and how many of the hypotheses held where it was made.
+struct obligation {
+  std::string what;
+  std::string claim;
+  std::size_t hyps;
+};
+
 // A function's lets, in order, the counter that keeps their names fresh, the
 // unrolling bound, and the condition of each loop that its unrolling was
-// enough.
+// enough. For verify (INTS): the declarations in order, the hypotheses, and
+// the obligations; GHOST while translating pre, post or an invariant.
 struct context {
   std::vector<binding> lets;
   int fresh = 0;
   int unroll = 0;
   std::vector<std::string> unwound;
   std::vector<loop_labels> loops;
+  bool ints = false;
+  bool ghost = false;
+  std::string decls;
+  std::vector<std::string> hyps;
+  std::vector<obligation> obligations;
 };
 
 consteval std::string bv(int v) {
@@ -128,6 +163,17 @@ consteval std::string bv(int v) {
   for (int shift = 28; shift >= 0; shift -= 4)
     r += hex[(u >> shift) & 0xf];
   return r;
+}
+
+consteval std::string num(const context &c, int v) {
+  if (!c.ints)
+    return bv(v);
+  const long long w = v;
+  return w < 0 ? "(- " + std::to_string(-w) + ")" : std::to_string(w);
+}
+
+consteval std::string zero(const context &c) {
+  return c.ints ? "0" : "(_ bv0 32)";
 }
 
 consteval std::string or_(const std::string &a, const std::string &b) {
@@ -158,12 +204,21 @@ consteval std::string not_(const std::string &a) {
   return "(not " + a + ")";
 }
 
-consteval std::string as_bool(const term &t) {
-  return t.is_bool ? t.text : "(not (= " + t.text + " #x00000000))";
+consteval std::string implies(const std::string &a, const std::string &b) {
+  if (a == "true")
+    return b;
+  if (a == "false" || b == "true")
+    return "true";
+  return "(=> " + a + " " + b + ")";
 }
 
-consteval std::string as_bv(const term &t) {
-  return t.is_bool ? "(ite " + t.text + " #x00000001 #x00000000)" : t.text;
+consteval std::string as_bool(const context &c, const term &t) {
+  return t.is_bool ? t.text : "(not (= " + t.text + " " + num(c, 0) + "))";
+}
+
+consteval std::string as_num(const context &c, const term &t) {
+  return t.is_bool ? "(ite " + t.text + " " + num(c, 1) + " " + num(c, 0) + ")"
+                   : t.text;
 }
 
 consteval std::string lookup(const state &s, const std::string &name) {
@@ -182,11 +237,16 @@ consteval void set(state &s, const std::string &name, std::string symbol) {
   s.env.push_back({name, std::move(symbol)});
 }
 
-// Bind TEXT to a fresh name for NAME and return the name.
+// Bind TEXT, of sort Bool if IS_BOOL, to a fresh name for NAME and return the
+// name: a let for define_fun, a define-fun for verify.
 consteval std::string bind(context &c, const std::string &name,
-                           std::string text) {
+                           std::string text, bool is_bool = false) {
   std::string symbol = name + "!" + std::to_string(++c.fresh);
-  c.lets.push_back({symbol, std::move(text)});
+  if (c.ints)
+    c.decls += "(define-fun " + symbol + " () " + (is_bool ? "Bool " : "Int ") +
+               text + ")\n";
+  else
+    c.lets.push_back({symbol, std::move(text)});
   return symbol;
 }
 
@@ -194,10 +254,10 @@ consteval std::string bind(context &c, const std::string &name,
 // same.
 consteval std::string ite(context &c, const std::string &name,
                           const std::string &cond, const std::string &a,
-                          const std::string &b) {
+                          const std::string &b, bool is_bool = false) {
   if (a == b)
     return a;
-  return bind(c, name, "(ite " + cond + " " + a + " " + b + ")");
+  return bind(c, name, "(ite " + cond + " " + a + " " + b + ")", is_bool);
 }
 
 // Where the statements at this point don't run: after a return, a break, or a
@@ -207,6 +267,17 @@ consteval std::string skip(const state &s) {
   for (const jump &j : s.pending)
     r = or_(r, j.taken);
   return r;
+}
+
+consteval void require(context &c, std::string what, std::string claim) {
+  c.obligations.push_back({std::move(what), std::move(claim), c.hyps.size()});
+}
+
+// For verify: T, computed where S says, fits in an int.
+consteval void check_fits(context &c, const state &s, const std::string &t) {
+  if (c.ints && !c.ghost)
+    require(c, "no overflow in " + t,
+            implies(and_(s.path, not_(skip(s))), "(fits " + t + ")"));
 }
 
 consteval m::info strip(m::info e) {
@@ -225,40 +296,70 @@ consteval bool is_assignment(m::operators op) {
          op == m::operators::op_star_equals;
 }
 
-consteval term expr(m::info e, const state &s);
+// Whether E is a call of FN.
+consteval bool calls(m::info e, m::info fn) {
+  e = strip(e);
+  if (!m::is_expression(e) || !m::is_function_call(e))
+    return false;
+  m::info callee = m::callee_of(e);
+  if (!m::is_function(callee))
+    callee = m::declaration_of(callee);
+  return callee == fn;
+}
 
-consteval term binary(m::operators op, const term &l, const term &r) {
+// The condition of SMT_INVARIANT(cond), if E is one.
+consteval m::info invariant_of(m::info e) {
+  if (!calls(e, ^^smt::invariant))
+    return {};
+  const m::info arg = strip(m::operands_of(strip(e)).back());
+  const auto ops = m::operands_of(arg);
+  if (!m::is_operator_expression(arg) ||
+      m::expression_operator_of(arg) != m::operators::op_ampersand_ampersand ||
+      !calls(ops[0], ^^smt::unevaluated))
+    throw "smt: write an invariant as SMT_INVARIANT(...)";
+  return ops[1];
+}
+
+consteval term expr(context &c, m::info e, const state &s);
+
+consteval term binary(context &c, const state &s, m::operators op,
+                      const term &l, const term &r) {
   using enum m::operators;
-  auto bvop = [&](const char *f) {
-    return term{std::string("(") + f + " " + as_bv(l) + " " + as_bv(r) + ")",
-                false};
+  auto arith = [&](const char *bvf, const char *intf) {
+    term t{std::string("(") + (c.ints ? intf : bvf) + " " + as_num(c, l) + " " +
+               as_num(c, r) + ")",
+           false};
+    check_fits(c, s, t.text);
+    return t;
   };
-  auto cmp = [&](const char *f) {
-    return term{std::string("(") + f + " " + as_bv(l) + " " + as_bv(r) + ")",
+  auto cmp = [&](const char *bvf, const char *intf) {
+    return term{std::string("(") + (c.ints ? intf : bvf) + " " + as_num(c, l) +
+                    " " + as_num(c, r) + ")",
                 true};
   };
   auto logic = [&](const char *f) {
-    return term{
-        std::string("(") + f + " " + as_bool(l) + " " + as_bool(r) + ")", true};
+    return term{std::string("(") + f + " " + as_bool(c, l) + " " +
+                    as_bool(c, r) + ")",
+                true};
   };
   if (op == op_plus || op == op_plus_equals)
-    return bvop("bvadd");
+    return arith("bvadd", "+");
   if (op == op_minus || op == op_minus_equals)
-    return bvop("bvsub");
+    return arith("bvsub", "-");
   if (op == op_star || op == op_star_equals)
-    return bvop("bvmul");
+    return arith("bvmul", "*");
   if (op == op_less)
-    return cmp("bvslt");
+    return cmp("bvslt", "<");
   if (op == op_less_equals)
-    return cmp("bvsle");
+    return cmp("bvsle", "<=");
   if (op == op_greater)
-    return cmp("bvsgt");
+    return cmp("bvsgt", ">");
   if (op == op_greater_equals)
-    return cmp("bvsge");
+    return cmp("bvsge", ">=");
   if (op == op_equals_equals)
-    return cmp("=");
+    return cmp("=", "=");
   if (op == op_exclamation_equals)
-    return term{"(not (= " + as_bv(l) + " " + as_bv(r) + "))", true};
+    return term{"(not (= " + as_num(c, l) + " " + as_num(c, r) + "))", true};
   if (op == op_ampersand_ampersand)
     return logic("and");
   if (op == op_pipe_pipe)
@@ -266,36 +367,43 @@ consteval term binary(m::operators op, const term &l, const term &r) {
   throw "smt: unsupported binary operator";
 }
 
-consteval term expr(m::info e, const state &s) {
+consteval term expr(context &c, m::info e, const state &s) {
   e = strip(e);
   if (m::is_literal(e))
-    return {bv(m::extract<int>(m::constant_of(e))), false};
+    return {num(c, m::extract<int>(m::constant_of(e))), false};
   if (m::is_id_expression(e))
     return {lookup(s, name_of(e)), false};
   if (m::is_conditional_operator(e)) {
-    term c = expr(m::condition_of(e), s);
-    term t = expr(m::true_expression_of(e), s);
-    term f = expr(m::false_expression_of(e), s);
+    term k = expr(c, m::condition_of(e), s);
+    term t = expr(c, m::true_expression_of(e), s);
+    term f = expr(c, m::false_expression_of(e), s);
     if (t.is_bool && f.is_bool)
-      return {"(ite " + as_bool(c) + " " + t.text + " " + f.text + ")", true};
-    return {"(ite " + as_bool(c) + " " + as_bv(t) + " " + as_bv(f) + ")",
+      return {"(ite " + as_bool(c, k) + " " + t.text + " " + f.text + ")",
+              true};
+    return {"(ite " + as_bool(c, k) + " " + as_num(c, t) + " " + as_num(c, f) +
+                ")",
             false};
   }
   if (m::is_operator_expression(e)) {
     const m::operators op = m::expression_operator_of(e);
     const std::vector<m::info> ops = m::operands_of(e);
     if (ops.size() == 1) {
-      term a = expr(ops[0], s);
-      if (op == m::operators::op_minus)
-        return {"(bvneg " + as_bv(a) + ")", false};
+      term a = expr(c, ops[0], s);
+      if (op == m::operators::op_minus) {
+        term t{c.ints ? "(- " + as_num(c, a) + ")"
+                      : "(bvneg " + as_num(c, a) + ")",
+               false};
+        check_fits(c, s, t.text);
+        return t;
+      }
       if (op == m::operators::op_plus)
-        return {as_bv(a), false};
+        return {as_num(c, a), false};
       if (op == m::operators::op_exclamation)
-        return {"(not " + as_bool(a) + ")", true};
+        return {"(not " + as_bool(c, a) + ")", true};
       throw "smt: unsupported unary operator";
     }
     if (ops.size() == 2 && !is_assignment(op))
-      return binary(op, expr(ops[0], s), expr(ops[1], s));
+      return binary(c, s, op, expr(c, ops[0], s), expr(c, ops[1], s));
   }
   throw "smt: unsupported expression";
 }
@@ -311,11 +419,11 @@ consteval std::string guarded(const state &s, const std::string &old_value,
 
 consteval void assign(context &c, state &s, const std::string &name,
                       const term &value) {
-  std::string old_value = "(_ bv0 32)";
+  std::string old_value = zero(c);
   for (auto &e : s.env)
     if (e.first == name)
       old_value = e.second;
-  set(s, name, bind(c, name, guarded(s, old_value, as_bv(value))));
+  set(s, name, bind(c, name, guarded(s, old_value, as_num(c, value))));
 }
 
 // FLAG becomes true where the statement runs. Where FLAG is all of skip, that
@@ -325,7 +433,7 @@ consteval std::string taken(context &c, const state &s, const std::string &flag,
   const std::string sk = skip(s);
   if (sk == "false" || sk == flag)
     return "true";
-  return bind(c, name, or_(flag, not_(sk)));
+  return bind(c, name, or_(flag, not_(sk)), true);
 }
 
 consteval std::string pending_of(const state &s, m::info l) {
@@ -354,15 +462,15 @@ consteval state merge(context &c, const std::string &cond, const state &before,
     set(r, e.first, ite(c, e.first, cond, x, y));
   }
   r.ret = ite(c, "ret", cond, a.ret, b.ret);
-  r.returned = ite(c, "returned", cond, a.returned, b.returned);
-  r.broken = ite(c, "broken", cond, a.broken, b.broken);
+  r.returned = ite(c, "returned", cond, a.returned, b.returned, true);
+  r.broken = ite(c, "broken", cond, a.broken, b.broken, true);
   r.pending.clear();
   for (const state *side : {&a, &b})
     for (const jump &j : side->pending)
       if (pending_of(r, j.label) == "false")
         set_pending(r, j.label,
                     ite(c, "jump", cond, pending_of(a, j.label),
-                        pending_of(b, j.label)));
+                        pending_of(b, j.label), true));
   r.path = before.path;
   return r;
 }
@@ -385,6 +493,42 @@ consteval m::info else_of(m::info st) {
 #endif
 }
 
+// The variable that the assignment E (`x = e`, `x op= e`, `++x`, `x--`)
+// assigns, or "" if E isn't one.
+consteval std::string assigned_by(m::info e) {
+  e = strip(e);
+  if (!m::is_expression(e) || !m::is_operator_expression(e))
+    return "";
+  const m::operators op = m::expression_operator_of(e);
+  if (op == m::operators::op_plus_plus || op == m::operators::op_minus_minus ||
+      is_assignment(op))
+    return name_of(strip(m::operands_of(e)[0]));
+  return "";
+}
+
+// Add to OUT the variables that statement ST assigns.
+consteval void assigned_in(m::info st, std::vector<std::string> &out) {
+  if (st == m::info{})
+    return;
+  std::string name;
+  if (m::is_compound_statement(st)) {
+    for (m::info k : m::statements_of(st))
+      assigned_in(k, out);
+    return;
+  }
+  if (m::is_if_statement(st)) {
+    assigned_in(then_of(st), out);
+    assigned_in(else_of(st), out);
+    return;
+  }
+  if (m::is_expression_statement(st))
+    name = assigned_by(m::expression_of(st));
+  else if (m::is_expression(st))
+    name = assigned_by(st);
+  if (!name.empty())
+    out.push_back(name);
+}
+
 // An assignment `x = e`, `x op= e`, `++x` or `x--`, as an expression.
 consteval bool assignment(context &c, state &s, m::info e) {
   e = strip(e);
@@ -397,17 +541,18 @@ consteval bool assignment(context &c, state &s, m::info e) {
       ops.size() == 1) {
     const std::string name = name_of(strip(ops[0]));
     assign(c, s, name,
-           binary(op == m::operators::op_plus_plus ? m::operators::op_plus
+           binary(c, s,
+                  op == m::operators::op_plus_plus ? m::operators::op_plus
                                                    : m::operators::op_minus,
-                  term{lookup(s, name), false}, term{bv(1), false}));
+                  term{lookup(s, name), false}, term{num(c, 1), false}));
     return true;
   }
   if (!is_assignment(op))
     return false;
   const std::string name = name_of(strip(ops[0]));
-  term value = expr(ops[1], s);
+  term value = expr(c, ops[1], s);
   if (op != m::operators::op_equals)
-    value = binary(op, term{lookup(s, name), false}, value);
+    value = binary(c, s, op, term{lookup(s, name), false}, value);
   assign(c, s, name, value);
   return true;
 }
@@ -470,8 +615,8 @@ consteval void run_loop(context &c, state &s, const std::vector<m::info> &k,
   s.broken = "false";
   c.loops.push_back({lm.exit});
   for (int it = 0; it < c.unroll; ++it) {
-    const std::string go =
-        lm.is_do && it == 0 ? std::string("true") : as_bool(expr(cond, s));
+    const std::string go = lm.is_do && it == 0 ? std::string("true")
+                                               : as_bool(c, expr(c, cond, s));
     const std::string enter = and_(not_(skip(s)), go);
     state a = s;
     a.returned = a.broken = "false";
@@ -483,10 +628,94 @@ consteval void run_loop(context &c, state &s, const std::vector<m::info> &k,
   }
   // Another iteration would have started nowhere.
   const std::string more =
-      and_(and_(s.path, not_(skip(s))), as_bool(expr(cond, s)));
+      and_(and_(s.path, not_(skip(s))), as_bool(c, expr(c, cond, s)));
   c.unwound.push_back(not_(more));
   c.loops.pop_back();
   s.broken = outer_broken;
+}
+
+// The invariant of a loop: SMT_INVARIANT(...) among the top-level statements
+// of its body.
+consteval m::info loop_invariant(const std::vector<m::info> &k,
+                                 const loop_match &lm) {
+  m::info inv;
+  for (std::size_t j = lm.body_begin; j < lm.body_end; ++j)
+    if (m::is_expression_statement(k[j]))
+      if (m::info i = invariant_of(m::expression_of(k[j])); i != m::info{}) {
+        if (inv != m::info{})
+          throw "smt: a loop has more than one SMT_INVARIANT";
+        inv = i;
+      }
+  if (inv == m::info{})
+    throw "smt: verify needs an SMT_INVARIANT(...) in each loop";
+  return inv;
+}
+
+consteval std::string ghost(context &c, m::info e, const state &s) {
+  c.ghost = true;
+  const std::string r = as_bool(c, expr(c, e, s));
+  c.ghost = false;
+  return r;
+}
+
+consteval void hypothesis(context &c, const std::string &h) {
+  c.decls += "(define-fun hyp!" + std::to_string(c.hyps.size()) + " () Bool " +
+             h + ")\n";
+  c.hyps.push_back(h);
+}
+
+// For verify: replace a loop by its invariant. The invariant must hold on
+// entry; then the variables the loop assigns become arbitrary values for which
+// it holds, one iteration from there must restore it, and the code after the
+// loop starts from where the condition is false or the body broke out.
+consteval void verify_loop(context &c, state &s, const std::vector<m::info> &k,
+                           const loop_match &lm) {
+  if (s.path != "true" || skip(s) != "false")
+    throw "smt: verify handles a loop only where every path reaches it";
+  const m::info inv = loop_invariant(k, lm);
+  const m::info cond = m::condition_of(lm.cond_if);
+  require(c, "the loop invariant holds on entry", ghost(c, inv, s));
+
+  std::vector<std::string> names;
+  for (std::size_t j = lm.body_begin; j < lm.body_end; ++j)
+    assigned_in(k[j], names);
+  // Each variable in scope that the loop assigns, once.
+  const auto in_scope = s.env;
+  for (const auto &e : in_scope)
+    for (const std::string &n : names)
+      if (n == e.first) {
+        const std::string fresh = n + "!" + std::to_string(++c.fresh);
+        c.decls += "(declare-const " + fresh + " Int)\n";
+        hypothesis(c, "(fits " + fresh + ")");
+        set(s, n, fresh);
+        break;
+      }
+  hypothesis(c, ghost(c, inv, s));
+
+  const state head = s;
+  const std::string go =
+      lm.is_do ? std::string("true") : as_bool(c, expr(c, cond, head));
+  state a = head;
+  a.path = go;
+  c.loops.push_back({lm.exit});
+  block(c, a, k, lm.body_begin, lm.body_end);
+  c.loops.pop_back();
+  a.pending.clear();
+  const std::string done = or_(a.returned, a.broken);
+  if (lm.is_do) {
+    const std::string again = as_bool(c, expr(c, cond, a));
+    require(c, "the loop invariant is preserved",
+            implies(and_(not_(done), again), ghost(c, inv, a)));
+    s = a;
+    hypothesis(c, or_(done, not_(again)));
+  } else {
+    require(c, "the loop invariant is preserved",
+            implies(and_(go, not_(done)), ghost(c, inv, a)));
+    s = merge(c, go, head, a, head);
+    hypothesis(c, or_(not_(go), done));
+  }
+  s.broken = "false";
+  s.path = "true";
 }
 
 consteval void block(context &c, state &s, const std::vector<m::info> &k,
@@ -494,7 +723,10 @@ consteval void block(context &c, state &s, const std::vector<m::info> &k,
   for (std::size_t j = begin; j < end;) {
     const loop_match lm = match_loop(k, j);
     if (lm.found && lm.end <= end) {
-      run_loop(c, s, k, lm);
+      if (c.ints)
+        verify_loop(c, s, k, lm);
+      else
+        run_loop(c, s, k, lm);
       j = lm.end;
     } else
       stmt(c, s, k[j++]);
@@ -510,8 +742,8 @@ consteval void stmt(context &c, state &s, m::info st) {
     return;
   }
   if (m::is_return_statement(st)) {
-    term v = expr(m::return_operand_of(st), s);
-    s.ret = bind(c, "ret", guarded(s, s.ret, as_bv(v)));
+    term v = expr(c, m::return_operand_of(st), s);
+    s.ret = bind(c, "ret", guarded(s, s.ret, as_num(c, v)));
     s.returned = taken(c, s, s.returned, "returned");
     return;
   }
@@ -520,17 +752,20 @@ consteval void stmt(context &c, state &s, m::info st) {
       m::info init = m::initializer_of(var);
       if (init == m::info{})
         throw "smt: a declaration needs an initializer";
-      assign(c, s, std::string(m::identifier_of(var)), expr(init, s));
+      assign(c, s, std::string(m::identifier_of(var)), expr(c, init, s));
     }
     return;
   }
   if (m::is_expression_statement(st)) {
-    if (!assignment(c, s, m::expression_of(st)))
+    const m::info e = m::expression_of(st);
+    if (invariant_of(e) != m::info{}) // read by verify_loop
+      return;
+    if (!assignment(c, s, e))
       throw "smt: unsupported expression statement";
     return;
   }
   if (m::is_if_statement(st)) {
-    const std::string cond = as_bool(expr(m::condition_of(st), s));
+    const std::string cond = as_bool(c, expr(c, m::condition_of(st), s));
     state a = s;
     a.path = and_(s.path, cond);
     stmt(c, a, then_of(st));
@@ -563,6 +798,21 @@ consteval void stmt(context &c, state &s, m::info st) {
     throw "smt: unsupported expression in a branch";
   }
   throw "smt: unsupported statement";
+}
+
+// What the constexpr bool function SPEC returns for ARGS, as mathematics.
+consteval std::string spec(context &c, m::info fn,
+                           const std::vector<std::string> &args) {
+  const auto params = m::parameters_of(fn);
+  if (params.size() != args.size())
+    throw "smt: a pre or post has the wrong number of parameters";
+  state s;
+  for (std::size_t i = 0; i < args.size(); ++i)
+    s.env.push_back({std::string(m::identifier_of(params[i])), args[i]});
+  const auto body = m::statements_of(m::body_of(fn));
+  if (body.size() != 1 || !m::is_return_statement(body[0]))
+    throw "smt: a pre or post must be a single return statement";
+  return ghost(c, m::return_operand_of(body[0]), s);
 }
 
 } // namespace detail
@@ -606,6 +856,44 @@ consteval std::string define_fun(m::info fn, int unroll = 0) {
       all = detail::and_(all, u);
     r += "(define-fun " + name + "_unwound (" + params + ") Bool\n  " +
          with_lets(all) + ")\n";
+  }
+  return r;
+}
+
+// The verification conditions of FN against PRE and POST, as an SMT-LIB
+// script: each `(check-sat)` after an `(echo ...)` saying what it checks
+// should be unsat.
+consteval std::string verify(m::info fn, m::info pre, m::info post) {
+  detail::context c;
+  c.ints = true;
+  detail::state s;
+  s.ret = "0";
+  std::vector<std::string> args;
+  for (m::info p : m::parameters_of(fn)) {
+    const std::string name(m::identifier_of(p));
+    c.decls += "(declare-const " + name + " Int)\n";
+    detail::hypothesis(c, "(fits " + name + ")");
+    s.env.push_back({name, name});
+    args.push_back(name);
+  }
+  detail::hypothesis(c, detail::spec(c, pre, args));
+  detail::stmt(c, s, m::body_of(fn));
+  args.push_back(s.ret);
+  detail::require(c, "the function returns, and its result satisfies post",
+                  detail::and_(s.returned, detail::spec(c, post, args)));
+
+  const std::string name(m::identifier_of(fn));
+  std::string r = "; Verification conditions for " + name +
+                  ": every check-sat should be unsat.\n"
+                  "(set-logic QF_NIA)\n"
+                  "(define-fun fits ((x Int)) Bool\n"
+                  "  (and (<= (- 2147483648) x) (<= x 2147483647)))\n" +
+                  c.decls;
+  for (const detail::obligation &o : c.obligations) {
+    r += "(echo \"" + name + ": " + o.what + "\")\n(push)\n";
+    for (std::size_t i = 0; i < o.hyps; ++i)
+      r += "(assert hyp!" + std::to_string(i) + ")\n";
+    r += "(assert (not " + o.claim + "))\n(check-sat)\n(pop)\n";
   }
   return r;
 }

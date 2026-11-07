@@ -1,7 +1,7 @@
 # Verifying functions with an SMT solver
 
-`tests/gcc_only/smtlib_verification.cpp` and
-`tests/gcc_only/smtlib_loops.cpp` turn C++ functions into SMT-LIB, using
+`tests/gcc_only/smtlib_verification.cpp`, `smtlib_loops.cpp` and
+`smtlib_invariants.cpp` turn C++ functions into SMT-LIB, using
 reflection on their bodies, and write scripts that a solver such as
 [Z3](https://github.com/Z3Prover/z3) can check. This page says what the
 translation covers, how to run it, and how to read the results. It was run
@@ -67,9 +67,67 @@ them, through argument-dependent lookup on `std::meta::info`; where they're
 missing, `smtlib_loops` only prints that it skipped. On clang, which keeps
 its loops, the translator doesn't handle loops yet.
 
-Proving termination, or a claim for every `n` rather than a bounded range,
-needs an inductive invariant instead of unrolling: written by the user, or
-found by the solver from Horn clauses (Z3's Spacer). That isn't done yet.
+A claim for every `n`, rather than a bounded range, needs an invariant
+instead of unrolling; see the next section.
+
+## Loop invariants: proofs for every input
+
+`smt::verify(^^f, ^^pre, ^^post)` proves `f` correct for every input that
+satisfies `pre`, with an invariant written in each loop:
+
+```cpp
+constexpr bool sum_pre(int n) { return 0 <= n && n <= 65535; }
+constexpr bool sum_post(int n, int r) { return 2 * r == n * (n + 1); }
+
+int sum_to(int n) {
+  int s = 0;
+  int i = 1;
+  while (i <= n) {
+    SMT_INVARIANT(1 <= i && i <= n + 1 && 2 * s == i * (i - 1));
+    s += i;
+    ++i;
+  }
+  return s;
+}
+```
+
+- `pre` takes `f`'s parameters and `post` those and then the result; each is
+  a `constexpr bool` function of one `return`.
+- `SMT_INVARIANT(cond)` says that `cond` holds each time the loop's condition
+  is about to be checked. It expands to
+  `smt::invariant(smt::unevaluated() && (cond))`: when the program runs,
+  `unevaluated()` is false, so `cond` isn't evaluated and can't overflow;
+  reflection sees all of it, because `unevaluated` isn't `constexpr` and so
+  isn't folded away.
+
+The result is a script of checks, each labelled by an `echo`, each of which
+should be `unsat` (QF_NIA: integer arithmetic with multiplication):
+
+| Check | What it means |
+|---|---|
+| the loop invariant holds on entry | from `pre` and the code before the loop |
+| the loop invariant is preserved | from the invariant and the loop's condition, one pass of the body (that doesn't break or return) gives it back |
+| no overflow in (+ s!3 i!4) … | one per `+ - *` in `f`, where it runs |
+| the function returns, and its result satisfies post | from the state after the loop: where the condition is false or the body broke out |
+
+Here an `int` in `f` is a mathematical integer, and the overflow checks make
+every operation mean what it does on the hardware. `pre`, `post` and the
+invariants are mathematics: `2 * r == n * (n + 1)` has no overflow, even at
+`n = 65535`, which is how specification languages such as ACSL treat
+annotations. Each check assumes only what was established before it, so a
+false invariant can't make the entry check pass vacuously.
+
+`verify` handles loops at the top level of `f`'s body, reached on every path,
+with breaks and continues. It proves partial correctness: it doesn't prove
+that a loop terminates, which needs a ranking function (a value that is
+bounded below and decreases on every iteration).
+
+Why not let the solver find the invariant? Z3's CHC engine, Spacer, can
+infer invariants from Horn clauses, but with Z3 4.16.0 it timed out after 60
+seconds on `sum_to` for `2s == n(n+1)` (nonlinear), and also for the linear
+`s >= n` and `s >= 0`, with integers and with bitvectors, while it solves a
+one-variable counter at once. Checking an invariant someone wrote takes
+milliseconds.
 
 ## The scripts
 
@@ -99,6 +157,16 @@ The last one is there to show the solver catching a real bug, the
 | `sum_skip3.smt2` | a `continue`: the sum leaves out 3 | `unsat` |
 | `countdown_do.smt2` | a `do`/`while`, which runs once even for `n <= 0`, for `-10 <= n <= 15` | `unsat` |
 
+`smtlib_invariants` uses `smt::verify`; its checks are listed per script:
+
+| Script | Claim | Expected |
+|---|---|---|
+| `sum_to.smt2`, `sum_to_for.smt2` | `2 * sum_to(n) == n(n+1)` for `0 <= n <= 65535`, the largest `n` whose sum fits in an `int` | all `unsat` |
+| `sum_to_overflow.smt2` | the same for `n <= 65536` | `sat` for the overflow of `s + i` only |
+| `sum_to_wrong_invariant.smt2` | with the invariant `2 * s == i * i`, false on entry | `sat` on entry (and for preservation and post) |
+| `sum_to_weak_invariant.smt2` | with an invariant that leaves out `i <= n + 1`: true, but too weak | `sat` for post only |
+| `sum_capped.smt2` | the loop with a break gives 21 once `n >= 6` | all `unsat` |
+
 ## Running it
 
 The SMT-LIB is generated at compile time, so you need the GCC fork; the
@@ -112,15 +180,15 @@ solver can run anywhere. On a Mac, GCC runs in the Linux container (see
    docker exec -w /src -e LC_ALL=C <container> \
      python3 run_tests.py --compiler gcc \
        --gcc-executable /src/build/gcc-mirror/artifacts/bin/g++ \
-       --tests smtlib_verification smtlib_loops
+       --tests smtlib_verification smtlib_loops smtlib_invariants
    docker exec -w /src <container> sh -c 'mkdir -p build/smt &&
-     build/cmake/gcc-release/tests/smtlib_verification build/smt &&
-     build/cmake/gcc-release/tests/smtlib_loops build/smt'
+     for t in smtlib_verification smtlib_loops smtlib_invariants; do
+       build/cmake/gcc-release/tests/$t build/smt > /dev/null; done'
    ```
 
    `--gcc-executable` picks the GCC built from `gcc-mirror`, which the loop
-   scripts need; leave it out to use the pinned one, which only produces the
-   loop-free scripts.
+   and invariant scripts need; leave it out to use the pinned one, which
+   only produces the loop-free scripts.
 
    The tests also check the translation itself: `static_assert`s compare
    the generated `define-fun`s of `max_branchy` and `max_branchless` with
@@ -151,6 +219,23 @@ solver can run anywhere. On a Mac, GCC runs in the Linux container (see
    sum_to_off_by_one.smt2: sat ((n #x0000000e)  ((sum_to_off_by_one n) #x0000005b))
    ```
 
+   The invariant scripts have several checks each; pair each label with
+   its result:
+
+   ```sh
+   z3 build/smt/sum_to_overflow.smt2 | paste - -
+   ```
+
+   ```
+   sum_to: the loop invariant holds on entry	unsat
+   sum_to: no overflow in (+ s!3 i!4)	sat
+   sum_to: no overflow in (+ i!4 1)	unsat
+   sum_to: the loop invariant is preserved	unsat
+   sum_to: the function returns, and its result satisfies post	unsat
+   ```
+
+   Each takes about 10 ms.
+
 3. To see that a proof isn't vacuous, break the function and check that the
    solver notices. Making `median3`'s first return give `a` instead of `b`
    turns its result into `sat`:
@@ -175,4 +260,6 @@ loops), and add a script: declare its arguments with `declare-const`,
 `(f_unwound …)` inside it), and end with `(check-sat)` (and `(get-value
 (…))` to see a counterexample). In a test with loops, keep the call to
 `define_fun` dependent on a template parameter, as `smtlib_loops` does, so
-that a compiler without `label_of` skips it instead of failing.
+that a compiler without `label_of` skips it instead of failing. To prove a
+loop for every input, write `SMT_INVARIANT(...)` in it and use
+`smt::verify(^^f, ^^pre, ^^post)` instead.
