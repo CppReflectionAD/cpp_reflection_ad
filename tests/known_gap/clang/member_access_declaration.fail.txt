@@ -1,0 +1,4 @@
+=== Clang ===
+tests/known_gap/clang/member_access_declaration.cpp:45:15: error: static assertion expression is not an integral constant expression
+   45 | static_assert(m::declaration_of(initializer(^^px)) == ^^point::x);
+      |               ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

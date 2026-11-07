@@ -57,6 +57,10 @@ function(normalize_error_output input output_var)
     # path in the output and deletes every error before it. The diagnostic's
     # own label (error:, note:) follows the location and is kept as-is.
     string(REGEX REPLACE "[^\n]*/([^/\n]+):[0-9]+:[0-9]+:" "\\1:" cleaned "${all_errors}")
+    # An internal compiler error names the line of the compiler's own source
+    # where it failed (", at <file>:<line>"), which changes between compiler
+    # versions; keep the file, drop the line.
+    string(REGEX REPLACE "(, at [^ \n:]+):[0-9]+" "\\1:N" cleaned "${cleaned}")
     # Collapse multiple spaces
     string(REGEX REPLACE "[ \t]+" " " cleaned "${cleaned}")
     # Strip trailing whitespace

@@ -65,6 +65,14 @@ The libraries are header-only, under `include/`:
   `absolute_normal_form.hpp`.
 - `include/cx_std/` — `constexpr` maths (`exp`, `log`, `sqrt`, `erfc`, `sin`,
   `cos`) for use in constant evaluation.
+- `include/ihm/` — "I Hate Macros" ([its README](include/ihm/README.md)):
+  `ihm.hpp`, test checks without macros (`ihm::expect_equal`,
+  `ihm::expect_not_equal`); a failure prints the values compared.
+- `include/ihm/clang_only/` — `ihm_expressions.hpp`, an optional
+  layer that also prints the checked expressions' text, from reflecting the
+  test body. Clang only: it uses the clang fork's expression reflection, which
+  the GCC fork doesn't have. `gap.hpp` stands in for the two parts of it the
+  clang fork lacks too (`tests/known_gap/clang/`).
 
 Include them by their path under `include/`, e.g. `#include <ad/autograd.h>`.
 In CMake, link `reflection_ad::ad` (or `reflection_ad::cx_std`), which also

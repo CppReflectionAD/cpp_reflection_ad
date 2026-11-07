@@ -1,0 +1,7 @@
+=== Clang ===
+tests/known_gap/clang/public_expression_of.cpp:21:35: error: no member named 'expression_of' in namespace 'std::meta'
+   21 |   return m::is_binary_operator(m::expression_of(s));
+      |                                   ^~~~~~~~~~~~~
+tests/known_gap/clang/public_expression_of.cpp:24:15: error: static assertion expression is not an integral constant expression
+   24 | static_assert(expression_of_gives_the_assignment());
+      |               ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
