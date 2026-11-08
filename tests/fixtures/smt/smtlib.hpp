@@ -603,8 +603,16 @@ consteval term expr(context &c, m::info e, const state &s) {
       return {"(>= " + length_of(c, array_of(c, args[0], s)) + " " +
                   as_num(c, expr(c, args[1], s)) + ")",
               true};
-    if (!c.ghost)
+    if (!c.ghost) {
+      if (!c.ints && m::is_function(f)) {
+        std::string call = "(" + std::string(m::identifier_of(f));
+        for (m::info arg : args)
+          call += " " + as_num(c, expr(c, arg, s));
+        call += ")";
+        return {call, false};
+      }
       throw "smt: unsupported call";
+    }
     if (specializes(f, ^^smt::old))
       return expr(c, args[0], c.entry);
     if (f == ^^smt::permutation) {
@@ -1267,6 +1275,38 @@ consteval std::string define_fun(m::info fn, int unroll = 0) {
          with_lets(all) + ")\n";
   }
   return r;
+}
+
+// Generate an SMT-LIB script in QF_BV to check whether CLAIM_FN always returns
+// non-zero (1). DEFS are functions that CLAIM_FN calls.
+// The script asserts that CLAIM_FN returns 0 / false: `unsat` proves CLAIM_FN
+// holds for all inputs, while `sat` finds a counterexample.
+consteval std::string refute_script(const std::vector<m::info> &defs,
+                                    m::info claim_fn, bool get_model = false) {
+  std::string s = "(set-logic QF_BV)\n";
+  for (m::info d : defs)
+    s += define_fun(d);
+  s += define_fun(claim_fn);
+  std::string call = "(" + std::string(m::identifier_of(claim_fn));
+  std::string get_vals;
+  for (m::info p : m::parameters_of(claim_fn)) {
+    const std::string name(m::identifier_of(p));
+    s += "(declare-const " + name + " (_ BitVec 32))\n";
+    call += " " + name;
+    get_vals += (get_vals.empty() ? "(" : " ") + name;
+  }
+  call += ")";
+  if (!get_vals.empty())
+    get_vals += ")";
+  s += "(assert (not (= " + call + " #x00000001)))\n";
+  s += "(check-sat)\n";
+  if (get_model && !get_vals.empty())
+    s += "(get-value " + get_vals + ")\n";
+  return s;
+}
+
+consteval std::string refute_script(m::info claim_fn, bool get_model = false) {
+  return refute_script(std::vector<m::info>{}, claim_fn, get_model);
 }
 
 // The verification conditions of FN against PRE and POST, as an SMT-LIB
