@@ -21,8 +21,7 @@ lists only the points that are easy to get wrong.
   `tools/toolchain/` or `.github/scripts/build-*-toolchain.sh` rebuilds the CI
   toolchains, which takes hours (see "CI checks" in CONTRIBUTING.md).
 - **Don't commit submodule changes** except in a pin bump or an integration
-  pull request (see "Bumping a compiler pin" in CONTRIBUTING.md). On macOS,
-  `clang-p2996` shows as modified after a compiler build; that is expected.
+  pull request (see "Bumping a compiler pin" in CONTRIBUTING.md).
 - **Reflect function bodies through `ad::meta`, not `std::meta`.** Both forks
   now have the same statement and expression API, so `ad::meta` is
   `std::meta`. `include/ad/meta.h` is where a workaround for one fork goes if
