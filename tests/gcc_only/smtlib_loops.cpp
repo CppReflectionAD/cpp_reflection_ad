@@ -18,6 +18,7 @@
 // false), the test only says it skipped. Run with a directory argument, it
 // writes the scripts there. See docs/smt-verification.md.
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <meta>
 #include <string>
@@ -191,6 +192,7 @@ template <class D> struct loop_scripts<true, D> {
         EXPECT_TRUE(out.find("((sum_to_unwound n) false)") !=
                     std::string::npos);
       if (argc > 1) {
+        std::filesystem::create_directories(argv[1]);
         std::ofstream f(std::string(argv[1]) + "/" + s.file);
         f << s.text;
         EXPECT_TRUE(static_cast<bool>(f));

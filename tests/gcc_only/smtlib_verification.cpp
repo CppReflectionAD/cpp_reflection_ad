@@ -12,6 +12,7 @@
 // The test runs Z3 on the scripts and checks the results; run with a
 // directory argument, it also writes the scripts there. See
 // docs/smt-verification.md.
+#include <filesystem>
 #include <fstream>
 #include <meta>
 #include <string>
@@ -143,6 +144,7 @@ int main(int argc, char **argv) {
     if (std::string_view(s.file) == "abs_nonnegative.smt2")
       EXPECT_TRUE(out.find("#x80000000") != std::string::npos);
     if (argc > 1) {
+      std::filesystem::create_directories(argv[1]);
       std::ofstream f(std::string(argv[1]) + "/" + s.file);
       f << s.text;
       EXPECT_TRUE(static_cast<bool>(f));

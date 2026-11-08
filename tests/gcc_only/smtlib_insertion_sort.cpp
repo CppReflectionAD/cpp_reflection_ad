@@ -21,6 +21,7 @@
 // skipped. Run with a directory argument, it writes the scripts there. See
 // docs/smt-verification.md.
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <meta>
 #include <string>
@@ -205,6 +206,7 @@ template <class D> struct sort_scripts<true, D> {
         {"insertion_sort_weak_invariant.smt2", vcs_weak},
     };
     if (argc > 1) {
+      std::filesystem::create_directories(argv[1]);
       for (const script &s : scripts) {
         std::ofstream out(std::string(argv[1]) + "/" + s.file);
         out << s.text;
