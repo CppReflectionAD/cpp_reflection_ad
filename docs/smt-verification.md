@@ -1,8 +1,8 @@
 # Verifying functions with an SMT solver
 
 `tests/gcc_only/smtlib_verification.cpp`, `smtlib_loops.cpp`,
-`smtlib_invariants.cpp` and `smtlib_binary_search.cpp` turn C++ functions
-into SMT-LIB, using
+`smtlib_invariants.cpp`, `smtlib_binary_search.cpp` and
+`smtlib_insertion_sort.cpp` turn C++ functions into SMT-LIB, using
 reflection on their bodies, and write scripts that a solver such as
 [Z3](https://github.com/Z3Prover/z3) can check. This page says what the
 translation covers, how to run it, and how to read the results. It was run
@@ -28,10 +28,12 @@ Z3 4.16.0.
 | `while`, `do`/`while`, `for` | unrolled a fixed number of times (see [Loops](#loops)) |
 | `break`, `continue` | `broken!k`, `jump!k`: where the rest of the body is skipped |
 | `x / y` | `bvsdiv`; for `verify`, `div` adjusted to round toward zero as C++ does, checked for a zero divisor and for overflow (`INT_MIN / -1`) unless `y` is a positive constant |
-| a pointer parameter, `a[i]` | for `verify` only: an `(Array Int Int)` and `(select a i)`, checked to be within the array (see [Arrays](#arrays-binary-search)) |
+| a pointer parameter, `a[i]`, `*a` | for `verify` only: an `(Array Int Int)` and `(select a i)`, checked to be within the array (see [Arrays](#arrays-binary-search)) |
+| `a[i] = x`, `a[i] += x` … | for `verify` only: a fresh array bound to `(store a i x)`, also checked |
+| `c && d`, `c \|\| d`, `c ? x : y` | `d` (or a branch) is checked only where it runs, so `j > 0 && a[j - 1] > a[j]` doesn't check `a[-1]` |
 
-Anything else, such as a call other than the specification helpers, `%` or
-a write to an array, makes `define_fun` throw, so the test fails to compile
+Anything else, such as a call other than the specification helpers, or
+`%`, makes `define_fun` throw, so the test fails to compile
 rather than produce a formula with a different meaning.
 
 Two quirks of the GCC fork matter here:
@@ -193,6 +195,77 @@ int binary_search(const int *a, int n, int key) {
 elements: from `a[k] <= a[k + 1]` alone, getting `a[k] <= a[mid]` for every
 `k < mid` takes induction, which the solver doesn't do.
 
+## Sorting: insertion sort
+
+`smtlib_insertion_sort` proves that insertion sort leaves any array sorted
+and a permutation of what it was. That takes writes to the array, a loop
+nested in a loop, and permutations:
+
+- `a[j] = x` binds a fresh array to `(store a j x)`. A loop that writes an
+  array makes it arbitrary like any other variable it assigns, so the
+  invariant has to say what still holds of it. `smt::old(a)` in an invariant
+  is the array (or any variable) as it was on entry.
+- A loop in another loop's body, or in an if's branch, is reached only on
+  some paths: its assumptions are made only where it is reached, as
+  implications, and elsewhere the state stays as it was.
+- `smt::permutation(a, b, lo, hi)`, that `a[lo, hi)` holds the values of
+  `b[lo, hi)` as often, is a relation `perm` with two axioms, both true of
+  permutations: an array is one of itself, and swapping two elements in the
+  range keeps one. Whatever the solver derives from them holds for real
+  permutations, but it can derive only what swaps give, so the code has to
+  rearrange the array by swaps, `t = a[j]; a[j] = a[j - 1]; a[j - 1] = t;`,
+  whose stores are the axiom's. (When the program runs, `smt::permutation`
+  counts the values, so a specification can still be tested.)
+- A specification can call another `constexpr` function of one `return`,
+  such as `sorted` below, which is inlined.
+
+```cpp
+constexpr bool sorted(const int *a, int lo, int hi) {
+  return smt::forall(lo, hi, [&](int p) {
+    return smt::forall(p, hi, [&](int q) { return a[p] <= a[q]; });
+  });
+}
+constexpr bool sort_post(const int *before, int n, const int *a) {
+  return sorted(a, 0, n) && smt::permutation(a, before, 0, n);
+}
+
+void insertion_sort(int *a, int n) {
+  for (int i = 1; i < n; ++i) {
+    smt::invariant([&] {
+      return 1 <= i && (i <= n || i == 1) && sorted(a, 0, i) &&
+             smt::permutation(a, smt::old(a), 0, n);
+    });
+    for (int j = i; j > 0 && a[j - 1] > a[j]; --j) {
+      // a[0, i] is sorted but for a[j], which is at most the elements after it.
+      smt::invariant([&] {
+        return 0 <= j && j <= i && i < n &&
+               smt::forall(0, i + 1, [&](int p) {
+                 return smt::forall(p, i + 1, [&](int q) {
+                   return p == j || q == j || a[p] <= a[q];
+                 });
+               }) &&
+               smt::forall(j + 1, i + 1, [&](int q) { return a[j] <= a[q]; }) &&
+               smt::permutation(a, smt::old(a), 0, n);
+      });
+      int t = a[j];
+      a[j] = a[j - 1];
+      a[j - 1] = t;
+    }
+  }
+}
+```
+
+For a function that returns nothing, `post` takes the parameters as they
+were on entry and then each array the function can write (a pointer to
+non-`const`) as it is at the end, here `sort_post(before, n, a)`.
+
+Two GCC details mattered. GCC folds a constant term out of an index, so
+`a[j - 1]` arrives as `*(a + ((sizetype) j * 4 - 4))`, and `a[0]` as `*a`;
+the fork's subscript commit divides such offsets back into the index, and
+the translator takes `*a`, and `*(a + k)`, as elements too. The index
+constants are then `ptrdiff_t` or GCC's `sizetype`, which the translator
+reads as the signed values they stand for.
+
 ## The scripts
 
 Each script defines one or two functions, states a claim about them, and
@@ -243,6 +316,19 @@ The last one is there to show the solver catching a real bug, the
 Leaving the precondition out of `binary_search.smt2` makes the entry check,
 the bounds checks and preservation `sat`, so the proof does use it.
 
+`smtlib_insertion_sort`:
+
+| Script | Claim | Expected |
+|---|---|---|
+| `insertion_sort.smt2` | sorted, and a permutation of the input, for every array of `n >= 0` ints | all `unsat` (16 checks) |
+| `insertion_sort_out_of_bounds.smt2` | the inner loop runs to `j >= 0`, so it reads `a[-1]` | `sat` for the bounds checks of `a[j - 1]` |
+| `insertion_sort_lost_element.smt2` | a "swap" without the temporary, which loses an element | the inner preservation isn't `unsat` (`unknown`) |
+| `insertion_sort_weak_invariant.smt2` | an inner invariant without "`a[j]` is at most the elements after it" | `sat` for the outer preservation |
+
+For `insertion_sort.smt2`: its 9 hypotheses are jointly satisfiable;
+claiming the result is strictly ascending makes post `sat` (equal elements
+are allowed); and removing the swap axiom makes the inner preservation `sat`.
+
 ## Running it
 
 The SMT-LIB is generated at compile time, so you need the GCC fork; the
@@ -257,10 +343,10 @@ solver can run anywhere. On a Mac, GCC runs in the Linux container (see
      python3 run_tests.py --compiler gcc \
        --gcc-executable /src/build/gcc-mirror/artifacts/bin/g++ \
        --tests smtlib_verification smtlib_loops smtlib_invariants \
-         smtlib_binary_search
+         smtlib_binary_search smtlib_insertion_sort
    docker exec -w /src <container> sh -c 'mkdir -p build/smt &&
      for t in smtlib_verification smtlib_loops smtlib_invariants \
-              smtlib_binary_search; do
+              smtlib_binary_search smtlib_insertion_sort; do
        build/cmake/gcc-release/tests/$t build/smt > /dev/null; done'
    ```
 

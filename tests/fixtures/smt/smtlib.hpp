@@ -71,6 +71,25 @@ template <class F> constexpr bool forall(int lo, int hi, F f) {
 // so it says yes.
 constexpr bool valid_range(const int *, int) { return true; }
 
+// For invariants: the value x had when the function was entered, such as
+// smt::old(a)[k] for an array. Running, it gives x as it is now.
+template <class T> constexpr T old(T x) { return x; }
+
+// For specifications and invariants: a[lo, hi) holds the same values as
+// b[lo, hi), each as many times. It can also run.
+constexpr bool permutation(const int *a, const int *b, int lo, int hi) {
+  for (int k = lo; k < hi; ++k) {
+    int in_a = 0, in_b = 0;
+    for (int j = lo; j < hi; ++j) {
+      in_a += a[j] == a[k];
+      in_b += b[j] == a[k];
+    }
+    if (in_a != in_b)
+      return false;
+  }
+  return true;
+}
+
 namespace m = ad::meta;
 
 namespace detail {
@@ -167,6 +186,8 @@ struct context {
   std::vector<obligation> obligations;
   std::vector<std::pair<std::string, std::string>> arrays; // symbol -> length
   bool quantified = false;
+  bool permutations = false; // the script needs perm and its axioms
+  state entry;               // the parameters, for smt::old
 };
 
 consteval std::string bv(int v) {
@@ -252,17 +273,21 @@ consteval void set(state &s, const std::string &name, std::string symbol) {
   s.env.push_back({name, std::move(symbol)});
 }
 
-// Bind TEXT, of sort Bool if IS_BOOL, to a fresh name for NAME and return the
-// name: a let for define_fun, a define-fun for verify.
+// Bind TEXT, of sort SORT, to a fresh name for NAME and return the name: a
+// let for define_fun, a define-fun for verify.
 consteval std::string bind(context &c, const std::string &name,
-                           std::string text, bool is_bool = false) {
+                           std::string text, const char *sort) {
   std::string symbol = name + "!" + std::to_string(++c.fresh);
   if (c.ints)
-    c.decls += "(define-fun " + symbol + " () " + (is_bool ? "Bool " : "Int ") +
-               text + ")\n";
+    c.decls += "(define-fun " + symbol + " () " + sort + " " + text + ")\n";
   else
     c.lets.push_back({symbol, std::move(text)});
   return symbol;
+}
+
+consteval std::string bind(context &c, const std::string &name,
+                           std::string text, bool is_bool = false) {
+  return bind(c, name, std::move(text), is_bool ? "Bool" : "Int");
 }
 
 // `(ite COND A B)`, bound to a fresh name for NAME, unless A and B are the
@@ -446,9 +471,28 @@ consteval std::string length_of(const context &c, const std::string &symbol) {
   throw "smt: subscript of something that isn't an array parameter";
 }
 
-// The array that E names.
+consteval bool is_array(const context &c, const std::string &symbol) {
+  for (const auto &a : c.arrays)
+    if (a.first == symbol)
+      return true;
+  return false;
+}
+
+// Bind TEXT, an array with the length of the array LIKE, to a fresh name for
+// NAME.
+consteval std::string bind_array(context &c, const std::string &name,
+                                 std::string text, const std::string &like) {
+  const std::string len = length_of(c, like);
+  const std::string symbol = bind(c, name, std::move(text), "(Array Int Int)");
+  c.arrays.push_back({symbol, len});
+  return symbol;
+}
+
+// The array that E names: an array parameter, or smt::old of one.
 consteval std::string array_of(const context &c, m::info e, const state &s) {
   e = strip(e);
+  if (specializes(callee(e), ^^smt::old))
+    return array_of(c, m::operands_of(e).front(), c.entry);
   if (!m::is_id_expression(e))
     throw "smt: only an array parameter can be subscripted";
   const std::string symbol = lookup(s, name_of(e));
@@ -456,10 +500,76 @@ consteval std::string array_of(const context &c, m::info e, const state &s) {
   return symbol;
 }
 
+consteval term expr(context &c, m::info e, const state &s);
+
+// An element of an array: the C++ name of the array ("" for smt::old of
+// one), its symbol, and the index.
+struct element {
+  std::string name, array, index;
+};
+
+// The element that E, a subscript `p[i]` or a dereference `*p`, denotes. The
+// pointer P can be an array, smt::old of one, or such a pointer plus an
+// offset: GCC folds `a[j - 1]` to `*(a + (j - 1))`, and a constant term of an
+// index can end up in the pointer.
+consteval element element_of(context &c, m::info e, const state &s) {
+  e = strip(e);
+  const auto ops = m::operands_of(e);
+  std::string index = ops.size() > 1 ? as_num(c, expr(c, ops[1], s)) : "0";
+  m::info base = strip(ops[0]);
+  while (m::is_operator_expression(base) &&
+         m::expression_operator_of(base) == m::operators::op_plus &&
+         m::operands_of(base).size() == 2) {
+    const auto parts = m::operands_of(base);
+    const std::string k = as_num(c, expr(c, parts[1], s));
+    index = index == "0" ? k : "(+ " + k + " " + index + ")";
+    base = strip(parts[0]);
+  }
+  const std::string name =
+      m::is_id_expression(base) ? name_of(base) : std::string();
+  return {name, array_of(c, base, s), index};
+}
+
+// For verify: index I of the array A, read or written where S says, is within
+// it.
+consteval void check_bounds(context &c, const state &s, const std::string &a,
+                            const std::string &i) {
+  if (!c.ghost)
+    require(c, "index in bounds: " + a + "[" + i + "]",
+            implies(and_(s.path, not_(skip(s))), "(and (<= 0 " + i + ") (< " +
+                                                     i + " " + length_of(c, a) +
+                                                     "))"));
+}
+
 consteval term expr(context &c, m::info e, const state &s) {
   e = strip(e);
-  if (m::is_literal(e))
-    return {num(c, m::extract<int>(m::constant_of(e))), false};
+  if (m::is_literal(e)) {
+    const m::info v = m::constant_of(e);
+    const m::info t = m::type_of(v);
+    if (t == ^^bool)
+      return {m::extract<bool>(v) ? "true" : "false", true};
+    // An index that the compiler computed, as for a[1], is a ptrdiff_t, and
+    // a constant in a folded index a size_t, which wraps: j - 1 can be
+    // j + 0xffffffffffffffff. Read those as the signed values they mean.
+    long long value;
+    if (t == ^^int)
+      value = m::extract<int>(v);
+    else if (t == ^^long)
+      value = m::extract<long>(v);
+    else if (t == ^^unsigned long)
+      value = static_cast<long long>(m::extract<unsigned long>(v));
+    else if (t == ^^long long)
+      value = m::extract<long long>(v);
+    else if (t == ^^unsigned long long)
+      value = static_cast<long long>(m::extract<unsigned long long>(v));
+    else if (t == ^^unsigned)
+      value = m::extract<unsigned>(v);
+    else
+      throw "smt: unsupported literal type";
+    if (value < -2147483648LL || value > 2147483647LL)
+      throw "smt: a literal out of the range of int";
+    return {num(c, static_cast<int>(value)), false};
+  }
   if (m::is_id_expression(e)) {
     const std::string symbol = lookup(s, name_of(e));
     for (const auto &a : c.arrays)
@@ -489,12 +599,41 @@ consteval term expr(context &c, m::info e, const state &s) {
       return {"(>= " + length_of(c, array_of(c, args[0], s)) + " " +
                   as_num(c, expr(c, args[1], s)) + ")",
               true};
+    if (!c.ghost)
+      throw "smt: unsupported call";
+    if (specializes(f, ^^smt::old))
+      return expr(c, args[0], c.entry);
+    if (f == ^^smt::permutation) {
+      c.permutations = true;
+      return {"(perm " + array_of(c, args[0], s) + " " +
+                  array_of(c, args[1], s) + " " +
+                  as_num(c, expr(c, args[2], s)) + " " +
+                  as_num(c, expr(c, args[3], s)) + ")",
+              true};
+    }
+    // Another function of a specification: inline its return statement.
+    if (m::is_function(f) && m::has_body(f)) {
+      const auto params = m::parameters_of(f);
+      if (params.size() != args.size())
+        throw "smt: unsupported call";
+      state inner;
+      for (std::size_t i = 0; i < args.size(); ++i)
+        inner.env.push_back(
+            {std::string(m::identifier_of(params[i])),
+             m::is_pointer_type(m::remove_cvref(m::type_of(params[i])))
+                 ? array_of(c, args[i], s)
+                 : as_num(c, expr(c, args[i], s))});
+      return expr(c, returned_by(f), inner);
+    }
     throw "smt: unsupported call";
   }
   if (m::is_conditional_operator(e)) {
     term k = expr(c, m::condition_of(e), s);
-    term t = expr(c, m::true_expression_of(e), s);
-    term f = expr(c, m::false_expression_of(e), s);
+    state st = s, sf = s; // each branch is evaluated only where it is taken
+    st.path = and_(s.path, as_bool(c, k));
+    sf.path = and_(s.path, not_(as_bool(c, k)));
+    term t = expr(c, m::true_expression_of(e), st);
+    term f = expr(c, m::false_expression_of(e), sf);
     if (t.is_bool && f.is_bool)
       return {"(ite " + as_bool(c, k) + " " + t.text + " " + f.text + ")",
               true};
@@ -505,6 +644,14 @@ consteval term expr(context &c, m::info e, const state &s) {
   if (m::is_operator_expression(e)) {
     const m::operators op = m::expression_operator_of(e);
     const std::vector<m::info> ops = m::operands_of(e);
+    if ((ops.size() == 1 && op == m::operators::op_star) ||
+        (ops.size() == 2 && op == m::operators::op_square_brackets)) {
+      if (!c.ints)
+        throw "smt: arrays are supported by verify only";
+      const element el = element_of(c, e, s);
+      check_bounds(c, s, el.array, el.index);
+      return {"(select " + el.array + " " + el.index + ")", false};
+    }
     if (ops.size() == 1) {
       term a = expr(c, ops[0], s);
       if (op == m::operators::op_minus) {
@@ -520,17 +667,16 @@ consteval term expr(context &c, m::info e, const state &s) {
         return {"(not " + as_bool(c, a) + ")", true};
       throw "smt: unsupported unary operator";
     }
-    if (op == m::operators::op_square_brackets && ops.size() == 2) {
-      if (!c.ints)
-        throw "smt: arrays are supported by verify only";
-      const std::string a = array_of(c, ops[0], s);
-      const std::string i = as_num(c, expr(c, ops[1], s));
-      if (!c.ghost)
-        require(c, "index in bounds: " + a + "[" + i + "]",
-                implies(and_(s.path, not_(skip(s))),
-                        "(and (<= 0 " + i + ") (< " + i + " " +
-                            length_of(c, a) + "))"));
-      return {"(select " + a + " " + i + ")", false};
+    // The right operand of && and || is evaluated only where the left one
+    // doesn't decide.
+    if (ops.size() == 2 && (op == m::operators::op_ampersand_ampersand ||
+                            op == m::operators::op_pipe_pipe)) {
+      const term l = expr(c, ops[0], s);
+      state rs = s;
+      rs.path =
+          and_(s.path, op == m::operators::op_pipe_pipe ? not_(as_bool(c, l))
+                                                        : as_bool(c, l));
+      return binary(c, s, op, l, expr(c, ops[1], rs));
     }
     if (ops.size() == 2 && !is_assignment(op))
       return binary(c, s, op, expr(c, ops[0], s), expr(c, ops[1], s));
@@ -589,7 +735,11 @@ consteval state merge(context &c, const std::string &cond, const state &before,
   state r = before;
   for (const auto &e : before.env) {
     const std::string x = lookup(a, e.first), y = lookup(b, e.first);
-    set(r, e.first, ite(c, e.first, cond, x, y));
+    if (x != y && is_array(c, x))
+      set(r, e.first,
+          bind_array(c, e.first, "(ite " + cond + " " + x + " " + y + ")", x));
+    else
+      set(r, e.first, ite(c, e.first, cond, x, y));
   }
   r.ret = ite(c, "ret", cond, a.ret, b.ret);
   r.returned = ite(c, "returned", cond, a.returned, b.returned, true);
@@ -623,6 +773,8 @@ consteval m::info else_of(m::info st) {
 #endif
 }
 
+consteval bool is_subscript(m::info e);
+
 // The variable that the assignment E (`x = e`, `x op= e`, `++x`, `x--`)
 // assigns, or "" if E isn't one.
 consteval std::string assigned_by(m::info e) {
@@ -631,8 +783,16 @@ consteval std::string assigned_by(m::info e) {
     return "";
   const m::operators op = m::expression_operator_of(e);
   if (op == m::operators::op_plus_plus || op == m::operators::op_minus_minus ||
-      is_assignment(op))
-    return name_of(strip(m::operands_of(e)[0]));
+      is_assignment(op)) {
+    m::info target = strip(m::operands_of(e)[0]);
+    if (is_subscript(target)) { // a[i] = ... assigns a
+      target = strip(m::operands_of(target)[0]);
+      while (m::is_operator_expression(target) &&
+             m::expression_operator_of(target) == m::operators::op_plus)
+        target = strip(m::operands_of(target)[0]);
+    }
+    return name_of(target);
+  }
   return "";
 }
 
@@ -659,6 +819,47 @@ consteval void assigned_in(m::info st, std::vector<std::string> &out) {
     out.push_back(name);
 }
 
+// Whether E is an element of an array: a subscript, `a[i]`, or `*a`, which is
+// also what GCC folds `a[0]` to.
+consteval bool is_subscript(m::info e) {
+  e = strip(e);
+  if (!m::is_expression(e) || !m::is_operator_expression(e))
+    return false;
+  const m::operators op = m::expression_operator_of(e);
+  return op == m::operators::op_square_brackets ||
+         (op == m::operators::op_star && m::operands_of(e).size() == 1);
+}
+
+// An assignment to an element, `a[i] = e`, `a[i] op= e`, `++a[i]` or
+// `a[i]--`: the array becomes a store.
+consteval void element_assignment(context &c, state &s, m::operators op,
+                                  m::info target, m::info rhs) {
+  if (!c.ints)
+    throw "smt: arrays are supported by verify only";
+  const element el = element_of(c, target, s);
+  if (el.name.empty())
+    throw "smt: only an array parameter can be written";
+  const std::string &name = el.name, &a = el.array, &i = el.index;
+  check_bounds(c, s, a, i);
+  const term old_element{"(select " + a + " " + i + ")", false};
+  term value;
+  if (op == m::operators::op_plus_plus || op == m::operators::op_minus_minus)
+    value = binary(c, s,
+                   op == m::operators::op_plus_plus ? m::operators::op_plus
+                                                    : m::operators::op_minus,
+                   old_element, term{num(c, 1), false});
+  else {
+    value = expr(c, rhs, s);
+    if (op != m::operators::op_equals)
+      value = binary(c, s, op, old_element, value);
+  }
+  set(s, name,
+      bind_array(
+          c, name,
+          guarded(s, a, "(store " + a + " " + i + " " + as_num(c, value) + ")"),
+          a));
+}
+
 // An assignment `x = e`, `x op= e`, `++x` or `x--`, as an expression.
 consteval bool assignment(context &c, state &s, m::info e) {
   e = strip(e);
@@ -666,6 +867,12 @@ consteval bool assignment(context &c, state &s, m::info e) {
     return false;
   const m::operators op = m::expression_operator_of(e);
   const auto ops = m::operands_of(e);
+  if ((op == m::operators::op_plus_plus || op == m::operators::op_minus_minus ||
+       is_assignment(op)) &&
+      is_subscript(ops[0])) {
+    element_assignment(c, s, op, ops[0], ops.size() > 1 ? ops[1] : m::info{});
+    return true;
+  }
   if ((op == m::operators::op_plus_plus ||
        op == m::operators::op_minus_minus) &&
       ops.size() == 1) {
@@ -764,13 +971,16 @@ consteval void run_loop(context &c, state &s, const std::vector<m::info> &k,
   s.broken = outer_broken;
 }
 
+consteval void find_invariant(const std::vector<m::info> &k, std::size_t begin,
+                              std::size_t end, m::info &inv);
+
 // Set INV to the invariant among statement ST and the blocks in it, but not
-// in a nested loop's body or an if's branches. The lambda's closure is a
-// temporary, which makes a loop's body a block of its own.
+// in a nested loop or an if's branches. The lambda's closure is a temporary,
+// which makes a loop's body a block of its own.
 consteval void find_invariant(m::info st, m::info &inv) {
   if (m::is_compound_statement(st)) {
-    for (m::info k : m::statements_of(st))
-      find_invariant(k, inv);
+    const std::vector<m::info> k = m::statements_of(st);
+    find_invariant(k, 0, k.size(), inv);
     return;
   }
   if (!m::is_expression_statement(st))
@@ -782,13 +992,24 @@ consteval void find_invariant(m::info st, m::info &inv) {
   }
 }
 
+// The same among the statements K[BEGIN, END), skipping the loops in them.
+consteval void find_invariant(const std::vector<m::info> &k, std::size_t begin,
+                              std::size_t end, m::info &inv) {
+  for (std::size_t j = begin; j < end;) {
+    const loop_match lm = match_loop(k, j);
+    if (lm.found && lm.end <= end)
+      j = lm.end;
+    else
+      find_invariant(k[j++], inv);
+  }
+}
+
 // The invariant of a loop: the smt::invariant among the statements of its
 // body.
 consteval m::info loop_invariant(const std::vector<m::info> &k,
                                  const loop_match &lm) {
   m::info inv;
-  for (std::size_t j = lm.body_begin; j < lm.body_end; ++j)
-    find_invariant(k[j], inv);
+  find_invariant(k, lm.body_begin, lm.body_end, inv);
   if (inv == m::info{})
     throw "smt: verify needs an smt::invariant(...) in each loop";
   return inv;
@@ -810,14 +1031,18 @@ consteval void hypothesis(context &c, const std::string &h) {
 // For verify: replace a loop by its invariant. The invariant must hold on
 // entry; then the variables the loop assigns become arbitrary values for which
 // it holds, one iteration from there must restore it, and the code after the
-// loop starts from where the condition is false or the body broke out.
+// loop starts from where the condition is false or the body broke out. All of
+// that is where the loop is reached (ENTER): a loop in an if's branch or in
+// another loop's body is reached only on some paths, and elsewhere the state
+// stays as it was.
 consteval void verify_loop(context &c, state &s, const std::vector<m::info> &k,
                            const loop_match &lm) {
-  if (s.path != "true" || skip(s) != "false")
-    throw "smt: verify handles a loop only where every path reaches it";
+  const std::string enter = and_(s.path, not_(skip(s)));
+  const state before = s;
   const m::info inv = loop_invariant(k, lm);
   const m::info cond = m::condition_of(lm.cond_if);
-  require(c, "the loop invariant holds on entry", ghost(c, inv, s));
+  require(c, "the loop invariant holds on entry",
+          implies(enter, ghost(c, inv, s)));
 
   std::vector<std::string> names;
   for (std::size_t j = lm.body_begin; j < lm.body_end; ++j)
@@ -828,37 +1053,50 @@ consteval void verify_loop(context &c, state &s, const std::vector<m::info> &k,
     for (const std::string &n : names)
       if (n == e.first) {
         const std::string fresh = n + "!" + std::to_string(++c.fresh);
-        c.decls += "(declare-const " + fresh + " Int)\n";
-        hypothesis(c, "(fits " + fresh + ")");
+        if (is_array(c, e.second)) {
+          c.decls += "(declare-const " + fresh + " (Array Int Int))\n";
+          c.arrays.push_back({fresh, length_of(c, e.second)});
+        } else {
+          c.decls += "(declare-const " + fresh + " Int)\n";
+          hypothesis(c, "(fits " + fresh + ")");
+        }
         set(s, n, fresh);
         break;
       }
-  hypothesis(c, ghost(c, inv, s));
+  hypothesis(c, implies(enter, ghost(c, inv, s)));
 
   const state head = s;
   const std::string go =
       lm.is_do ? std::string("true") : as_bool(c, expr(c, cond, head));
   state a = head;
-  a.path = go;
+  // Where the loop is entered, nothing has returned, broken out or jumped.
+  a.returned = a.broken = "false";
+  a.pending.clear();
+  a.path = and_(enter, go);
   c.loops.push_back({lm.exit});
   block(c, a, k, lm.body_begin, lm.body_end);
   c.loops.pop_back();
   a.pending.clear();
   const std::string done = or_(a.returned, a.broken);
+  state after;
   if (lm.is_do) {
     const std::string again = as_bool(c, expr(c, cond, a));
     require(c, "the loop invariant is preserved",
-            implies(and_(not_(done), again), ghost(c, inv, a)));
-    s = a;
-    hypothesis(c, or_(done, not_(again)));
+            implies(and_(enter, and_(not_(done), again)), ghost(c, inv, a)));
+    after = a;
+    hypothesis(c, implies(enter, or_(done, not_(again))));
   } else {
     require(c, "the loop invariant is preserved",
-            implies(and_(go, not_(done)), ghost(c, inv, a)));
-    s = merge(c, go, head, a, head);
-    hypothesis(c, or_(not_(go), done));
+            implies(and_(enter, and_(go, not_(done))), ghost(c, inv, a)));
+    after = merge(c, go, head, a, head);
+    hypothesis(c, implies(enter, or_(not_(go), done)));
   }
-  s.broken = "false";
-  s.path = "true";
+  after.broken = before.broken;
+  after.pending = before.pending;
+  s = merge(c, enter, before, after, before);
+  s.broken = before.broken;
+  s.pending = before.pending;
+  s.path = before.path;
 }
 
 consteval void block(context &c, state &s, const std::vector<m::info> &k,
@@ -885,8 +1123,15 @@ consteval void stmt(context &c, state &s, m::info st) {
     return;
   }
   if (m::is_return_statement(st)) {
-    term v = expr(c, m::return_operand_of(st), s);
-    s.ret = bind(c, "ret", guarded(s, s.ret, as_num(c, v)));
+    m::info operand;
+    try {
+      operand = m::return_operand_of(st);
+    } catch (const std::meta::exception &) { // `return;`
+    }
+    if (operand != m::info{}) {
+      term v = expr(c, operand, s);
+      s.ret = bind(c, "ret", guarded(s, s.ret, as_num(c, v)));
+    }
     s.returned = taken(c, s, s.returned, "returned");
     return;
   }
@@ -958,6 +1203,23 @@ consteval std::string spec(context &c, m::info fn,
   return ghost(c, m::return_operand_of(body[0]), s);
 }
 
+// perm(a, b, lo, hi): a[lo, hi) is a permutation of b[lo, hi). It is left
+// undefined, with only axioms that every permutation satisfies, so whatever
+// follows from them holds for permutations: an array is one of itself, and
+// swapping two elements in the range keeps one. The swap is written out as
+// the stores of `t = a[i]; a[i] = a[j]; a[j] = t;`, which is what the solver
+// sees when the code swaps.
+inline constexpr const char *permutation_axioms =
+    "(declare-fun perm ((Array Int Int) (Array Int Int) Int Int) Bool)\n"
+    "(assert (forall ((a (Array Int Int)) (l Int) (h Int))\n"
+    "  (! (perm a a l h) :pattern ((perm a a l h)))))\n"
+    "(assert (forall ((a (Array Int Int)) (b (Array Int Int)) (l Int) (h Int)\n"
+    "                 (i Int) (j Int))\n"
+    "  (! (=> (and (perm a b l h) (<= l i) (< i h) (<= l j) (< j h))\n"
+    "         (perm (store (store a i (select a j)) j (select a i)) b l h))\n"
+    "     :pattern ((perm a b l h)\n"
+    "               (store (store a i (select a j)) j (select a i))))))\n";
+
 } // namespace detail
 
 // `(define-fun NAME ((p (_ BitVec 32)) ...) (_ BitVec 32) BODY)` for a
@@ -1027,11 +1289,25 @@ consteval std::string verify(m::info fn, m::info pre, m::info post) {
     s.env.push_back({name, name});
     args.push_back(name);
   }
+  c.entry = s;
   detail::hypothesis(c, detail::spec(c, pre, args));
   detail::stmt(c, s, m::body_of(fn));
-  args.push_back(s.ret);
-  detail::require(c, "the function returns, and its result satisfies post",
-                  detail::and_(s.returned, detail::spec(c, post, args)));
+  // post takes the parameters as they were on entry, then the result, then
+  // each array the function can write, as it is at the end.
+  const bool returns_value = m::return_type_of(fn) != ^^void;
+  if (returns_value)
+    args.push_back(s.ret);
+  for (m::info p : m::parameters_of(fn)) {
+    const m::info t = m::remove_cvref(m::type_of(p));
+    if (m::is_pointer_type(t) && !m::is_const_type(m::remove_pointer(t)))
+      args.push_back(detail::lookup(s, std::string(m::identifier_of(p))));
+  }
+  if (returns_value)
+    detail::require(c, "the function returns, and its result satisfies post",
+                    detail::and_(s.returned, detail::spec(c, post, args)));
+  else
+    detail::require(c, "post holds when the function returns",
+                    detail::spec(c, post, args));
 
   const std::string name(m::identifier_of(fn));
   std::string r = "; Verification conditions for " + name +
@@ -1040,7 +1316,7 @@ consteval std::string verify(m::info fn, m::info pre, m::info post) {
                                                      : "(set-logic QF_NIA)\n") +
                   "(define-fun fits ((x Int)) Bool\n"
                   "  (and (<= (- 2147483648) x) (<= x 2147483647)))\n" +
-                  c.decls;
+                  (c.permutations ? detail::permutation_axioms : "") + c.decls;
   for (const detail::obligation &o : c.obligations) {
     r += "(echo \"" + name + ": " + o.what + "\")\n(push)\n";
     for (std::size_t i = 0; i < o.hyps; ++i)
