@@ -129,7 +129,6 @@ template <class D> consteval std::string vcs(std::meta::info fn) {
 
 struct script {
   const char *file;
-  const char *expect;
   std::string_view text;
 };
 
@@ -142,29 +141,32 @@ template <bool Supported, class D = void> struct search_scripts {
 template <class D> struct search_scripts<true, D> {
   static constexpr std::string_view vcs_ok =
       std::define_static_string(vcs<D>(^^binary_search));
-
-  // The array and its length, a quantifier, and a bounds check of a[mid].
-  static_assert(vcs_ok.find("(set-logic ALL)") != std::string_view::npos);
-  static_assert(vcs_ok.find("(declare-const a (Array Int Int))") !=
-                std::string_view::npos);
-  static_assert(vcs_ok.find("(forall ((") != std::string_view::npos);
-  static_assert(vcs_ok.find("binary_search: index in bounds: a[mid!") !=
-                std::string_view::npos);
+  static constexpr std::string_view vcs_overflow =
+      std::define_static_string(vcs<D>(^^binary_search_overflow));
+  static constexpr std::string_view vcs_weak =
+      std::define_static_string(vcs<D>(^^binary_search_weak_invariant));
+  static constexpr std::string_view vcs_oob =
+      std::define_static_string(vcs<D>(^^binary_search_out_of_bounds));
 
   static void run(int argc, char **argv) {
+    EXPECT_TRUE(smt::all_unsat(smt::z3_checks(vcs_ok)));
+    EXPECT_TRUE(
+        smt::only_at(smt::z3_checks(vcs_overflow), "no overflow in (+ lo!"));
+    EXPECT_TRUE(
+        smt::only_at(smt::z3_checks(vcs_weak),
+                     "the function returns, and its result satisfies post"));
+    EXPECT_EQUAL(smt::status_of(smt::z3_checks(vcs_oob),
+                                "index in bounds: a[mid!"),
+                 "sat");
+
     const script scripts[] = {
-        {"binary_search.smt2", "all unsat", vcs_ok},
-        {"binary_search_overflow.smt2", "sat at the overflow of lo + hi",
-         std::define_static_string(vcs<D>(^^binary_search_overflow))},
-        {"binary_search_weak_invariant.smt2", "sat at post",
-         std::define_static_string(vcs<D>(^^binary_search_weak_invariant))},
-        {"binary_search_out_of_bounds.smt2", "sat at the bounds of a[mid]",
-         std::define_static_string(vcs<D>(^^binary_search_out_of_bounds))},
+        {"binary_search.smt2", vcs_ok},
+        {"binary_search_overflow.smt2", vcs_overflow},
+        {"binary_search_weak_invariant.smt2", vcs_weak},
+        {"binary_search_out_of_bounds.smt2", vcs_oob},
     };
-    for (const script &s : scripts) {
-      std::printf(";; ==== %s (expect %s)\n%.*s\n", s.file, s.expect,
-                  static_cast<int>(s.text.size()), s.text.data());
-      if (argc > 1) {
+    if (argc > 1) {
+      for (const script &s : scripts) {
         std::ofstream out(std::string(argv[1]) + "/" + s.file);
         out << s.text;
         EXPECT_TRUE(static_cast<bool>(out));

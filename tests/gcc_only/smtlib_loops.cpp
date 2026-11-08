@@ -144,15 +144,6 @@ template <class D> struct loop_scripts<true, D> {
   static constexpr std::string_view countdown_do_smt =
       std::define_static_string(smt_of<D>(^^countdown_do));
 
-  // Each loop gives the function a second definition, of whether the
-  // unrolling was enough.
-  static_assert(sum_to_smt.starts_with("(define-fun sum_to ((n (_ BitVec "
-                                       "32))) (_ BitVec 32)\n"));
-  static_assert(sum_to_smt.find("(define-fun sum_to_unwound ((n (_ BitVec "
-                                "32))) Bool\n") != std::string_view::npos);
-  static_assert(sum_capped_smt.find("broken!") != std::string_view::npos);
-  static_assert(sum_skip3_smt.find("jump!") != std::string_view::npos);
-
   static void run(int argc, char **argv) {
     const std::string tri_claim = "(= (sum_to n) (tri n))";
     const script scripts[] = {
@@ -194,12 +185,15 @@ template <class D> struct loop_scripts<true, D> {
                                     "#x00000001) (tri n) n))")},
     };
     for (const script &s : scripts) {
-      std::printf(";; ==== %s (expect %s)\n%s\n", s.file, s.expect,
-                  s.text.c_str());
+      const std::string out = smt::z3(s.text);
+      EXPECT_EQUAL(out.substr(0, out.find('\n')), s.expect);
+      if (std::string_view(s.file) == "sum_to_bound.smt2")
+        EXPECT_TRUE(out.find("((sum_to_unwound n) false)") !=
+                    std::string::npos);
       if (argc > 1) {
-        std::ofstream out(std::string(argv[1]) + "/" + s.file);
-        out << s.text;
-        EXPECT_TRUE(static_cast<bool>(out));
+        std::ofstream f(std::string(argv[1]) + "/" + s.file);
+        f << s.text;
+        EXPECT_TRUE(static_cast<bool>(f));
       }
     }
   }

@@ -45,7 +45,11 @@
 
 #include <ad/meta.h>
 #include <cstddef>
+#include <stdexcept>
 #include <string>
+#include <string_view>
+#include <sys/wait.h>
+#include <unistd.h>
 #include <utility>
 #include <vector>
 
@@ -1324,6 +1328,127 @@ consteval std::string verify(m::info fn, m::info pre, m::info post) {
     r += "(assert (not " + o.claim + "))\n(check-sat)\n(pop)\n";
   }
   return r;
+}
+
+// Run `z3 -in` on SCRIPT and return its stdout, without a trailing newline.
+inline std::string z3(std::string_view script) {
+  int in_pipe[2], out_pipe[2];
+  if (pipe(in_pipe) != 0 || pipe(out_pipe) != 0)
+    throw std::runtime_error("smt: pipe failed");
+  const pid_t pid = fork();
+  if (pid < 0)
+    throw std::runtime_error("smt: fork failed");
+  if (pid == 0) {
+    close(in_pipe[1]);
+    close(out_pipe[0]);
+    dup2(in_pipe[0], STDIN_FILENO);
+    dup2(out_pipe[1], STDOUT_FILENO);
+    close(in_pipe[0]);
+    close(out_pipe[1]);
+    execlp("z3", "z3", "-in", static_cast<char *>(nullptr));
+    _exit(127);
+  }
+  close(in_pipe[0]);
+  close(out_pipe[1]);
+  const char *p = script.data();
+  std::size_t rem = script.size();
+  while (rem > 0) {
+    const ssize_t n = write(in_pipe[1], p, rem);
+    if (n <= 0)
+      break;
+    p += n;
+    rem -= static_cast<std::size_t>(n);
+  }
+  close(in_pipe[1]);
+  std::string out;
+  char buf[4096];
+  for (;;) {
+    const ssize_t n = read(out_pipe[0], buf, sizeof buf);
+    if (n <= 0)
+      break;
+    out.append(buf, static_cast<std::size_t>(n));
+  }
+  close(out_pipe[0]);
+  int status = 0;
+  waitpid(pid, &status, 0);
+  if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
+    throw std::runtime_error("smt: z3 failed: " + out);
+  while (!out.empty() && (out.back() == '\n' || out.back() == '\r'))
+    out.pop_back();
+  return out;
+}
+
+// One `(echo "<fn>: <what>")` / `(check-sat)` pair in the output of a script
+// from smt::verify.
+struct check_result {
+  std::string what;
+  std::string status;
+};
+
+inline std::vector<check_result> z3_checks(std::string_view script) {
+  const std::string out = z3(script);
+  std::vector<std::string> lines;
+  for (std::size_t i = 0; i < out.size();) {
+    std::size_t e = out.find('\n', i);
+    if (e == std::string::npos)
+      e = out.size();
+    std::string line = out.substr(i, e - i);
+    if (!line.empty() && line.back() == '\r')
+      line.pop_back();
+    lines.push_back(std::move(line));
+    i = e + 1;
+  }
+  if (lines.empty() || lines.size() % 2 != 0)
+    throw std::runtime_error("smt: unexpected z3 output:\n" + out);
+  std::vector<check_result> r;
+  for (std::size_t i = 0; i < lines.size(); i += 2) {
+    std::string what = lines[i];
+    if (const std::size_t colon = what.find(": "); colon != std::string::npos)
+      what.erase(0, colon + 2);
+    const std::string &st = lines[i + 1];
+    if (st != "unsat" && st != "sat" && st != "unknown")
+      throw std::runtime_error("smt: unexpected z3 status: " + st);
+    r.push_back({std::move(what), st});
+  }
+  return r;
+}
+
+// Whether every check in CHECKS has status "unsat".
+inline bool all_unsat(const std::vector<check_result> &checks) {
+  if (checks.empty())
+    return false;
+  for (const check_result &c : checks)
+    if (c.status != "unsat")
+      return false;
+  return true;
+}
+
+// The status of the first check in CHECKS whose description starts with
+// PREFIX, or "" if none does.
+inline std::string status_of(const std::vector<check_result> &checks,
+                             std::string_view prefix) {
+  for (const check_result &c : checks)
+    if (std::string_view(c.what).starts_with(prefix))
+      return c.status;
+  return "";
+}
+
+// Whether every check in CHECKS whose description starts with PREFIX has
+// status EXPECTED, at least one matches, and every other check is "unsat".
+inline bool only_at(const std::vector<check_result> &checks,
+                    std::string_view prefix,
+                    std::string_view expected = "sat") {
+  bool matched = false;
+  for (const check_result &c : checks) {
+    if (std::string_view(c.what).starts_with(prefix)) {
+      if (c.status != expected)
+        return false;
+      matched = true;
+    } else if (c.status != "unsat") {
+      return false;
+    }
+  }
+  return matched;
 }
 
 } // namespace smt

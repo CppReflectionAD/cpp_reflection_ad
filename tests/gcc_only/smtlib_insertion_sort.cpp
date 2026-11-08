@@ -152,7 +152,6 @@ template <class D> consteval std::string vcs(std::meta::info fn) {
 
 struct script {
   const char *file;
-  const char *expect;
   std::string_view text;
 };
 
@@ -165,30 +164,48 @@ template <bool Supported, class D = void> struct sort_scripts {
 template <class D> struct sort_scripts<true, D> {
   static constexpr std::string_view vcs_ok =
       std::define_static_string(vcs<D>(^^insertion_sort));
+  static constexpr std::string_view vcs_oob =
+      std::define_static_string(vcs<D>(^^insertion_sort_out_of_bounds));
+  static constexpr std::string_view vcs_lost =
+      std::define_static_string(vcs<D>(^^insertion_sort_lost_element));
+  static constexpr std::string_view vcs_weak =
+      std::define_static_string(vcs<D>(^^insertion_sort_weak_invariant));
 
-  // The permutation axioms, a store for each write, and both loops'
-  // invariants.
-  static_assert(vcs_ok.find("(declare-fun perm ") != std::string_view::npos);
-  static_assert(vcs_ok.find("(store ") != std::string_view::npos);
-  static_assert(vcs_ok.find("insertion_sort: post holds when the function "
-                            "returns") != std::string_view::npos);
+  // Whether the Nth (0-indexed) check with description WHAT is not "unsat",
+  // and every other check is "unsat".
+  static bool fails_only_at_nth(const std::vector<smt::check_result> &checks,
+                                std::string_view what, std::size_t nth) {
+    std::size_t seen = 0;
+    bool matched = false;
+    for (const smt::check_result &c : checks) {
+      if (c.what == what && seen++ == nth) {
+        if (c.status == "unsat")
+          return false;
+        matched = true;
+      } else if (c.status != "unsat") {
+        return false;
+      }
+    }
+    return matched;
+  }
 
   static void run(int argc, char **argv) {
+    EXPECT_TRUE(smt::all_unsat(smt::z3_checks(vcs_ok)));
+    EXPECT_EQUAL(smt::status_of(smt::z3_checks(vcs_oob), "index in bounds: a!"),
+                 "sat");
+    EXPECT_TRUE(fails_only_at_nth(smt::z3_checks(vcs_lost),
+                                  "the loop invariant is preserved", 0));
+    EXPECT_TRUE(fails_only_at_nth(smt::z3_checks(vcs_weak),
+                                  "the loop invariant is preserved", 1));
+
     const script scripts[] = {
-        {"insertion_sort.smt2", "all unsat", vcs_ok},
-        {"insertion_sort_out_of_bounds.smt2", "sat at the bounds of a[j - 1]",
-         std::define_static_string(vcs<D>(^^insertion_sort_out_of_bounds))},
-        {"insertion_sort_lost_element.smt2",
-         "not unsat at the inner preservation",
-         std::define_static_string(vcs<D>(^^insertion_sort_lost_element))},
-        {"insertion_sort_weak_invariant.smt2",
-         "not unsat at the outer preservation",
-         std::define_static_string(vcs<D>(^^insertion_sort_weak_invariant))},
+        {"insertion_sort.smt2", vcs_ok},
+        {"insertion_sort_out_of_bounds.smt2", vcs_oob},
+        {"insertion_sort_lost_element.smt2", vcs_lost},
+        {"insertion_sort_weak_invariant.smt2", vcs_weak},
     };
-    for (const script &s : scripts) {
-      std::printf(";; ==== %s (expect %s)\n%.*s\n", s.file, s.expect,
-                  static_cast<int>(s.text.size()), s.text.data());
-      if (argc > 1) {
+    if (argc > 1) {
+      for (const script &s : scripts) {
         std::ofstream out(std::string(argv[1]) + "/" + s.file);
         out << s.text;
         EXPECT_TRUE(static_cast<bool>(out));

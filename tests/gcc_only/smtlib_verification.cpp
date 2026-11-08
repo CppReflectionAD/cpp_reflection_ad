@@ -9,10 +9,9 @@
 //     input. unsat.
 //   - abs_nonnegative.smt2: abs_naive never returns a negative number. sat:
 //     -INT_MIN wraps to INT_MIN, and the model says x = #x80000000.
-// The test checks the generated define-funs; run with a directory argument,
-// it also writes the scripts there for a solver to check. See
+// The test runs Z3 on the scripts and checks the results; run with a
+// directory argument, it also writes the scripts there. See
 // docs/smt-verification.md.
-#include <cstdio>
 #include <fstream>
 #include <meta>
 #include <string>
@@ -56,39 +55,14 @@ int abs_naive(int x) {
 constexpr std::string_view max_branchy_smt =
     std::define_static_string(smt::define_fun(^^max_branchy));
 
-// An assignment is a let, and the if merges m with an ite on its condition.
-static_assert(max_branchy_smt ==
-              "(define-fun max_branchy ((a (_ BitVec 32)) (b (_ BitVec 32))) "
-              "(_ BitVec 32)\n"
-              "  (let ((m!1 a))\n"
-              "  (let ((m!2 b))\n"
-              "  (let ((m!3 (ite (bvsgt b m!1) m!2 m!1)))\n"
-              "  (let ((ret!4 m!3))\n"
-              "  ret!4)))))\n");
-
 constexpr std::string_view max_branchless_smt =
     std::define_static_string(smt::define_fun(^^max_branchless));
 
-static_assert(max_branchless_smt ==
-              "(define-fun max_branchless ((a (_ BitVec 32)) (b (_ BitVec "
-              "32))) (_ BitVec 32)\n"
-              "  (let ((ret!1 (ite (bvsgt a b) a b)))\n"
-              "  ret!1))\n");
-
-// -x is bvneg, which wraps.
 constexpr std::string_view abs_naive_smt =
     std::define_static_string(smt::define_fun(^^abs_naive));
 
-static_assert(abs_naive_smt.find("(bvneg x)") != std::string_view::npos);
-
 constexpr std::string_view median3_smt =
     std::define_static_string(smt::define_fun(^^median3));
-
-// Every return is guarded by whether an earlier one has happened.
-static_assert(median3_smt.starts_with(
-    "(define-fun median3 ((a (_ BitVec 32)) (b (_ BitVec 32)) (c (_ BitVec "
-    "32))) (_ BitVec 32)\n"));
-static_assert(median3_smt.find("(ite returned!") != std::string_view::npos);
 
 struct script {
   const char *file;
@@ -153,12 +127,14 @@ int main(int argc, char **argv) {
   EXPECT_EQUAL(abs_naive(-3), 3);
 
   for (const script &s : scripts) {
-    std::printf(";; ==== %s (expect %s)\n%s\n", s.file, s.expect,
-                s.text.c_str());
+    const std::string out = smt::z3(s.text);
+    EXPECT_EQUAL(out.substr(0, out.find('\n')), s.expect);
+    if (std::string_view(s.file) == "abs_nonnegative.smt2")
+      EXPECT_TRUE(out.find("#x80000000") != std::string::npos);
     if (argc > 1) {
-      std::ofstream out(std::string(argv[1]) + "/" + s.file);
-      out << s.text;
-      EXPECT_TRUE(static_cast<bool>(out));
+      std::ofstream f(std::string(argv[1]) + "/" + s.file);
+      f << s.text;
+      EXPECT_TRUE(static_cast<bool>(f));
     }
   }
   TEST_END;

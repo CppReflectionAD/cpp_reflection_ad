@@ -107,7 +107,6 @@ consteval std::string vcs(std::meta::info fn, std::meta::info pre,
 
 struct script {
   const char *file;
-  const char *expect;
   std::string_view text;
 };
 
@@ -120,43 +119,42 @@ template <bool Supported, class D = void> struct invariant_scripts {
 template <class D> struct invariant_scripts<true, D> {
   static constexpr std::string_view sum_to_vcs =
       std::define_static_string(vcs<D>(^^sum_to, ^^sum_pre, ^^sum_post));
-
-  // One check each for entry, preservation, the overflows of s + i and
-  // i + 1, and post.
-  static_assert(sum_to_vcs.find("sum_to: the loop invariant holds on entry") !=
-                std::string_view::npos);
-  static_assert(sum_to_vcs.find("sum_to: the loop invariant is preserved") !=
-                std::string_view::npos);
-  static_assert(sum_to_vcs.find("sum_to: no overflow in (+ s!") !=
-                std::string_view::npos);
-  static_assert(sum_to_vcs.find("sum_to: no overflow in (+ i!") !=
-                std::string_view::npos);
-  static_assert(sum_to_vcs.find("sum_to: the function returns") !=
-                std::string_view::npos);
+  static constexpr std::string_view sum_to_for_vcs =
+      std::define_static_string(vcs<D>(^^sum_to_for, ^^sum_pre, ^^sum_post));
+  static constexpr std::string_view sum_to_overflow_vcs = std::define_static_string(
+      vcs<D>(^^sum_to, ^^sum_pre_too_big, ^^sum_post));
+  static constexpr std::string_view sum_to_wrong_invariant_vcs =
+      std::define_static_string(
+          vcs<D>(^^sum_to_wrong_invariant, ^^sum_pre, ^^sum_post));
+  static constexpr std::string_view sum_to_weak_invariant_vcs =
+      std::define_static_string(
+          vcs<D>(^^sum_to_weak_invariant, ^^sum_pre, ^^sum_post));
+  static constexpr std::string_view sum_capped_vcs = std::define_static_string(
+      vcs<D>(^^sum_capped, ^^sum_pre, ^^capped_post));
 
   static void run(int argc, char **argv) {
+    EXPECT_TRUE(smt::all_unsat(smt::z3_checks(sum_to_vcs)));
+    EXPECT_TRUE(smt::all_unsat(smt::z3_checks(sum_to_for_vcs)));
+    EXPECT_TRUE(smt::only_at(smt::z3_checks(sum_to_overflow_vcs),
+                             "no overflow in (+ s!"));
+    EXPECT_EQUAL(smt::status_of(smt::z3_checks(sum_to_wrong_invariant_vcs),
+                                "the loop invariant holds on entry"),
+                 "sat");
+    EXPECT_TRUE(
+        smt::only_at(smt::z3_checks(sum_to_weak_invariant_vcs),
+                     "the function returns, and its result satisfies post"));
+    EXPECT_TRUE(smt::all_unsat(smt::z3_checks(sum_capped_vcs)));
+
     const script scripts[] = {
-        {"sum_to.smt2", "all unsat", sum_to_vcs},
-        {"sum_to_for.smt2", "all unsat",
-         std::define_static_string(
-             vcs<D>(^^sum_to_for, ^^sum_pre, ^^sum_post))},
-        {"sum_to_overflow.smt2", "sat at the overflow of s + i",
-         std::define_static_string(
-             vcs<D>(^^sum_to, ^^sum_pre_too_big, ^^sum_post))},
-        {"sum_to_wrong_invariant.smt2", "sat at entry",
-         std::define_static_string(
-             vcs<D>(^^sum_to_wrong_invariant, ^^sum_pre, ^^sum_post))},
-        {"sum_to_weak_invariant.smt2", "sat at post",
-         std::define_static_string(
-             vcs<D>(^^sum_to_weak_invariant, ^^sum_pre, ^^sum_post))},
-        {"sum_capped.smt2", "all unsat",
-         std::define_static_string(
-             vcs<D>(^^sum_capped, ^^sum_pre, ^^capped_post))},
+        {"sum_to.smt2", sum_to_vcs},
+        {"sum_to_for.smt2", sum_to_for_vcs},
+        {"sum_to_overflow.smt2", sum_to_overflow_vcs},
+        {"sum_to_wrong_invariant.smt2", sum_to_wrong_invariant_vcs},
+        {"sum_to_weak_invariant.smt2", sum_to_weak_invariant_vcs},
+        {"sum_capped.smt2", sum_capped_vcs},
     };
-    for (const script &s : scripts) {
-      std::printf(";; ==== %s (expect %s)\n%.*s\n", s.file, s.expect,
-                  static_cast<int>(s.text.size()), s.text.data());
-      if (argc > 1) {
+    if (argc > 1) {
+      for (const script &s : scripts) {
         std::ofstream out(std::string(argv[1]) + "/" + s.file);
         out << s.text;
         EXPECT_TRUE(static_cast<bool>(out));
