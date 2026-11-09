@@ -297,7 +297,7 @@ consteval std::size_t lower(Ctx &c, info e) {
       if (std::size_t s = lookup(c, m::identifier_of(decl)); s != npos)
         return s;
     // Not a parameter or local: a constant (e.g. a constexpr global), folded.
-    const info v = m::constant_of(e);
+    const info v = m::constant_of(decl);
     return emit(c, Node{.kind = Kind::Const,
                         .type = value_type(m::type_of(v)),
                         .leaf = v});
