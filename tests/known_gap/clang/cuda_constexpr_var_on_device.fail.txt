@@ -1,4 +1,7 @@
 === Clang ===
-tests/known_gap/clang/cuda_constexpr_var_on_device.cpp:40:21: error: reference to __host__ variable 'rejected' in __global__ function
-   40 |   constexpr int a = rejected.get();
+tests/known_gap/clang/cuda_constexpr_var_on_device.cpp:46:21: error: reference to __host__ variable 'rejected' in __global__ function
+   46 |   constexpr int a = rejected.get();
       |                     ^
+tests/known_gap/clang/cuda_constexpr_var_on_device.cpp:62:29: error: reference to __host__ variable 'params_rejected' in __global__ function
+   62 |   constexpr std::size_t a = params_rejected.size();
+      |                             ^
