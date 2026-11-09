@@ -14,6 +14,11 @@ enum class ASTKind {
   Statement
 };
 
+struct ASTItem;
+
+template<typename T>
+concept anyASTItem = std::is_base_of_v<ASTItem, T>;
+
 struct ASTItem {
   ASTKind kind;
 
@@ -26,6 +31,12 @@ struct ASTItem {
   }
 
   constexpr virtual ASTItem* clone() = 0;
+
+  template<anyASTItem A, anyASTItem B>
+  constexpr void setMember(A*& member, B* n) requires std::is_base_of_v<A, B> {
+    member = n;
+    member->parent = this;
+  }
 
 #define DECL_IS(name) \
   constexpr bool is ## name() { \

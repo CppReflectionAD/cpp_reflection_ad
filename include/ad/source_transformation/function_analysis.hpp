@@ -151,11 +151,7 @@ struct ExtractFunctionWalker : public AstWalker {
       DeclarationStatement* temporary_decl = new DeclarationStatement("double", temporary_name, expr);
       AstWalker::insertStatement(temporary_decl);
 
-      IdExpression* temporary_id = new IdExpression(temporary_name);
-      temporary_id->parent = parent;
-
-      // Replace the expression
-      e = temporary_id;
+      parent->setMember(e, new IdExpression(temporary_name));
     } else {
       AstWalker::walk(e);
     }
@@ -168,6 +164,7 @@ constexpr std::string genForwardADName(std::string_view const& name) {
 
 struct ForwardADExpressionWalker : public AstWalker {
   Expression* ad_expr = nullptr;
+
 
   using AstWalker::walk;
   using AstWalker::handle;
@@ -246,8 +243,7 @@ struct ForwardADWalker : public AstWalker {
 
       stmt->type_name = "auto";
       stmt->var_name = genFunctionVar(stmt->var_name);
-      stmt->initializer = init_ad_expr.ad_expr;
-      stmt->initializer->parent = stmt;
+      stmt->setMember(stmt->initializer, init_ad_expr.ad_expr);
     }
     else {
       AstWalker::insertStatement(new DeclarationStatement(stmt->type_name, genForwardADName(stmt->var_name), init_ad_expr.ad_expr));
@@ -272,10 +268,8 @@ struct ForwardADWalker : public AstWalker {
         freeExpression(op_expr->operands[0]);
         freeExpression(op_expr->operands[1]);
 
-        op_expr->operands[0] = new IdExpression(genFunctionVar(lhsName.code));
-        op_expr->operands[0]->parent = op_expr;
-        op_expr->operands[1] = expr_ad_expr.ad_expr;
-        op_expr->operands[1]->parent = op_expr;
+        op_expr->setMember(op_expr->operands[0], new IdExpression(genFunctionVar(lhsName.code)));
+        op_expr->setMember(op_expr->operands[1], expr_ad_expr.ad_expr);
 
         function_handled = true;
       }
@@ -295,13 +289,11 @@ struct ForwardADWalker : public AstWalker {
 
     if (expr_ad_expr.ad_expr->isFunctionCall()) {
       freeExpression(stmt->return_expression);
-      stmt->return_expression = expr_ad_expr.ad_expr;
-      stmt->return_expression->parent = stmt;
+      stmt->setMember(stmt->return_expression, expr_ad_expr.ad_expr);
     }
     else {
       Expression* primal_expr = stmt->return_expression;
-      stmt->return_expression = new FunctionCallExpression("std::make_pair", {primal_expr, expr_ad_expr.ad_expr});
-      stmt->return_expression->parent = stmt;
+      stmt->setMember(stmt->return_expression, new FunctionCallExpression("std::make_pair", {primal_expr, expr_ad_expr.ad_expr}));
     }
   }
 
