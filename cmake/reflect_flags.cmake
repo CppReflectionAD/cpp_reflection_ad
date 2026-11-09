@@ -55,6 +55,13 @@ if(REFLECTION_AD_SANITIZE)
         # Drop this once that known gap is fixed.
         list(APPEND _sanitize_flags
             -fno-sanitize=shift,integer-divide-by-zero,signed-integer-overflow,null,alignment,vptr)
+        # These two turn off -fdelete-null-pointer-checks, so GCC can no
+        # longer fold a pointer from define_static_string against null, and a
+        # static_assert on `.find()` of its result isn't a constant expression
+        # (#262, tests/known_gap/gcc/sanitize_nonnull_static_string.cpp).
+        # Drop this once that known gap is fixed.
+        list(APPEND _sanitize_flags
+            -fno-sanitize=nonnull-attribute,returns-nonnull-attribute)
     endif()
     set(_sanitize_link_flags -fsanitize=address,undefined)
 
