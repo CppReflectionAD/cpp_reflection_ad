@@ -150,10 +150,10 @@ consteval info value_type(info t) { return m::remove_cvref(t); }
 //     conversions. Arithmetic conversions are restored where the type is known
 //     (coerce()), since a conversion's target type cannot be queried.
 //   - Clang: a copy or move of a class value is a one-operand construct.
-//   - GCC: a temporary, and the return slot, is a construct of an unnamed
-//     variable from its initializer. If the class has a non-trivial
-//     destructor, a temporary's construct has a third operand: the destructor
-//     call that cleans it up.
+//   - A temporary, or the return slot, as a construct of an unnamed variable
+//     from its initializer. If the class has a non-trivial destructor, a
+//     temporary's construct has a third operand: the destructor call that
+//     cleans it up.
 consteval info strip(info e) {
   while (m::is_expression(e)) {
     if (m::is_conversion(e)) {

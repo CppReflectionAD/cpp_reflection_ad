@@ -14,10 +14,9 @@
 #include <type_traits>
 #include <vector>
 
-// A tensor with heap storage, so with a non-trivial destructor: GCC wraps
-// each temporary of it in a cleanup, which the engine sees through. In nn,
-// like Vec, so that nn's operators are found for it, in user code and in the
-// code the engine generates.
+// A tensor with heap storage, so with a non-trivial destructor. In nn, like
+// Vec, so that nn's operators are found for it, in user code and in the code
+// the engine generates.
 namespace nn {
 template <std::size_t N> struct HeapVec {
   static constexpr std::size_t size = N;

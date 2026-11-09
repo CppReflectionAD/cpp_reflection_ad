@@ -147,32 +147,35 @@ primitive has a hand-written VJP", which is the same design as PyTorch / JAX
 
 ## Compiler notes
 
-The engine goes through `ad::meta` (`include/ad/meta.h`), which gives the
-clang fork's expression API on both compilers. With it, on both forks:
+The engine goes through `ad::meta` (`include/ad/meta.h`), which is plain
+`std::meta`: both forks have the same statement and expression API.
+
+Both forks:
 - `operands_of(call)` is the arguments only; the callee comes from
   `declaration_of(callee_of(call))`.
+- An id-expression is an expression, not the entity it names: `constant_of`,
+  `identifier_of`, `type_of` and the other entity queries throw on it, so the
+  engine asks them of `declaration_of(e)`.
 - `type_of` on an expression is an error.
-
-Clang:
 - An **overloaded operator is both `is_function_call` and
   `is_operator_expression`**, so the engine checks for calls first. The
   proposal (§4.2) says `a+b` classifies as an operator.
-- Copies are one-operand `construct`s.
+- Operands come in the order written (`0.5 * s` is `0.5, s`).
+
+Clang:
+- Reading a scalar variable is a conversion (lvalue-to-rvalue), and
+  `double four = 4;` has a conversion node.
+- A copy of a class value is a one-operand `construct`.
 
 GCC:
-- An overloaded operator is `is_function_call` only.
-- A temporary or return slot is `construct(<unnamed var>, init)`. For a class
-  with a non-trivial destructor, a temporary's construct has a third operand,
-  the destructor call that cleans it up. `strip()` in autodiff.hpp peels both.
-- Commutative built-in operands may be swapped (`0.5 * s` → `s, 0.5`), and
-  `double four = 4;` is folded to `4.0` (no conversion node).
+- Reading a scalar variable has no conversion node, and `double four = 4;` is
+  folded to `4.0`.
 - **Registry identity bug.** `template_of(spec) == ^^nn::matvec` is true, yet
-  `substitute(^^vjp, {reflect_constant(template_of(spec))})` does not find
-  `vjp<^^nn::matvec>`. Comparing the two specializations even causes an
-  internal compiler error (ICE): "canonical types differ for identical types".
-  The workaround is `nn::ad::key()`, which normalises via `members_of(parent)`
+  GCC treats the two as different template arguments: comparing
+  `vjp<template_of(spec)>` with `vjp<^^nn::matvec>` causes an internal
+  compiler error (ICE), "canonical types differ for identical types". The
+  workaround is `nn::ad::key()`, which normalises via `members_of(parent)`
   and must be used when registering.
-- `expression_of` / `is_expression_statement` are absent.
 
 ## GPU: possible directions (not implemented; current builds are CPU-only)
 
