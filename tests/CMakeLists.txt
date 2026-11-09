@@ -45,9 +45,10 @@ file(GLOB _gcc_only   CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/gcc_only/*.
 file(GLOB _static_fail CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/static_fail/*.cpp")
 # Known compiler gaps: code a compiler should accept but rejects because of a
-# bug or missing feature in its reflection fork. Like static_fail, each file's
-# expected error is pinned by a .fail.txt snapshot, so the test also fails if
-# the file starts compiling (the gap is fixed) or fails for another reason.
+# bug or missing feature in its reflection fork, or one the fork inherits from
+# upstream. Like static_fail, each file's expected error is pinned by a
+# .fail.txt snapshot, so the test also fails if the file starts compiling (the
+# gap is fixed) or fails for another reason.
 file(GLOB _known_gap_clang CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/known_gap/clang/*.cpp")
 file(GLOB _known_gap_gcc CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -67,6 +68,14 @@ endif()
 # The gap only shows with this UBSan check enabled.
 set_source_files_properties(known_gap/gcc/ubsan_reflection_repro.cpp
     PROPERTIES COMPILE_OPTIONS -fsanitize=float-divide-by-zero)
+
+# These gaps only show in CUDA device code. Bitcode output needs neither a
+# CUDA SDK nor the NVPTX backend, which the clang toolchain doesn't build.
+set_source_files_properties(
+    known_gap/clang/cuda_consteval_host_call.cpp
+    known_gap/clang/cuda_constexpr_var_on_device.cpp
+    PROPERTIES COMPILE_OPTIONS
+        "-xcuda;--cuda-device-only;--cuda-gpu-arch=sm_75;-nocudainc;-nocudalib;-emit-llvm")
 
 foreach(_src IN LISTS _common)
     get_filename_component(_name "${_src}" NAME_WE)

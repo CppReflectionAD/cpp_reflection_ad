@@ -1,0 +1,4 @@
+=== Clang ===
+tests/known_gap/clang/cuda_consteval_host_call.cpp:24:5: error: reference to __host__ function 'host_only' in __host__ __device__ function
+   24 |     host_only();
+      |     ^
