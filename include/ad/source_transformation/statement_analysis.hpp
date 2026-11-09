@@ -40,6 +40,20 @@ struct StatementAnalysis {
     return r;
   }
 
+  // TODO: Hack to get function calls since meta::info objects can not be used in constexpr context.
+  static consteval void getFunctionCalls(info stmt, GenerationContext& ctx) {
+    if (m::is_declaration_statement(stmt)) {
+      info v = declared_variable_of(stmt);
+      ForwardExpression rhs = ExpressionAnalysis::getFunctionCalls(initializer_of(v), ctx);
+    } else if (m::is_expression_statement(stmt)) {
+      ForwardExpression rhs = ExpressionAnalysis::getFunctionCalls(expression_of(stmt), ctx);
+    } else if (m::is_return_statement(stmt)) {
+      ForwardExpression rhs = ExpressionAnalysis::getFunctionCalls(return_operand_of(stmt), ctx);
+    } else {
+      throwKind(stmt);
+    }
+  }
+
   static consteval void generateForward(info stmt, GenerationContext& ctx) {
     if (m::is_declaration_statement(stmt)) {
       info v = declared_variable_of(stmt);
@@ -161,7 +175,6 @@ struct StatementAnalysis {
     for (std::string cur : rws_exp.reverse_stmts | std::views::reverse) {
       ctx.addReverseStatement(su::join(cur, ";"));
     }
-
   }
 
   static consteval void generateReverseDecl(info stmt, GenerationContext& ctx) {

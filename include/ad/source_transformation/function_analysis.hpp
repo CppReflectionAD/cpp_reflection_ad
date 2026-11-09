@@ -364,15 +364,14 @@ struct FunctionAnalysis {
     r += walker.code;
 
     ctx.removeIndent();
-    // ctx.addIndent();
-    // for (info stmt : m::statements_of(m::body_of(func))) {
-    //   StatementAnalysis::generateForward(stmt, ctx);
-    // }
-    // r += ctx.flushStatements();
-    // ctx.removeIndent();
     r += "}\n";
 
     releaseFunctionBody(stmts);
+
+    // TODO: Remove when function declarations are part of the AST.
+    for (info stmt : m::statements_of(m::body_of(func))) {
+      StatementAnalysis::getFunctionCalls(stmt, ctx);
+    }
 
     return std::define_static_string(r);
   }

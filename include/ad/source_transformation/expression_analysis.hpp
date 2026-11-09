@@ -89,6 +89,38 @@ struct ExpressionAnalysis {
     return std::define_static_string(r);
   }
 
+  // TODO: Hack to get function calls since meta::info objects can not be used in constexpr context.
+  static consteval ForwardExpression getFunctionCalls(info e, GenerationContext& ctx) {
+    info exp = ad::detail::stripCasts(e); // TODO: Handle casts.
+
+    ForwardExpression r = {};
+    if (m::is_operator_expression(exp)) {
+      auto operands = operands_of(exp);
+
+      for (info operand : operands) {
+        getFunctionCalls(operand, ctx);
+      }
+    } else if (m::is_literal(exp)) {
+      // Nothing
+    } else if (m::is_id_expression(exp)) {
+      // Nothing
+    } else if (m::is_function_call(exp)) {
+      // First handle arguments
+      auto operands = operands_of(exp);
+      for (info operand : operands) {
+        getFunctionCalls(operand, ctx);
+      }
+
+      // Add function call to ctx
+      info decl = m::declaration_of(m::callee_of(exp));
+      ctx.addRequiredFunction(decl);
+    } else {
+      throwKind(exp);
+    }
+
+    return r;
+  }
+
   static consteval ForwardExpression generateForward(info e, GenerationContext& ctx) {
     info exp = ad::detail::stripCasts(e); // TODO: Handle casts.
 

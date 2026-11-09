@@ -15,7 +15,7 @@ std::pair<double, double> func_03_d(double a, double a_d) {
 }
 
 std::pair<double, double> func_call_d(double a, double a_d) {
-  return std::make_pair(a * a, (a) * (a_d) + (a_d) * (a));
+  return std::make_pair(a * a, a * a_d + a * a_d);
 }
 
 std::pair<double, double> func_04_d(double a, double a_d) {
