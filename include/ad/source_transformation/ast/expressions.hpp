@@ -233,6 +233,10 @@ struct Wrap {
   constexpr Wrap operator=(this Wrap&& self, Wrap&& o) noexcept {
     return {new OperatorExpression(m::operators::op_equals, {self.wrap, o.wrap})};
   }
+
+  constexpr Wrap operator+=(this Wrap&& self, Wrap&& o) noexcept {
+    return {new OperatorExpression(m::operators::op_plus_equals, {self.wrap, o.wrap})};
+  }
 };
 
 constexpr Wrap wrap(Expression* expr) {

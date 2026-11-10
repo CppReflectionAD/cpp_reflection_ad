@@ -8,6 +8,7 @@ namespace m = ad::meta;
 
 enum class OperatorKind {
   Add,
+  AddAssign,
   Assign,
   Mul
 };
@@ -22,6 +23,8 @@ constexpr OperatorInfo getOperatorInfo(m::operators op) {
     return {OperatorKind::Add, "+"};
   } else if (op == m::operators::op_equals) {
     return {OperatorKind::Assign, "="};
+  } else if (op == m::operators::op_plus_equals) {
+    return {OperatorKind::AddAssign, "+="};
   } else if (op == m::operators::op_star) {
     return {OperatorKind::Mul, "*"};
   } else {

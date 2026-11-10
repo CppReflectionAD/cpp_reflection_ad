@@ -25,34 +25,85 @@ struct GetOverwritesWalker : public AstWalker {
 
   constexpr void handle(OperatorExpression* expr) override {
     OperatorInfo op = getOperatorInfo(expr->op);
-    if (expr->operands.size() == 2 && OperatorKind::Assign == op.kind) {
+    if (expr->operands.size() == 2 && (OperatorKind::Assign == op.kind || OperatorKind::AddAssign == op.kind)) {
       overwrites.push_back(expr->operands[0]);
     }
   }
 };
 
-struct ReverseADExpressionWalker : public AstWalker {
-  std::vector<Expression*> updates = {};
-  std::vector<Expression*> resets = {};
+struct GetReverseAccessWalker : public AstWalker {
+  Expression* reverse_access = nullptr;
 
   using AstWalker::walk;
   using AstWalker::handle;
 
   constexpr void walk(OperatorExpression* expr) override {
-    std::vector<Expression*> op_d = handleOperators(expr->operands);
+    (void)expr;
+    throw "No operators for access supported.";
+  }
 
+  constexpr void walk(IdExpression* expr) override {
+    reverse_access = new IdExpression(genReverseADName(expr->id));
+  }
+
+  constexpr void walk(LiteralExpression* expr) override {
+    (void) expr;
+    throw "No Literals for access supported.";
+  }
+
+  constexpr void walk(FunctionCallExpression* expr) override {
+    (void) expr;
+    throw "No function calls for access supported.";
+  }
+};
+
+struct ReverseADExpressionContext {
+  std::vector<Expression*> updates = {};
+  std::vector<Expression*> resets = {};
+};
+
+struct ReverseADExpressionWalker : public AstWalker {
+  Expression* adj;
+
+  ReverseADExpressionContext* rws_ctx;
+
+  constexpr ReverseADExpressionWalker(Expression* adj, ReverseADExpressionContext* rws_ctx) : adj(adj), rws_ctx(rws_ctx) {}
+
+  constexpr ~ReverseADExpressionWalker() {
+    if (nullptr != adj) {
+      freeExpression(adj);
+    }
+  }
+
+  using AstWalker::walk;
+  using AstWalker::handle;
+
+  constexpr void walk(OperatorExpression* expr) override {
     OperatorInfo op = getOperatorInfo(expr->op);
-    if (op_d.size() == 1) {
+    if (expr->operands.size() == 1) {
       throw "Handle unary operators";
-    } else if (op_d.size() == 2) {
+    } else if (expr->operands.size() == 2) {
       if (OperatorKind::Add == op.kind) {
-        ad_expr = (wrap(op_d[0]) + wrap(op_d[1])).wrap;
+        // Factor of 1 just continue walk.
+        walk(expr->operands[0]);
+        walk(expr->operands[1]);
       }
-      else if (OperatorKind::Assign == op.kind) {
-        ad_expr = (wrap(op_d[0]) = wrap(op_d[1])).wrap;
+      else if (OperatorKind::Assign == op.kind || OperatorKind::AddAssign == op.kind) {
+        GetReverseAccessWalker reverse_access = {};
+        reverse_access.walk(expr->operands[0]);
+
+        if (OperatorKind::AddAssign == op.kind) {
+          rws_ctx->resets.push_back(reverse_access.reverse_access->clone());
+        }
+        ReverseADExpressionWalker op1_walker = {reverse_access.reverse_access, rws_ctx};
+        op1_walker.walk(expr->operands[1]);
       }
       else if (OperatorKind::Mul == op.kind) {
-        ad_expr = (wrap(expr->operands[1]->clone()) * wrap(op_d[0]) + wrap(expr->operands[0]->clone()) * wrap(op_d[1])).wrap;
+        ReverseADExpressionWalker op0_walker = {(wrap(expr->operands[1]->clone()) * wrap(adj->clone())).wrap, rws_ctx};
+        op0_walker.walk(expr->operands[0]);
+
+        ReverseADExpressionWalker op1_walker = {(wrap(expr->operands[0]->clone()) * wrap(adj->clone())).wrap, rws_ctx};
+        op1_walker.walk(expr->operands[1]);
       }
     } else {
       throw "Unhandled number of operands";
@@ -60,40 +111,30 @@ struct ReverseADExpressionWalker : public AstWalker {
   }
 
   constexpr void walk(IdExpression* expr) override {
-    ad_expr = new IdExpression(genReverseADName(expr->id));
+    rws_ctx->updates.push_back((wrap(new IdExpression(genReverseADName(expr->id))) += wrap(adj->clone())).wrap);
   }
 
   constexpr void walk(LiteralExpression* expr) override {
     (void) expr;
-
-    ad_expr = new LiteralExpression("0.0");
+    // Do Nothing
   }
 
   constexpr void walk(FunctionCallExpression* expr) override {
-
-    std::vector<Expression*> ad_ops = handleOperators(expr->operands);
-
-    std::vector<Expression*> all_ops(ad_ops.size() * 2);
-    for (size_t i = 0; i < ad_ops.size(); i += 1) {
-      all_ops[i * 2] = expr->operands[i]->clone();
-      all_ops[i * 2 + 1] = ad_ops[i];
-    }
-
-    ad_expr = new FunctionCallExpression(genReverseADName(expr->func_name), all_ops);
+    (void) expr;
   }
 
 private:
-  constexpr std::vector<Expression*> handleOperators(std::vector<Expression*>& ops) {
-    std::vector<Expression*> operands(ops.size());
-
-    for (size_t i = 0; i < operands.size(); i += 1) {
-      ReverseADExpressionWalker w = {};
-      w.walk(ops[i]);
-      operands[i] = w.ad_expr;
-    }
-
-    return operands;
-  }
+  // constexpr std::vector<Expression*> handleOperators(std::vector<Expression*>& ops) {
+  //   std::vector<Expression*> operands(ops.size());
+  //
+  //   for (size_t i = 0; i < operands.size(); i += 1) {
+  //     ReverseADExpressionWalker w = {};
+  //     w.walk(ops[i]);
+  //     operands[i] = w.ad_expr;
+  //   }
+  //
+  //   return operands;
+  // }
 };
 
 
@@ -108,24 +149,21 @@ struct ReverseADWalker : public AstWalker {
   using AstWalker::walk;
 
   constexpr void walk(DeclarationStatement* stmt) override {
-    reverse_statements.push_back(new DeclarationStatement(stmt->type_name, genReverseADName(stmt->var_name), new LiteralExpression("0.0")));
+    // Add creation of adjoint
+    insertStatement(new DeclarationStatement(stmt->type_name, genReverseADName(stmt->var_name), new LiteralExpression("0.0")));
 
-    // ReverseADExpressionWalker init_ad_expr = {};
-    // init_ad_expr.walk(stmt->initializer);
-    //
-    // if (init_ad_expr.ad_expr->isFunctionCall()) {
-    //   freeExpression(stmt->initializer);
-    //
-    //   stmt->type_name = "auto";
-    //   stmt->var_name = genFunctionVar(stmt->var_name);
-    //   stmt->setMember(stmt->initializer, init_ad_expr.ad_expr);
-    // }
-    // else {
-    //   AstWalker::insertStatement(new DeclarationStatement(stmt->type_name, genReverseADName(stmt->var_name), init_ad_expr.ad_expr));
-    // }
+    ReverseADExpressionContext rws_ctx = {};
+
+    IdExpression* adj = new IdExpression(genReverseADName(stmt->var_name));
+    ReverseADExpressionWalker rws = {adj->clone(), &rws_ctx};
+    rws.walk(stmt->initializer);
+    rws_ctx.resets.push_back(adj);
+
+    addReverseContext(rws_ctx);
   }
 
   constexpr void walk(ExpressionStatement* stmt) override {
+    // Add overwrites stores and restores
     GetOverwritesWalker overwrites = {};
     overwrites.walk(stmt->expression);
 
@@ -140,53 +178,43 @@ struct ReverseADWalker : public AstWalker {
       insertStatement(new ExpressionStatement(new FunctionCallExpression("store", clones_store)));
       reverse_statements.push_back(new ExpressionStatement(new FunctionCallExpression("restore", clones_restore)));
     }
-    // bool function_handled = false;
-    // if (stmt->expression->isOperator()) {
-    //   OperatorExpression* op_expr = OperatorExpression::cast(stmt->expression);
-    //   OperatorInfo op_info = getOperatorInfo(op_expr->op);
-    //
-    //   if (OperatorKind::Assign == op_info.kind && op_expr->operands[1]->isFunctionCall()) {
-    //     ReverseADExpressionWalker expr_ad_expr = {};
-    //     expr_ad_expr.walk(op_expr->operands[1]);
-    //
-    //     // TODO: This assumes id assignment. Improve when structured bindings are supported.
-    //     ExpressionToCppWalker lhsName = {};
-    //     lhsName.walk(op_expr->operands[0]);
-    //
-    //     freeExpression(op_expr->operands[0]);
-    //     freeExpression(op_expr->operands[1]);
-    //
-    //     op_expr->setMember(op_expr->operands[0], new IdExpression(genFunctionVar(lhsName.code)));
-    //     op_expr->setMember(op_expr->operands[1], expr_ad_expr.ad_expr);
-    //
-    //     function_handled = true;
-    //   }
-    // }
-    //
-    // if (!function_handled) {
-    //   ReverseADExpressionWalker expr_ad_expr = {};
-    //   expr_ad_expr.walk(stmt->expression);
-    //
-    //   AstWalker::insertStatement(new ExpressionStatement(expr_ad_expr.ad_expr));
-    // }
+
+    ReverseADExpressionContext rws_ctx = {};
+
+    ReverseADExpressionWalker rws = {nullptr, &rws_ctx};
+    rws.walk(stmt->expression);
+
+    addReverseContext(rws_ctx);
   }
 
   constexpr void walk(ReturnStatement* stmt) override {
-    (void)stmt;
-    // ReverseADExpressionWalker expr_ad_expr = {};
-    // expr_ad_expr.walk(stmt->return_expression);
-    //
-    // if (expr_ad_expr.ad_expr->isFunctionCall()) {
-    //   freeExpression(stmt->return_expression);
-    //   stmt->setMember(stmt->return_expression, expr_ad_expr.ad_expr);
-    // }
-    // else {
-    //   Expression* primal_expr = stmt->return_expression;
-    //   stmt->setMember(stmt->return_expression, new FunctionCallExpression("std::make_pair", {primal_expr, expr_ad_expr.ad_expr}));
-    // }
+    ReverseADExpressionContext rws_ctx = {};
+    IdExpression* adj = new IdExpression(genReverseADName("ret"));
+
+    ReverseADExpressionWalker rws = {adj->clone(), &rws_ctx};
+    rws.walk(stmt->return_expression);
+
+    rws_ctx.resets.push_back(adj);
+
+    addReverseContext(rws_ctx);
+
+    Statement* release = stmt;
+    releaseStatement(release);
+    removeStatement();
   }
 
 private:
+
+  constexpr void addReverseContext(ReverseADExpressionContext& rws_ctx) {
+    for (Expression* cur : rws_ctx.resets) {
+      reverse_statements.push_back(new ExpressionStatement((wrap(cur) = wrap(new LiteralExpression("0.0"))).wrap));
+    }
+
+    for (Expression* cur : rws_ctx.updates) {
+      reverse_statements.push_back(new ExpressionStatement(cur));
+    }
+  }
+
   constexpr std::string genFunctionVar(std::string_view const& var) {
     return su::joinE("[", var, ", ", genReverseADName(var), "]");
   };

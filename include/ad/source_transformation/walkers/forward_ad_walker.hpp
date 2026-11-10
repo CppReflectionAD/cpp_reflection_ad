@@ -34,6 +34,9 @@ struct ForwardADExpressionWalker : public AstWalker {
       if (OperatorKind::Add == op.kind) {
         ad_expr = (wrap(op_d[0]) + wrap(op_d[1])).wrap;
       }
+      else if (OperatorKind::AddAssign == op.kind) {
+        ad_expr = (wrap(op_d[0]) += wrap(op_d[1])).wrap;
+      }
       else if (OperatorKind::Assign == op.kind) {
         ad_expr = (wrap(op_d[0]) = wrap(op_d[1])).wrap;
       }

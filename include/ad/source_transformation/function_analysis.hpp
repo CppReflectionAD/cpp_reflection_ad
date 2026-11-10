@@ -126,6 +126,7 @@ struct FunctionAnalysis {
 
     ReverseADWalker ad = {&ctx};
     ad.walk(&stmts);
+    std::reverse(ad.reverse_statements.begin(), ad.reverse_statements.end());
 
     ctx.addIndent();
     ToCppWalker walker = {&ctx};
