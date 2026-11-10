@@ -18,6 +18,7 @@
 #include "ast/meta_ast.hpp"
 #include "walkers/extract_function_walker.hpp"
 #include "walkers/forward_ad_walker.hpp"
+#include "walkers/reverse_ad_walker.hpp"
 #include "walkers/to_cpp_walker.hpp"
 
 namespace ad {
@@ -78,13 +79,12 @@ struct FunctionAnalysis {
     ForwardADWalker ad = {&ctx};
     ad.walk(&stmts);
 
-    ToCppWalker walker = {&ctx};
     ctx.addIndent();
-
+    ToCppWalker walker = {&ctx};
     walker.walk(&stmts);
     r += walker.code;
-
     ctx.removeIndent();
+
     r += "}\n";
 
     releaseFunctionBody(stmts);
@@ -118,23 +118,44 @@ struct FunctionAnalysis {
     // Reverse functions do not return values.
     r += su::join("void ", m::identifier_of(func), "_b(", params_s, ") {\n");
 
+    std::vector<Statement*> stmts = fromFunctionBody(m::body_of(func));
+
+    // Replace function calls with temporaries.
+    ExtractFunctionWalker extFnc = {&ctx};
+    extFnc.walk(&stmts);
+
+    ReverseADWalker ad = {&ctx};
+    ad.walk(&stmts);
+
     ctx.addIndent();
-    for (info stmt : m::statements_of(m::body_of(func))) {
-      bool is_return = m::is_return_statement(stmt);
-
-      StatementAnalysis::generateStore(stmt, ctx);
-      StatementAnalysis::generateReverseDecl(stmt, ctx);
-      StatementAnalysis::generateReverse(stmt, ctx, !is_return);
-      StatementAnalysis::generateRestore(stmt, ctx);
-      ctx.addReverseStatement(su::join("//", StatementAnalysis::generatePrimal(stmt, ctx)));
-      ctx.addReverseStatement("");
-    }
-
-    r += ctx.flushStatements();
-    r += ctx.flushReverseStatements();
-
+    ToCppWalker walker = {&ctx};
+    walker.walk(&stmts);
+    walker.walk(&ad.reverse_statements);
+    r += walker.code;
     ctx.removeIndent();
+
     r += "}\n";
+
+    releaseFunctionBody(stmts);
+    releaseFunctionBody(ad.reverse_statements);
+
+    // ctx.addIndent();
+    // for (info stmt : m::statements_of(m::body_of(func))) {
+    //   bool is_return = m::is_return_statement(stmt);
+    //
+    //   StatementAnalysis::generateStore(stmt, ctx);
+    //   StatementAnalysis::generateReverseDecl(stmt, ctx);
+    //   StatementAnalysis::generateReverse(stmt, ctx, !is_return);
+    //   StatementAnalysis::generateRestore(stmt, ctx);
+    //   ctx.addReverseStatement(su::join("//", StatementAnalysis::generatePrimal(stmt, ctx)));
+    //   ctx.addReverseStatement("");
+    // }
+    //
+    // r += ctx.flushStatements();
+    // r += ctx.flushReverseStatements();
+    //
+    // ctx.removeIndent();
+    // r += "}\n";
 
     return std::define_static_string(r);
   }
