@@ -78,11 +78,20 @@ struct ToCppWalker : public AstWalker {
 
   using AstWalker::walk;
 
+  constexpr void walk(CommentStatement* stmt) override {
+    code += ctx->format(stmt->comment);
+  }
+
   constexpr void walk(DeclarationStatement* stmt) override {
     ExpressionToCppWalker init_str = {};
     init_str.walk(stmt->initializer);
 
     code += ctx->format(su::joinE(stmt->type_name, " ", stmt->var_name, " = ", init_str.code, ";\n"));
+  }
+
+  constexpr void walk(EmptyLineStatement* stmt) override {
+    (void)stmt;
+    code += "\n";
   }
 
   constexpr void walk(ExpressionStatement* stmt) override {

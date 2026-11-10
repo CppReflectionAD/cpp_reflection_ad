@@ -13,7 +13,9 @@ using std::meta::info;
 namespace m = ad::meta;
 
 enum class StatementKind {
+  Comment,
   Declaration,
+  EmptyLine,
   Expression,
   Return
 };
@@ -23,19 +25,20 @@ struct Statement : public ASTItem {
 
   explicit constexpr Statement(StatementKind kind) : ASTItem(ASTKind::Statement), kind(kind) {}
 
-  constexpr bool isDeclaration() {
-    return StatementKind::Declaration == kind;
+#define DECL_IS(name) \
+  constexpr bool is ## name() { \
+    return StatementKind:: name == kind; \
   }
 
-  constexpr bool isExpression() {
-    return StatementKind::Expression == kind;
-  }
+  DECL_IS(Comment)
+  DECL_IS(Declaration)
+  DECL_IS(EmptyLine)
+  DECL_IS(Expression)
+  DECL_IS(Return)
 
-  constexpr bool isReturn() {
-    return StatementKind::Return == kind;
-  }
+#undef DECL_IS
 
-  constexpr static  Statement* cast(ASTItem* item) {
+  constexpr static Statement* cast(ASTItem* item) {
     return static_cast<Statement*>(item);
   }
 
@@ -45,6 +48,20 @@ struct Statement : public ASTItem {
   }
 
   constexpr Statement* clone() override = 0;
+};
+
+struct CommentStatement : public Statement {
+  std::string comment;
+
+  constexpr CommentStatement(std::string const& comment) : Statement(StatementKind::Comment), comment(comment) {}
+
+  static constexpr CommentStatement* cast(Statement* stmt) {
+    return static_cast<CommentStatement*>(stmt);
+  }
+
+  constexpr CommentStatement* clone() override {
+    return new CommentStatement(comment);
+  }
 };
 
 struct DeclarationStatement : public Statement {
@@ -82,6 +99,19 @@ struct DeclarationStatement : public Statement {
 
   constexpr DeclarationStatement* clone() override {
     return new DeclarationStatement(type_name, var_name, initializer->clone());
+  }
+};
+
+struct EmptyLineStatement : public Statement {
+
+  constexpr EmptyLineStatement() : Statement(StatementKind::EmptyLine) {}
+
+  static constexpr EmptyLineStatement* cast(Statement* stmt) {
+    return static_cast<EmptyLineStatement*>(stmt);
+  }
+
+  constexpr EmptyLineStatement* clone() override {
+    return new EmptyLineStatement();
   }
 };
 
@@ -146,18 +176,23 @@ struct ReturnStatement : public Statement {
 constexpr void releaseStatement(Statement*& stmt) {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdelete-non-abstract-non-virtual-dtor"
-  if (stmt->isDeclaration()) {
-    delete DeclarationStatement::cast(stmt);
+
+#define CASE(name) \
+  else if (stmt->is ## name()) { \
+    delete name ## Statement::cast(stmt); \
   }
-  else if (stmt->isExpression()) {
-    delete ExpressionStatement::cast(stmt);
-  }
-  else if (stmt->isReturn()) {
-    delete ReturnStatement::cast(stmt);
-  }
+
+  if (false) {}
+  CASE(Comment)
+  CASE(Declaration)
+  CASE(EmptyLine)
+  CASE(Expression)
+  CASE(Return)
   else {
-    throw "Unknown expression.";
+    throw "Unknown statement.";
   }
+
+#undef CASE
 
   stmt = nullptr;
 #pragma GCC diagnostic pop

@@ -42,7 +42,9 @@ struct AstWalker {
   DECL_HANDLE(OperatorExpression, expr)
   DECL_HANDLE(LiteralExpression, expr)
 
+  DECL_HANDLE(CommentStatement, stmt)
   DECL_HANDLE(DeclarationStatement, stmt)
+  DECL_HANDLE(EmptyLineStatement, stmt)
   DECL_HANDLE(ExpressionStatement, stmt)
   DECL_HANDLE(ReturnStatement, stmt)
 
@@ -62,6 +64,25 @@ struct AstWalker {
     }
   }
 
+  constexpr virtual void walk(Statement*& stmt) {
+#define CASE(name) \
+  else if (stmt->is ## name()) { \
+    walk(name ## Statement::cast(stmt)); \
+  }
+
+    if (false) {}
+    CASE(Comment)
+    CASE(Declaration)
+    CASE(EmptyLine)
+    CASE(Expression)
+    CASE(Return)
+    else {
+      throw "Unknown statement.";
+    }
+
+#undef CASE
+  }
+
   constexpr virtual void walk(std::vector<Statement*>* stmts) {
     StmtIter iter = stmts->begin();
 
@@ -69,18 +90,7 @@ struct AstWalker {
     while(iter != stmts->end()) {
       Statement* stmt = *iter;
 
-      if (stmt->isDeclaration()) {
-        walk(DeclarationStatement::cast(stmt));
-      }
-      else if (stmt->isExpression()) {
-        walk(ExpressionStatement::cast(stmt));
-      }
-      else if (stmt->isReturn()) {
-        walk(ReturnStatement::cast(stmt));
-      }
-      else {
-        throw "Unknown expression.";
-      }
+      walk(stmt);
 
       if (stmtInsertStack.back().advance) {
         ++iter;

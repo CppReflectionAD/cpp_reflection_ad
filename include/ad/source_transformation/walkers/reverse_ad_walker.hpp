@@ -60,6 +60,7 @@ struct GetReverseAccessWalker : public AstWalker {
 struct ReverseADExpressionContext {
   std::vector<Expression*> updates = {};
   std::vector<Expression*> resets = {};
+  std::vector<Statement*> restores = {};
 };
 
 struct ReverseADExpressionWalker : public AstWalker {
@@ -92,7 +93,7 @@ struct ReverseADExpressionWalker : public AstWalker {
         GetReverseAccessWalker reverse_access = {};
         reverse_access.walk(expr->operands[0]);
 
-        if (OperatorKind::AddAssign == op.kind) {
+        if (OperatorKind::Assign == op.kind) {
           rws_ctx->resets.push_back(reverse_access.reverse_access->clone());
         }
         ReverseADExpressionWalker op1_walker = {reverse_access.reverse_access, rws_ctx};
@@ -159,13 +160,15 @@ struct ReverseADWalker : public AstWalker {
     rws.walk(stmt->initializer);
     rws_ctx.resets.push_back(adj);
 
-    addReverseContext(rws_ctx);
+    addReverseContext(stmt, rws_ctx);
   }
 
   constexpr void walk(ExpressionStatement* stmt) override {
     // Add overwrites stores and restores
     GetOverwritesWalker overwrites = {};
     overwrites.walk(stmt->expression);
+
+    ReverseADExpressionContext rws_ctx = {};
 
     if (!overwrites.overwrites.empty()) {
       std::vector<Expression*> clones_store = {};
@@ -176,15 +179,13 @@ struct ReverseADWalker : public AstWalker {
       }
 
       insertStatement(new ExpressionStatement(new FunctionCallExpression("store", clones_store)));
-      reverse_statements.push_back(new ExpressionStatement(new FunctionCallExpression("restore", clones_restore)));
+      rws_ctx.restores.push_back(new ExpressionStatement(new FunctionCallExpression("restore", clones_restore)));
     }
-
-    ReverseADExpressionContext rws_ctx = {};
 
     ReverseADExpressionWalker rws = {nullptr, &rws_ctx};
     rws.walk(stmt->expression);
 
-    addReverseContext(rws_ctx);
+    addReverseContext(stmt, rws_ctx);
   }
 
   constexpr void walk(ReturnStatement* stmt) override {
@@ -196,7 +197,7 @@ struct ReverseADWalker : public AstWalker {
 
     rws_ctx.resets.push_back(adj);
 
-    addReverseContext(rws_ctx);
+    addReverseContext(stmt, rws_ctx);
 
     Statement* release = stmt;
     releaseStatement(release);
@@ -205,7 +206,7 @@ struct ReverseADWalker : public AstWalker {
 
 private:
 
-  constexpr void addReverseContext(ReverseADExpressionContext& rws_ctx) {
+  constexpr void addReverseContext(Statement* stmt, ReverseADExpressionContext& rws_ctx) {
     for (Expression* cur : rws_ctx.resets) {
       reverse_statements.push_back(new ExpressionStatement((wrap(cur) = wrap(new LiteralExpression("0.0"))).wrap));
     }
@@ -213,6 +214,15 @@ private:
     for (Expression* cur : rws_ctx.updates) {
       reverse_statements.push_back(new ExpressionStatement(cur));
     }
+
+    for (Statement* cur : rws_ctx.restores) {
+      reverse_statements.push_back(cur);
+    }
+
+    ToCppWalker to_cpp = {ctx};
+    to_cpp.walk(stmt);
+    reverse_statements.push_back(new CommentStatement(su::joinE("// ", to_cpp.code)));
+    reverse_statements.push_back(new EmptyLineStatement());
   }
 
   constexpr std::string genFunctionVar(std::string_view const& var) {
