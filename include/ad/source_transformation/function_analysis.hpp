@@ -140,6 +140,11 @@ struct FunctionAnalysis {
     releaseFunctionBody(stmts);
     releaseFunctionBody(ad.reverse_statements);
 
+    // TODO: Remove when function declarations are part of the AST.
+    for (info stmt : m::statements_of(m::body_of(func))) {
+      StatementAnalysis::getFunctionCalls(stmt, ctx);
+    }
+
     // ctx.addIndent();
     // for (info stmt : m::statements_of(m::body_of(func))) {
     //   bool is_return = m::is_return_statement(stmt);

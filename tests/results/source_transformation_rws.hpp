@@ -39,15 +39,15 @@ void func_03_b(double a, double& a_b, double ret_b) {
 
 void func_call_b(double a, double& a_b, double ret_b) {
 
-  //return a * a;
-  a_b += (a) * ret_b;
-  a_b += (a) * ret_b;
+  // return a * a;
+  a_b += a * ret_b;
+  a_b += a * ret_b;
   ret_b = 0.0;
 }
 
 void func_04_b(double a, double& a_b, double ret_b) {
-  auto temp_1 = func_call(a);
-  auto temp_1_b = 0.0;
+  double temp_1_b = 0.0;
+  double temp_1 = func_call(a);
 
   //return func_call(a) * a;
   a_b += (temp_1) * ret_b;
