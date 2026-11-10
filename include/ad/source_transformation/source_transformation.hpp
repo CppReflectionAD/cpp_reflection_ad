@@ -2,8 +2,6 @@
 
 #include "../meta.h"
 
-#include "expression_analysis.hpp"
-#include "statement_analysis.hpp"
 #include "function_analysis.hpp"
 
 namespace ad {

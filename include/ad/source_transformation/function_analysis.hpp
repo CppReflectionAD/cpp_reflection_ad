@@ -12,12 +12,10 @@
 #include "string_util.hpp"
 #include "throw_helper.hpp"
 
-#include "expression_analysis.hpp"
-#include "function_analysis.hpp"
-
 #include "ast/meta_ast.hpp"
 #include "walkers/extract_function_walker.hpp"
 #include "walkers/forward_ad_walker.hpp"
+#include "walkers/get_functions_calls.hpp"
 #include "walkers/reverse_ad_walker.hpp"
 #include "walkers/to_cpp_walker.hpp"
 
@@ -91,7 +89,7 @@ struct FunctionAnalysis {
 
     // TODO: Remove when function declarations are part of the AST.
     for (info stmt : m::statements_of(m::body_of(func))) {
-      StatementAnalysis::getFunctionCalls(stmt, ctx);
+      GetFunctionCalls::run(stmt, ctx);
     }
 
     return std::define_static_string(r);
@@ -142,7 +140,7 @@ struct FunctionAnalysis {
 
     // TODO: Remove when function declarations are part of the AST.
     for (info stmt : m::statements_of(m::body_of(func))) {
-      StatementAnalysis::getFunctionCalls(stmt, ctx);
+      GetFunctionCalls::run(stmt, ctx);
     }
 
     // ctx.addIndent();
