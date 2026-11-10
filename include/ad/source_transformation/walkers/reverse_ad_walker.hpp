@@ -121,21 +121,30 @@ struct ReverseADExpressionWalker : public AstWalker {
   }
 
   constexpr void walk(FunctionCallExpression* expr) override {
-    (void) expr;
+    std::vector<Expression*> adj_operands = handleOperators(expr->operands);
+
+    std::vector<Expression*> combined_operands(adj_operands.size() * 2 + 1);
+    for (size_t i = 0; i < adj_operands.size(); i += 1) {
+      combined_operands[i * 2] = expr->operands[i]->clone();
+      combined_operands[i * 2 + 1] = adj_operands[i];
+    }
+
+    combined_operands.back() = adj->clone();
+    rws_ctx->updates.push_back(new FunctionCallExpression(genReverseADName(expr->func_name), combined_operands));
   }
 
 private:
-  // constexpr std::vector<Expression*> handleOperators(std::vector<Expression*>& ops) {
-  //   std::vector<Expression*> operands(ops.size());
-  //
-  //   for (size_t i = 0; i < operands.size(); i += 1) {
-  //     ReverseADExpressionWalker w = {};
-  //     w.walk(ops[i]);
-  //     operands[i] = w.ad_expr;
-  //   }
-  //
-  //   return operands;
-  // }
+  constexpr std::vector<Expression*> handleOperators(std::vector<Expression*>& ops) {
+    std::vector<Expression*> operands(ops.size());
+
+    for (size_t i = 0; i < operands.size(); i += 1) {
+      GetReverseAccessWalker w = {};
+      w.walk(ops[i]);
+      operands[i] = w.reverse_access;
+    }
+
+    return operands;
+  }
 };
 
 

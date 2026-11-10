@@ -49,24 +49,28 @@ void func_04_b(double a, double& a_b, double ret_b) {
   double temp_1_b = 0.0;
   double temp_1 = func_call(a);
 
-  //return func_call(a) * a;
-  a_b += (temp_1) * ret_b;
-  temp_1_b += (a) * ret_b;
+  // return temp_1 * a;
+  a_b += temp_1 * ret_b;
+  temp_1_b += a * ret_b;
   ret_b = 0.0;
+
+  // double temp_1 = func_call(a);
   func_call_b(a, a_b, temp_1_b);
+  temp_1_b = 0.0;
 }
 
 void func_05_b(double a, double& a_b, double ret_b) {
   double b_b = 0.0;
   double b = func_call(a);
 
-  //return b * a;
-  a_b += (b) * ret_b;
-  b_b += (a) * ret_b;
+  // return b * a;
+  a_b += b * ret_b;
+  b_b += a * ret_b;
   ret_b = 0.0;
 
-  //double b = func_call(a);
+  // double b = func_call(a);
   func_call_b(a, a_b, b_b);
+  b_b = 0.0;
 }
 
 void func_06_b(double a, double& a_b, double ret_b) {
@@ -75,16 +79,17 @@ void func_06_b(double a, double& a_b, double ret_b) {
   store(b);
   b = func_call(b);
 
-  //return b * a;
-  a_b += (b) * ret_b;
-  b_b += (a) * ret_b;
+  // return b * a;
+  a_b += b * ret_b;
+  b_b += a * ret_b;
   ret_b = 0.0;
 
-  //b = func_call(b);
+  // b = func_call(b);
   restore(b);
   func_call_b(b, b_b, b_b);
+  b_b = 0.0;
 
-  //double b = a;
+  // double b = a;
   a_b += b_b;
   b_b = 0.0;
 }
