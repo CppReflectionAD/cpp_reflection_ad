@@ -105,7 +105,7 @@ def render_command_failure(result: CommandResult) -> str:
 def ensure_submodule(source_dir: Path, verbose: bool) -> None:
     """Check out a submodule on demand so the repo builds from a bare clone.
 
-    A fresh clone leaves clang-p2996/gcc-mirror as empty submodule dirs; the
+    A fresh clone leaves clang-p2996/gcc as empty submodule dirs; the
     build needs their sources. Idempotent: a no-op once populated.
     """
     if source_dir.is_dir() and (
@@ -117,7 +117,7 @@ def ensure_submodule(source_dir: Path, verbose: bool) -> None:
     # checkout elsewhere may share a submodule's name but is not that submodule.
     if source_dir not in {
         ROOT / "clang-p2996",
-        ROOT / "gcc-mirror",
+        ROOT / "gcc",
         ROOT / "gcc-darwin-reflect",
     }:
         raise SystemExit(

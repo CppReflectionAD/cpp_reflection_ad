@@ -11,7 +11,7 @@
 #
 # Usage, from the repo root: build-gcc-toolchain.sh [source-dir] [prefix]
 #   source-dir  GCC checkout (default: the one tools/toolchain/gcc.py picks for
-#               this OS, gcc-darwin-reflect on macOS and gcc-mirror elsewhere)
+#               this OS: the gcc-darwin-reflect submodule on macOS, gcc elsewhere)
 #   prefix      install prefix (default: /opt/toolchain-gcc)
 # The build directory is build/<basename of source-dir>.
 set -euo pipefail

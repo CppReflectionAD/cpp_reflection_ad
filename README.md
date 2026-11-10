@@ -11,7 +11,7 @@ https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2025/p2996r13.html
 
 ## Try it on Compiler Explorer (godbolt)
 
-The `expr-reflect` clang fork this repo builds on
+The P4395 clang fork this repo builds on
 ([CppReflectionAD/clang-p4395, branch `p4395`](https://github.com/CppReflectionAD/clang-p4395/tree/p4395))
 is available on [Compiler Explorer](https://godbolt.org/) as
 **x86-64 clang (expr-reflect)**, so you can try expression reflection and this
@@ -60,11 +60,9 @@ The libraries are header-only, under `include/`:
 
 - `include/ad/` — the AD engine (`autograd.h`, forward and reverse derivatives,
   higher-order Taylor AD, `is_invertible.hpp`), tensors (`tensor.h`,
-  `autograd_tensor.h`) and the analyses `limit_algebra.hpp` and
+  `autograd_tensor.h`) and the analyses `is_continuous.hpp`,
+  `limit_algebra.hpp`, `discontinuity_analysis.hpp` and
   `absolute_normal_form.hpp`.
-- `include/ad/clang_only/` — the parts of the engine that need the clang
-  (`expr-reflect`) fork: the analyses (`is_continuous.hpp`,
-  `discontinuity_analysis.hpp`).
 - `include/cx_std/` — `constexpr` maths (`exp`, `log`, `sqrt`, `erfc`, `sin`,
   `cos`) for use in constant evaluation.
 

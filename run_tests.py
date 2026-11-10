@@ -69,7 +69,7 @@ DEFAULT_GCC_BUILD_DIR = os.environ.get(
     "REFLECT_GCC_BUILD_DIR", str(BUILD_ROOT / "gcc-p2996")
 )
 
-# gcc-darwin-reflect on macOS, gcc-mirror elsewhere.
+# The gcc-darwin-reflect submodule on macOS, the gcc submodule elsewhere.
 DEFAULT_GCC_SOURCE_DIR = os.environ.get(
     "REFLECT_GCC_SOURCE_DIR", str(ROOT / gcc_recipe.SOURCE_SUBMODULE)
 )
