@@ -299,9 +299,10 @@ one of those files.
 
 ## Benchmarks
 
-Benchmarks are built with the tests, but aren't registered with CTest. For
-timings, build Release (the default) and run one, setting the workload with
-`ITERATIONS`:
+Benchmarks are built with the tests. CTest runs each one only as a
+`benchmark_smoke.<name>` test with a tiny workload, so a benchmark that stops
+running fails CI. For timings, build Release (the default) and run one, setting
+the workload with `ITERATIONS`:
 
 ```bash
 ITERATIONS=1000000 python3 run_tests.py --compiler clang --benchmarks black_scholes_timing --run-executables
@@ -311,7 +312,7 @@ The binaries are in `build/cmake/<preset>/benchmarks/`.
 
 ## Formatting and linting
 
-[pre-commit](https://pre-commit.com) checks formatting (clang-format 21 for C++, ruff for Python), lint and whitespace. CI runs the same hooks. Python tooling is managed by [uv](https://docs.astral.sh/uv/):
+[pre-commit](https://pre-commit.com) checks formatting (clang-format 21 for C++, ruff for Python), lint, Python types (mypy) and whitespace. CI runs the same hooks. Python tooling is managed by [uv](https://docs.astral.sh/uv/):
 
 ```sh
 uv run pre-commit run --all-files   # check and fix everything
@@ -340,6 +341,8 @@ say why in a comment next to the suppression:
   lines to leave alone.
 - **ruff:** `# noqa: <code>` at the end of the line, e.g. `# noqa: E731`. The
   rule set is spelled out in `[tool.ruff.lint]` in `pyproject.toml`.
+- **mypy:** `# type: ignore[<code>]` at the end of the line. `[tool.mypy]` in
+  `pyproject.toml` holds its settings.
 - **The other pre-commit hooks:** an `exclude:` pattern on the hook in
   `.pre-commit-config.yaml`, as for the `.fail.txt` snapshots there.
 - **Compiler warnings:** tests and benchmarks build with `-Wall -Wextra` as
@@ -371,9 +374,9 @@ changes a toolchain rebuilds it in the queue too.
 | `GCC tests` | `gcc_prebuilt_cache.yml` | yes | `python3 run_tests.py --compiler gcc --build-type all && python3 run_tests.py --compiler gcc --sanitize` |
 | `Linux x86-64 / <compiler>-<preset>`, for the `release`, `relwithdebinfo`, `debug` and `sanitize` presets | both test workflows | yes, through `Clang tests` and `GCC tests` | `python3 run_tests.py --build-type all && python3 run_tests.py --sanitize` |
 | `Submodule pins` | `submodule-pins.yml` | yes | `.github/scripts/check-submodule-pins.sh` (needs `gh` logged in) |
-| `Linux x86-64-v3 / <compiler>-x86-64-v3` | both test workflows | not yet | `cmake --preset clang-x86-64-v3 && cmake --build --preset clang-x86-64-v3 && ctest --preset clang-x86-64-v3` (or `gcc-`) |
-| `macOS arm64 / <compiler>-<preset>`, for the same four presets | both test workflows | not yet ([#94](https://github.com/CppReflectionAD/cpp_reflection_ad/issues/94) C9) | `python3 run_tests.py --build-type all` and `python3 run_tests.py --sanitize`, on a Mac |
-| `Linux arm64 / <compiler>-<preset>`, for the same four presets | both test workflows | not yet ([#94](https://github.com/CppReflectionAD/cpp_reflection_ad/issues/94) C9) | `python3 run_tests.py --build-type all` and `python3 run_tests.py --sanitize`, on an arm64 Linux machine |
+| `Linux x86-64-v3 / <compiler>-x86-64-v3` | both test workflows | yes, through `Clang tests` and `GCC tests` | `cmake --preset clang-x86-64-v3 && cmake --build --preset clang-x86-64-v3 && ctest --preset clang-x86-64-v3` (or `gcc-`) |
+| `macOS arm64 / <compiler>-<preset>`, for the same four presets | both test workflows | no: GitHub sometimes has no runner for them (see below) | `python3 run_tests.py --build-type all` and `python3 run_tests.py --sanitize`, on a Mac |
+| `Linux arm64 / <compiler>-<preset>`, for the same four presets | both test workflows | yes, through `Clang tests` and `GCC tests` | `python3 run_tests.py --build-type all` and `python3 run_tests.py --sanitize`, on an arm64 Linux machine |
 | `GCC pins` | `gcc-pins.yml` | not yet | `.github/scripts/check-gcc-pins.sh` |
 
 Each test leg is named after the runner and the CMake preset it runs, e.g.
@@ -382,8 +385,11 @@ Each test leg is named after the runner and the CMake preset it runs, e.g.
 runs the same steps, from `toolchain-test.yml`.
 
 `Clang tests` and `GCC tests` are summary jobs. Each passes only when its
-workflow's `toolchain` job and its four `Linux x86-64` legs pass: one per build
-type, so they match `--build-type all`, and the sanitize preset.
+workflow's `toolchain` and `toolchain-arm64` jobs and its Linux test legs pass:
+on each of Linux x86-64 and Linux arm64, one leg per build type, so they match
+`--build-type all`, and the sanitize preset, plus the `Linux x86-64-v3` leg. The
+macOS arm64 legs run too, but a failure there doesn't hold up a merge, so check
+them before merging a change that could break a Mac.
 
 The `toolchain` job restores the compiler from the Actions cache, or builds it
 on a miss: about 1.5 hours for clang, about 30 minutes for GCC. The cache key
@@ -415,6 +421,11 @@ configured with, and its build version) and linker version, from
 or linker rebuilds it. The macOS test legs fail early if their runner's SDK or
 linker differs from the toolchain job's, which can happen while GitHub rolls
 out a new runner image; wait for the rollout to finish, then re-run all jobs.
+
+A macOS leg can also end as cancelled with "The job was not acquired by Runner
+of type hosted even after multiple attempts". That is GitHub running out of
+macOS arm64 runners, not a problem with the change, and it's why these legs
+aren't required. Re-run the failed jobs.
 
 Both workflows also build and cache their compiler on Linux arm64
 (`ubuntu-24.04-arm`) in a `toolchain-arm64` job, with the same recipe and key
