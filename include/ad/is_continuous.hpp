@@ -79,10 +79,27 @@ consteval Interval sub(Interval a, Interval b) {
 
 consteval Interval neg(Interval a) { return {-a.hi, -a.lo}; }
 
+// abs is a kink: continuous everywhere, so it has no precondition.
+consteval Interval abs_range(Interval a) {
+  if (a.lo >= 0.0)
+    return a;
+  if (a.hi <= 0.0)
+    return {-a.hi, -a.lo};
+  return {0.0, std::max(-a.lo, a.hi)};
+}
+
 consteval Interval mul(Interval a, Interval b) {
   double lo = std::min({a.lo * b.lo, a.lo * b.hi, a.hi * b.lo, a.hi * b.hi});
   double hi = std::max({a.lo * b.lo, a.lo * b.hi, a.hi * b.lo, a.hi * b.hi});
   return {lo, hi};
+}
+
+// a * a, where both factors are the same value: mul() treats them as
+// independent, so on [-10,10] it gives [-100,100] and loses that a square is
+// never negative.
+consteval Interval sqr(Interval a) {
+  const Interval m = abs_range(a);
+  return {m.lo * m.lo, m.hi * m.hi};
 }
 
 // Precondition: b does not contain zero (caller must check).
@@ -163,15 +180,7 @@ consteval Interval erfc_range(Interval a) {
   return {cx::erfc(a.hi), cx::erfc(a.lo)};
 }
 
-// The kinks: continuous everywhere, so none has a precondition.
-consteval Interval abs_range(Interval a) {
-  if (a.lo >= 0.0)
-    return a;
-  if (a.hi <= 0.0)
-    return {-a.hi, -a.lo};
-  return {0.0, std::max(-a.lo, a.hi)};
-}
-
+// The other kinks, also continuous everywhere.
 consteval Interval max_range(Interval a, Interval b) {
   return {std::max(a.lo, b.lo), std::max(a.hi, b.hi)};
 }
@@ -247,6 +256,9 @@ struct ContinuityResult {
   int failing_node;
   // The op that caused the failure (meaningful only when continuous == false).
   OpKind failing_op;
+  // An enclosure of the function's values on the box (meaningful only when
+  // continuous == true). Over-approximated like every other range here.
+  Interval range = detail_cont::failed();
 };
 
 // ---------------------------------------------------------------------------
@@ -265,6 +277,7 @@ check_continuity(const std::array<Interval, P> &input_bounds) {
   // A precondition failed below this node under an undecidable guard. Explicit
   // rather than a NaN range: `std::min(2.0, NaN)` is `2.0`, laundering it away.
   bool poisoned[N];
+  Interval output = detail_cont::failed();
   for (std::size_t i = 0; i < N; ++i) {
     ranges[i] = detail_cont::failed();
     truth[i] = Tri::Unknown;
@@ -317,6 +330,7 @@ check_continuity(const std::array<Interval, P> &input_bounds) {
         if (poisoned[n.a])
           return {false, static_cast<int>(n.self), OpKind::Output};
         ranges[n.self] = ranges[n.a];
+        output = ranges[n.self];
 
       } else if constexpr (n.op == OpKind::Add) {
         ranges[n.self] = detail_cont::add(a, b);
@@ -325,7 +339,10 @@ check_continuity(const std::array<Interval, P> &input_bounds) {
         ranges[n.self] = detail_cont::sub(a, b);
 
       } else if constexpr (n.op == OpKind::Mul) {
-        ranges[n.self] = detail_cont::mul(a, b);
+        if constexpr (n.a == n.b)
+          ranges[n.self] = detail_cont::sqr(a);
+        else
+          ranges[n.self] = detail_cont::mul(a, b);
 
       } else if constexpr (n.op == OpKind::Div) {
         if (b.contains_zero()) {
@@ -450,7 +467,7 @@ check_continuity(const std::array<Interval, P> &input_bounds) {
     }
   }
 
-  return {true, -1, OpKind::Input};
+  return {true, -1, OpKind::Input, output};
 }
 
 // ---------------------------------------------------------------------------
@@ -484,6 +501,18 @@ consteval ContinuityResult continuity_result(Intervals... bounds) {
   constexpr std::size_t P = sizeof...(bounds);
   const std::array<Interval, P> arr{bounds...};
   return check_continuity<Fn, P>(arr);
+}
+
+// An enclosure of the function's values on the box, for bounding its output:
+//   static_assert(ad::range_on<^^f>(ad::Interval{-10.0, 10.0}).hi <= 1.0);
+// Fails to compile (throws) where is_continuous_on would be false, since there
+// is no range to report.
+template <info Fn, typename... Intervals>
+consteval Interval range_on(Intervals... bounds) {
+  const ContinuityResult r = continuity_result<Fn>(bounds...);
+  if (!r.continuous)
+    throw "ad::range_on: not continuous on this box, so no range to report";
+  return r.range;
 }
 
 } // namespace ad
