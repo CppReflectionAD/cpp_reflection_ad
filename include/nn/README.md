@@ -216,8 +216,11 @@ GCC (a gap in its P2996 support, not in P4395):
   where the function is defined**, so the rules in `callee_rules` would be
   missed. Binding the result to a local first gives the members reachable
   where it is evaluated, as Clang does.
-- `extract<T>` of a variable requires a structural `T`, so the engine reads
-  `callees` (a `std::span`) as `extract<const std::span<const info> &>`.
+
+Clang accepts more than the standard here: `extract<T>` by value goes through
+`constant_of`, i.e. `reflect_constant`, so `T` must be structural. GCC rejects
+a `std::span` and Clang doesn't; the engine reads `callees` as
+`extract<const std::span<const info> &>`, valid on both.
 
 ## GPU: possible directions (not implemented; current builds are CPU-only)
 

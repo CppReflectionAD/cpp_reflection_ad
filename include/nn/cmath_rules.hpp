@@ -4,8 +4,10 @@
 // `^^std::exp` names an overload set, so these can't be vjp<key(^^f)>
 // specializations. Each rule lists the float, double and long double
 // overloads it covers, recovered from a probe that calls them, and gives
-// dy/dx from the argument (d_x) or from the result (d_y). An integer argument
-// selects <cmath>'s integer overload, which is not covered.
+// dy/dx from the argument (d_x) or from the result (d_y). That choice is also
+// the value the reverse sweep keeps (nn::ad::reads::args or ::result), so the
+// rules need no `reads`. An integer argument selects <cmath>'s integer
+// overload, which is not covered.
 
 #ifndef NN_CMATH_RULES_HPP
 #define NN_CMATH_RULES_HPP

@@ -229,8 +229,8 @@ consteval info member_named(info cls, std::string_view name) {
   return info{};
 }
 
-// Every (callee, rule) pair listed in callee_rules. By reference: GCC extracts
-// only structural types by value.
+// Every (callee, rule) pair listed in callee_rules. By reference: extract by
+// value needs a structural type, and std::span is not one.
 consteval void list_callee_rules(Ctx &c) {
   // A local: GCC evaluates a range-for over members_of(namespace) as of this
   // definition, before any rule is declared.
