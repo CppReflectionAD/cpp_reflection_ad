@@ -163,13 +163,15 @@ Both forks:
 - Operands come in the order written (`0.5 * s` is `0.5, s`).
 - A copy of a class value is a conversion.
 
-Clang:
-- Reading a scalar variable is a conversion (lvalue-to-rvalue), and
-  `double four = 4;` has a conversion node.
+Left to the implementation (the proposal doesn't specify which implicit
+conversions are shown), so the engine peels any conversion it meets and
+restores arithmetic ones itself:
+- Clang shows reading a scalar variable as a conversion (lvalue-to-rvalue),
+  and `double four = 4;` as a conversion of the literal `4`.
+- GCC shows neither: the variable is read directly, and `double four = 4;` is
+  the literal `4.0`.
 
-GCC:
-- Reading a scalar variable has no conversion node, and `double four = 4;` is
-  folded to `4.0`.
+GCC (a gap in its P2996 support, not in P4395):
 - **Registry identity bug.** `template_of(spec) == ^^nn::matvec` is true, yet
   GCC treats the two as different template arguments: comparing
   `vjp<template_of(spec)>` with `vjp<^^nn::matvec>` causes an internal
