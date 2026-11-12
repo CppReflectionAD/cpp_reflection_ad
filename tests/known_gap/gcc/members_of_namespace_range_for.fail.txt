@@ -1,0 +1,5 @@
+=== GCC ===
+tests/known_gap/gcc/members_of_namespace_range_for.cpp:42:46: error: static assertion failed: range-for over members_of misses lib::reg::A
+   42 | static_assert(lib::detail::count_range_for() == 1,
+      |               ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~~
+  • the comparison reduces to '(0 == 1)'
