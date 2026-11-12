@@ -1,0 +1,10 @@
+=== Clang ===
+include/nn/tensor.hpp:296:17: error: static assertion failed due to requirement 'detail::compatible<3, 4>': nn::matvec: W has as many columns as x has elements
+  296 |   static_assert(detail::compatible<extent_v<W, 1>, extent_v<X, 0>>,
+      |                 ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+=== GCC ===
+include/nn/tensor.hpp:296:25: error: static assertion failed: nn::matvec: W has as many columns as x has elements
+  296 |   static_assert(detail::compatible<extent_v<W, 1>, extent_v<X, 0>>,
+      |                 ~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  • 'nn::detail::compatible<3, 4>' evaluates to false
