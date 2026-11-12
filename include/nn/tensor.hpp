@@ -9,7 +9,8 @@
 //   - A tensor's shape is a std::extents. With every extent static (Vec<3>,
 //     Mat<2, 3>) the storage is a std::array: trivially copyable, usable as a
 //     constexpr constant. Any std::dynamic_extent (`nn::dyn`) makes it a
-//     std::vector. Two static extents that disagree are a compile error; a
+//     std::vector. Ops combine static and dynamic extents (Vec<3> + Vec<dyn>
+//     is a Vec<3>). Two static extents that disagree are a compile error; a
 //     mismatch involving a dynamic one throws std::invalid_argument.
 //   - Values, not in-place updates. Reflected code is `T v = expr;` and
 //     `return expr;`; assignments and compound assignments are not modelled.
@@ -30,6 +31,7 @@
 #include <mdspan>
 #include <stdexcept>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace nn {
@@ -110,6 +112,15 @@ inline constexpr std::size_t extent_v = T::extents_type::static_extent(R);
 // A zero tensor of type T, given its dynamic extents (or all its extents).
 template <tensor T, class... I> constexpr T zeros(I... sizes) {
   using E = typename T::extents_type;
+  static_assert(sizeof...(I) == E::rank_dynamic() || sizeof...(I) == E::rank(),
+                "nn::zeros: give T's dynamic extents, or all of them");
+  if constexpr (sizeof...(I) == E::rank() && E::rank() > 0) {
+    const std::array<std::size_t, E::rank()> all{
+        static_cast<std::size_t>(sizes)...};
+    for (std::size_t r = 0; r < E::rank(); ++r)
+      detail::check(E::static_extent(r) == dyn ||
+                    E::static_extent(r) == all[r]);
+  }
   const E ext(static_cast<std::size_t>(sizes)...);
   T t{};
   if constexpr (E::rank_dynamic() > 0) {
@@ -139,37 +150,94 @@ namespace detail {
 template <std::size_t A, std::size_t B>
 inline constexpr bool compatible = A == dyn || B == dyn || A == B;
 
-template <tensor T> constexpr void same_shape(const T &a, const T &b) {
+// Same rank, and no two static extents that disagree.
+template <class A, class B> consteval bool compatible_shapes() {
+  using EA = typename A::extents_type;
+  using EB = typename B::extents_type;
+  if (EA::rank() != EB::rank())
+    return false;
+  for (std::size_t r = 0; r < EA::rank(); ++r)
+    if (EA::static_extent(r) != dyn && EB::static_extent(r) != dyn &&
+        EA::static_extent(r) != EB::static_extent(r))
+      return false;
+  return true;
+}
+
+template <class EA, class EB, std::size_t... R>
+auto common_extents(std::index_sequence<R...>)
+    -> std::extents<std::size_t,
+                    (EA::static_extent(R) != dyn ? EA::static_extent(R)
+                                                 : EB::static_extent(R))...>;
+
+template <class A, class B> constexpr void same_shape(const A &a, const B &b) {
   check(a.extents() == b.extents());
 }
 
 } // namespace detail
+
+// Tensors an elementwise op can combine: Vec<3> with Vec<dyn>, not with Vec<4>.
+template <class A, class B>
+concept same_shape_as =
+    tensor<A> && tensor<B> && detail::compatible_shapes<A, B>();
+
+// The result of an elementwise op on A and B: each extent static if either is.
+template <class A, class B>
+using common_t =
+    Tensor<decltype(detail::common_extents<typename A::extents_type,
+                                           typename B::extents_type>(
+        std::make_index_sequence<A::extents_type::rank()>{}))>;
+
+// A zero T with the extents `ext`, which may split static and dynamic
+// differently.
+template <tensor T, class E> constexpr T zeros_shaped(const E &ext) {
+  return [&]<std::size_t... R>(std::index_sequence<R...>) {
+    return zeros<T>(ext.extent(R)...);
+  }(std::make_index_sequence<E::rank()>{});
+}
+
+// g's values as a tensor of a's type (g has a's shape): a rule returns the
+// adjoint of an argument in that argument's type.
+template <tensor A, same_shape_as<A> G>
+constexpr A like_as(const A &a, const G &g) {
+  detail::same_shape(a, g);
+  if constexpr (std::is_same_v<A, G>) {
+    return g;
+  } else {
+    A o = zeros_shaped<A>(g.extents());
+    for (std::size_t i = 0; i < g.d.size(); ++i)
+      o.d[i] = g.d[i];
+    return o;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Primitives. Each has a VJP rule in rules.hpp; keep the names unique (one
 // template per name) so `^^nn::<name>` reflects exactly that template.
 // ---------------------------------------------------------------------------
 
-template <tensor T> constexpr T add(const T &a, const T &b) {
+template <tensor A, same_shape_as<A> B>
+constexpr common_t<A, B> add(const A &a, const B &b) {
   detail::same_shape(a, b);
-  T o = zeros_like(a);
+  auto o = zeros_shaped<common_t<A, B>>(a.extents());
   for (std::size_t i = 0; i < a.d.size(); ++i)
     o.d[i] = a.d[i] + b.d[i];
   return o;
 }
 
-template <tensor T> constexpr T sub(const T &a, const T &b) {
+template <tensor A, same_shape_as<A> B>
+constexpr common_t<A, B> sub(const A &a, const B &b) {
   detail::same_shape(a, b);
-  T o = zeros_like(a);
+  auto o = zeros_shaped<common_t<A, B>>(a.extents());
   for (std::size_t i = 0; i < a.d.size(); ++i)
     o.d[i] = a.d[i] - b.d[i];
   return o;
 }
 
 // Elementwise product.
-template <tensor T> constexpr T hadamard(const T &a, const T &b) {
+template <tensor A, same_shape_as<A> B>
+constexpr common_t<A, B> hadamard(const A &a, const B &b) {
   detail::same_shape(a, b);
-  T o = zeros_like(a);
+  auto o = zeros_shaped<common_t<A, B>>(a.extents());
   for (std::size_t i = 0; i < a.d.size(); ++i)
     o.d[i] = a.d[i] * b.d[i];
   return o;
@@ -203,7 +271,8 @@ template <tensor T> constexpr double sum(const T &a) {
   return s;
 }
 
-template <tensor T> constexpr double dot(const T &a, const T &b) {
+template <tensor A, same_shape_as<A> B>
+constexpr double dot(const A &a, const B &b) {
   detail::same_shape(a, b);
   double s = 0.0;
   for (std::size_t i = 0; i < a.d.size(); ++i)
@@ -212,7 +281,8 @@ template <tensor T> constexpr double dot(const T &a, const T &b) {
 }
 
 // Mean squared error.
-template <tensor T> constexpr double mse(const T &y, const T &t) {
+template <tensor Y, same_shape_as<Y> T>
+constexpr double mse(const Y &y, const T &t) {
   detail::same_shape(y, t);
   double s = 0.0;
   for (std::size_t i = 0; i < y.d.size(); ++i)
@@ -289,11 +359,13 @@ template <tensor T> constexpr T operator*(double s, const T &a) {
   return scale(s, a);
 }
 
-template <tensor T> constexpr T operator+(const T &a, const T &b) {
+template <tensor A, same_shape_as<A> B>
+constexpr common_t<A, B> operator+(const A &a, const B &b) {
   return add(a, b);
 }
 
-template <tensor T> constexpr T operator-(const T &a, const T &b) {
+template <tensor A, same_shape_as<A> B>
+constexpr common_t<A, B> operator-(const A &a, const B &b) {
   return sub(a, b);
 }
 

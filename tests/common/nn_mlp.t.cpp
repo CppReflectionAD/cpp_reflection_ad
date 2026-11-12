@@ -107,6 +107,14 @@ double mixed_loss(const nn::Mat<nn::dyn, I> &W, const DVec &b,
   return mse(y, t);
 }
 
+// Elementwise ops on a Vec<N> and a Vec<dyn>: the result is a Vec<N>, and
+// each gradient comes back in its parameter's type.
+template <std::size_t N>
+double mixed_elementwise(const Vec<N> &a, const DVec &b) {
+  Vec<N> y = hadamard(a + b, b);
+  return dot(y, b) + mse(a, b);
+}
+
 // Negation promotes like arithmetic: -c is an int, not an unsigned char.
 inline double neg_promoted(double x, unsigned char c) { return -c * x; }
 
@@ -317,6 +325,19 @@ void test_dynamic_extents() {
     threw = true;
   }
   EXPECT_TRUE(threw);
+
+  const auto a = filled_with<Vec<3>>(1.4, 1.0);
+  const auto c = filled_with<DVec>(1.5, 1.0, 3);
+  auto [Le, ge] =
+      nad::value_and_grad<^^model::mixed_elementwise<3>, 0, 1>(a, c);
+  const auto &[ga, gc] = ge;
+  static_assert(std::is_same_v<std::remove_cvref_t<decltype(gc)>, DVec>);
+
+  constexpr auto elementwise = model::mixed_elementwise<3>;
+  EXPECT_NEAR_ABS(Le, elementwise(a, c), 1e-15);
+  const auto eargs = std::tuple{a, c};
+  expect_matches_fd<0>(elementwise, eargs, ga);
+  expect_matches_fd<1>(elementwise, eargs, gc);
 }
 
 void test_scalar_semantics() {

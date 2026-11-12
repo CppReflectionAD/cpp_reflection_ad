@@ -42,7 +42,7 @@ or through CMake (target and test `nn_mlp`).
 
 | File | Contents |
 |---|---|
-| [tensor.hpp](tensor.hpp) | `Tensor<Extents>`, row-major, shaped by a `std::extents` whose extents are each static or dynamic (`nn::dyn`); `Vec<N>` and `Mat<R,C>` are aliases (`Mat<nn::dyn, 3>`: dynamic rows, 3 columns). Fully static shapes use `std::array` storage (trivially copyable, usable as `constexpr` constants); any dynamic extent uses `std::vector`. `view()` is a `std::mdspan`. Static extents that disagree are a compile error, dynamic ones a `std::invalid_argument`. Primitives: `add sub hadamard scale relu sigmoid sum dot mse matvec matmul transpose outer`. Operators `* + -` as one-line wrappers. Helpers for rules and training (`zeros`, `zeros_like`, `relu_mask`, `sigmoid_slope`, `matvec_transposed`, `filled`, `filled_like`, `sgd_update`). No reflection. |
+| [tensor.hpp](tensor.hpp) | `Tensor<Extents>`, row-major, shaped by a `std::extents` whose extents are each static or dynamic (`nn::dyn`); `Vec<N>` and `Mat<R,C>` are aliases (`Mat<nn::dyn, 3>`: dynamic rows, 3 columns). Fully static shapes use `std::array` storage (trivially copyable, usable as `constexpr` constants); any dynamic extent uses `std::vector`. `view()` is a `std::mdspan`. Ops mix static and dynamic extents (`Vec<3> + Vec<nn::dyn>` is a `Vec<3>`). Static extents that disagree are a compile error, dynamic ones a `std::invalid_argument`. Primitives: `add sub hadamard scale relu sigmoid sum dot mse matvec matmul transpose outer`. Operators `* + -` as one-line wrappers. Helpers for rules and training (`zeros`, `zeros_like`, `like_as`, `relu_mask`, `sigmoid_slope`, `matvec_transposed`, `filled`, `filled_like`, `sgd_update`). No reflection. |
 | [autodiff.hpp](autodiff.hpp) | The engine, which knows no tensor type. It reflects a body into a DAG, then runs activity and liveness analysis. `value_and_grad` / `grad` generate the forward and reverse sweeps. `tape<Fn, Mask>` exposes the analysed DAG for inspection. |
 | [rules.hpp](rules.hpp) | One `nn::ad::vjp<key(^^nn::f)>` per primitive: the vector-Jacobian product (VJP) per argument. |
 | [nn.hpp](nn.hpp) | Includes all three. |
@@ -241,5 +241,6 @@ Next, roughly in order:
    instead of one inlined copy per sample.
 4. More ops: `tanh`, softmax + cross-entropy (one fused primitive, for
    stability), maybe convolution as a primitive.
-5. A `known_gap/gcc` test for the registry-identity bug (see compiler notes).
+5. Drop `nn::ad::key()` once GCC fixes the registry-identity bug, tracked by
+   `tests/known_gap/gcc/template_of_as_template_argument.cpp` (#272).
 6. GPU route 1 on a Linux + CUDA machine, then the Clang+NVPTX rebuild.

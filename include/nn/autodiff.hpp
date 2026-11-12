@@ -537,6 +537,12 @@ auto value_and_grad(const Args &...args) {
                 "nn::ad: wrong number of arguments");
   static_assert(((Wrt < sizeof...(Args)) && ...),
                 "nn::ad: a Wrt index is not a parameter of Fn");
+  // An adjoint has its node's type, so an integer one would truncate.
+  static_assert(
+      (!m::is_integral_type(m::remove_cvref(m::type_of(
+           m::parameters_of(Fn)[Wrt < sizeof...(Args) ? Wrt : 0]))) &&
+       ...),
+      "nn::ad: a differentiated parameter must not have an integer type");
   constexpr unsigned long long mask = mask_of<Wrt...>;
   static constexpr auto nodes = tape<Fn, mask>;
   static constexpr auto rnodes =

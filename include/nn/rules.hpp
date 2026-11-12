@@ -3,8 +3,9 @@
 // tensor.hpp stays AD-agnostic; this header is the seam. Each specialization
 // says "this function template is a primitive, and here is its VJP": for a
 // call y = f(args...) and the adjoint g = dL/dy, pullback<I>(g, y, args...)
-// returns dL/d(arg I), with arg I's type. The engine calls it only for the
-// arguments that depend on a differentiated input.
+// returns dL/d(arg I), with arg I's type (nn::like_as converts where the
+// arguments split static and dynamic extents differently). The engine calls it
+// only for the arguments that depend on a differentiated input.
 //
 // The key is the reflection of the template (`key(^^nn::matvec)`; key() only
 // normalises the representation, see autodiff.hpp), not its name: a `matvec`
@@ -21,21 +22,24 @@
 // z = a + b:  ā = z̄, b̄ = z̄
 template <> struct nn::ad::vjp<nn::ad::key(^^nn::add)> {
   template <std::size_t I>
-  static constexpr auto pullback(const auto &g, const auto &, const auto &,
-                                 const auto &) {
-    return g;
+  static constexpr auto pullback(const auto &g, const auto &, const auto &a,
+                                 const auto &b) {
+    if constexpr (I == 0)
+      return nn::like_as(a, g);
+    else
+      return nn::like_as(b, g);
   }
 };
 
 // z = a - b:  ā = z̄, b̄ = -z̄
 template <> struct nn::ad::vjp<nn::ad::key(^^nn::sub)> {
   template <std::size_t I>
-  static constexpr auto pullback(const auto &g, const auto &, const auto &,
-                                 const auto &) {
+  static constexpr auto pullback(const auto &g, const auto &, const auto &a,
+                                 const auto &b) {
     if constexpr (I == 0)
-      return g;
+      return nn::like_as(a, g);
     else
-      return nn::scale(-1.0, g);
+      return nn::like_as(b, nn::scale(-1.0, g));
   }
 };
 
@@ -45,9 +49,9 @@ template <> struct nn::ad::vjp<nn::ad::key(^^nn::hadamard)> {
   static constexpr auto pullback(const auto &g, const auto &, const auto &a,
                                  const auto &b) {
     if constexpr (I == 0)
-      return nn::hadamard(g, b);
+      return nn::like_as(a, nn::hadamard(g, b));
     else
-      return nn::hadamard(g, a);
+      return nn::like_as(b, nn::hadamard(g, a));
   }
 };
 
@@ -93,9 +97,9 @@ template <> struct nn::ad::vjp<nn::ad::key(^^nn::dot)> {
   static constexpr auto pullback(double g, double, const auto &a,
                                  const auto &b) {
     if constexpr (I == 0)
-      return nn::scale(g, b);
+      return nn::like_as(a, nn::scale(g, b));
     else
-      return nn::scale(g, a);
+      return nn::like_as(b, nn::scale(g, a));
   }
 };
 
@@ -105,7 +109,10 @@ template <> struct nn::ad::vjp<nn::ad::key(^^nn::mse)> {
   static constexpr auto pullback(double g, double, const auto &y,
                                  const auto &t) {
     const double k = 2.0 * g / static_cast<double>(y.d.size());
-    return nn::scale(I == 0 ? k : -k, nn::sub(y, t));
+    if constexpr (I == 0)
+      return nn::like_as(y, nn::scale(k, nn::sub(y, t)));
+    else
+      return nn::like_as(t, nn::scale(-k, nn::sub(y, t)));
   }
 };
 
@@ -115,9 +122,9 @@ template <> struct nn::ad::vjp<nn::ad::key(^^nn::matvec)> {
   static constexpr auto pullback(const auto &g, const auto &, const auto &W,
                                  const auto &x) {
     if constexpr (I == 0)
-      return nn::outer(g, x);
+      return nn::like_as(W, nn::outer(g, x));
     else
-      return nn::matvec_transposed(W, g);
+      return nn::like_as(x, nn::matvec_transposed(W, g));
   }
 };
 
@@ -127,9 +134,9 @@ template <> struct nn::ad::vjp<nn::ad::key(^^nn::matmul)> {
   static constexpr auto pullback(const auto &g, const auto &, const auto &A,
                                  const auto &B) {
     if constexpr (I == 0)
-      return nn::matmul(g, nn::transpose(B));
+      return nn::like_as(A, nn::matmul(g, nn::transpose(B)));
     else
-      return nn::matmul(nn::transpose(A), g);
+      return nn::like_as(B, nn::matmul(nn::transpose(A), g));
   }
 };
 
@@ -147,9 +154,9 @@ template <> struct nn::ad::vjp<nn::ad::key(^^nn::outer)> {
   static constexpr auto pullback(const auto &g, const auto &, const auto &u,
                                  const auto &v) {
     if constexpr (I == 0)
-      return nn::matvec(g, v);
+      return nn::like_as(u, nn::matvec(g, v));
     else
-      return nn::matvec_transposed(g, u);
+      return nn::like_as(v, nn::matvec_transposed(g, u));
   }
 };
 
