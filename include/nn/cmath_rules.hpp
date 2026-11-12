@@ -1,9 +1,9 @@
 // nn/cmath_rules.hpp — <cmath> functions as primitives, for the scalar code
 // around the tensors.
 //
-// `^^std::exp` names an overload set, so these can't be vjp<key(^^f)>
-// specializations. Each rule lists the float, double and long double
-// overloads it covers, recovered from a probe that calls them, and gives
+// `^^std::exp` names an overload set, so these rules can't list it directly.
+// Each lists the float, double and long double overloads it covers,
+// recovered from a probe that calls them, and gives
 // dy/dx from the argument (d_x) or from the result (d_y). That choice is also
 // the value the reverse sweep keeps (nn::ad::reads::args or ::result), so the
 // rules need no `reads`. An integer argument selects <cmath>'s integer
@@ -26,7 +26,7 @@ template <class T> T cos(T x) { return std::cos(x); }
 template <class T> T tanh(T x) { return std::tanh(x); }
 } // namespace nn::ad::cmath_probe
 
-namespace nn::ad::callee_rules {
+namespace nn::ad::cmath_rules {
 
 struct exp {
   static constexpr std::span<const info> callees =
@@ -70,6 +70,12 @@ struct tanh {
   static constexpr auto d_y(auto y) { return 1 - y * y; }
 };
 
-} // namespace nn::ad::callee_rules
+} // namespace nn::ad::cmath_rules
+
+namespace nn::ad {
+using cmath_rule_set =
+    rule_set<cmath_rules::exp, cmath_rules::log, cmath_rules::sqrt,
+             cmath_rules::sin, cmath_rules::cos, cmath_rules::tanh>;
+} // namespace nn::ad
 
 #endif // NN_CMATH_RULES_HPP

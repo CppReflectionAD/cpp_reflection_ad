@@ -154,6 +154,8 @@ template <std::size_t N> double cmath_mix(const Vec<N> &w, double s) {
 // The float overloads.
 inline float cmath_float(float x) { return std::exp(x) * std::sin(x); }
 
+inline double just_exp(double x) { return std::exp(x); }
+
 } // namespace model
 
 // ---------------------------------------------------------------------------
@@ -231,6 +233,18 @@ static_assert(count_needed<nad::Kind::Call>(pruned_tape) == 0);
 constexpr auto cmath_tape = nad::tape<^^model::cmath_mix<3>, nad::mask_of<1>>;
 static_assert(count_live<nad::Kind::Call>(cmath_tape) == 8);
 static_assert(count_needed<nad::Kind::Call>(cmath_tape) == 6);
+
+// An engine with only the tensor rules builds the same MLP tape.
+static_assert(
+    nad::engine<nn::tensor_rule_set>::tape<mlp, nad::mask_of<0, 1, 2, 3>>.size() ==
+    mlp_all.size());
+
+// A rule for exp(double) that is deliberately wrong, to see which rule wins.
+struct doubled_exp {
+  static constexpr std::span<const nad::info> callees =
+      nad::probed({^^nad::cmath_probe::exp<double>});
+  static constexpr auto d_y(auto y) { return 2 * y; }
+};
 
 // ---------------------------------------------------------------------------
 // Run time.
@@ -459,6 +473,16 @@ void test_cmath() {
                   1e-6);
 }
 
+// The first rule listing a callee wins.
+void test_rule_precedence() {
+  using override_first = nad::engine<doubled_exp, nad::default_rules>;
+  using override_last = nad::engine<nad::default_rules, doubled_exp>;
+  auto [g_first] = override_first::grad<^^model::just_exp, 0>(0.5);
+  auto [g_last] = override_last::grad<^^model::just_exp, 0>(0.5);
+  EXPECT_EQUAL(g_first, 2 * std::exp(0.5));
+  EXPECT_EQUAL(g_last, std::exp(0.5));
+}
+
 void test_xor_training() {
   auto W1 = filled_with<Mat<H, 2>>(1.0, 1.0);
   auto b1 = nn::filled<Vec<H>>(0.1);
@@ -509,6 +533,7 @@ int main() {
   test_matrix_ops();
   test_scalar_semantics();
   test_cmath();
+  test_rule_precedence();
   test_xor_training();
   TEST_END;
 }

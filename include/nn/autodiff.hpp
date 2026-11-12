@@ -1,38 +1,42 @@
 // nn/autodiff.hpp — reverse-mode AD of tensor-level code via body reflection.
 //
-//   auto [loss, grads] = nn::ad::value_and_grad<^^my_loss, 0, 1>(W, b, x, t);
+//   using E = nn::ad::engine<nn::tensor_rule_set, nn::ad::cmath_rule_set>;
+//   auto [loss, grads] = E::value_and_grad<^^my_loss, 0, 1>(W, b, x, t);
 //
 // reflects the body of `my_loss`, builds a DAG at compile time, and emits a
 // forward sweep (the primal) and a reverse sweep (the adjoints) as straight
 // C++: each node is one call or one built-in operator, unrolled with an
 // expansion statement. Nothing is recorded at run time; there is no tape
 // object and no virtual call, and the engine itself allocates nothing.
+// nn/nn.hpp gives nn::ad::value_and_grad etc. with the default rule sets.
 //
 // What the engine reads in a body:
 //   - `T v = expr;` declarations and a single `return expr;` (straight-line
 //     code; control flow is not traversable in the proposal yet),
 //   - parameters, locals, literals and constant variables,
 //   - built-in + - * / and unary - on arithmetic types,
-//   - calls. A call to a *primitive* -- a function with a registered rule,
-//     `nn::ad::vjp<^^f>` -- becomes one node. A call to anything else is
-//     inlined: the engine reflects the callee's body into the same DAG. So
-//     user layers, and the tensor operators (thin wrappers over primitives),
-//     need no rule.
+//   - calls. A call to a *primitive* -- a function one of the engine's rules
+//     lists -- becomes one node. A call to anything else is inlined: the
+//     engine reflects the callee's body into the same DAG. So user layers, and
+//     the tensor operators (thin wrappers over primitives), need no rule.
 //
-// A rule is keyed on the callee's reflection (on its template, for a function
-// template specialization), not on its name, and gives the vector-Jacobian
-// product per argument:
+// A rule is a class listing the functions it covers, by reflection (a
+// function template covers all its specializations), and giving the
+// vector-Jacobian product per argument:
 //
-//   template <> struct nn::ad::vjp<nn::ad::key(^^nn::matvec)> {
+//   struct matvec_rule {
+//     static constexpr std::span<const nn::ad::info> callees =
+//         nn::ad::listed({^^nn::matvec});
 //     template <std::size_t I>
 //     static auto pullback(const auto &g, const auto &y, const auto &W,
 //                          const auto &x);   // dL/d(arg I), given g = dL/dy
 //   };
 //
-// A function that can't be named, such as one overload of std::exp, gets a
-// class in namespace nn::ad::callee_rules listing its callees instead (see
-// probe_callee). A unary scalar rule can give dy/dx in place of pullback:
-// `d_x(x)` from the argument, or `d_y(y)` from the result.
+// A function that can't be named, such as one overload of std::exp, is listed
+// through a probe (see probe_callee). A unary scalar rule can give dy/dx in
+// place of pullback: `d_x(x)` from the argument, or `d_y(y)` from the result.
+// The engine takes rules and rule_sets of them; the first rule listing a
+// callee wins.
 //
 // The engine knows no tensor type. Values live in a std::tuple of the node
 // types (from the callees' return types and the parameter types: there is no
@@ -67,26 +71,8 @@ namespace nn::ad {
 namespace m = ::ad::meta;
 using info = m::info;
 
-// The registry key of a function: the function, or for a template or one of
-// its specializations, the template. Taken from members_of of the enclosing
-// scope, so that every route to the same entity gives one representation:
-// GCC compares `template_of(spec) == ^^nn::matvec` true, yet treats the two as
-// different template arguments, so `vjp<^^nn::matvec>` would never be found
-// from a call. (Clang needs no normalisation; it does no harm there.)
-consteval info key(info fn) {
-  if (m::has_template_arguments(fn))
-    fn = m::template_of(fn);
-  for (info mem :
-       m::members_of(m::parent_of(fn), m::access_context::unchecked()))
-    if (mem == fn)
-      return mem;
-  return fn; // not a listed member (e.g. a hidden friend): use it as is
-}
-
-// The rule registry. Declared, never defined: a specialization makes its key a
-// primitive. Register with the normalised key:
-//   template <> struct nn::ad::vjp<nn::ad::key(^^nn::matvec)> { ... };
-template <info Key> struct vjp;
+// A list of rules (or of rule_sets) to pass to an engine as one.
+template <class... Rules> struct rule_set {};
 
 // The values a rule's pullback reads besides the adjoint, declared in the
 // rule as `static constexpr nn::ad::reads reads = ...;` (default: all). A value
@@ -107,6 +93,12 @@ consteval info probe_callee(info probe) {
   throw "nn::ad: a probe is `return f(args...);`";
 }
 
+// A rule's `callees`: functions, or function templates for all their
+// specializations.
+consteval std::span<const info> listed(std::initializer_list<info> fns) {
+  return std::define_static_array(std::vector<info>(fns));
+}
+
 // A rule's `callees`, from probes: one per overload it covers.
 consteval std::span<const info> probed(std::initializer_list<info> probes) {
   std::vector<info> fns;
@@ -114,10 +106,6 @@ consteval std::span<const info> probed(std::initializer_list<info> probes) {
     fns.push_back(probe_callee(p));
   return std::define_static_array(fns);
 }
-
-// The second registry, checked before vjp<>: each class here with
-// `static constexpr std::span<const info> callees` is the rule for them.
-namespace callee_rules {}
 
 enum class Kind : unsigned char {
   Input, // parameter `input` of the differentiated function
@@ -140,7 +128,7 @@ struct Node {
   std::size_t self = 0;  // slot, == index in the tape
   info type = ^^void;    // value type, cv-ref removed
   info fn = ^^void;      // Call: the callee
-  info rule = ^^void;    // Call: the vjp<> specialization
+  info rule = ^^void;    // Call: the rule class
   info leaf = ^^void;    // Const: reflection of the value
   std::size_t input = 0; // Input: parameter index
   std::size_t nargs = 0;
@@ -174,7 +162,7 @@ struct Ctx {
   std::vector<std::size_t> env_slot;
   std::size_t scope = 0;
   std::vector<info> call_stack; // functions being lowered (recursion guard)
-  std::vector<info> listed_fn, listed_rule; // from callee_rules
+  std::vector<info> listed_fn, listed_rule; // from the engine's rules
 };
 
 consteval std::size_t emit(Ctx &c, Node n) {
@@ -229,35 +217,37 @@ consteval info member_named(info cls, std::string_view name) {
   return info{};
 }
 
-// Every (callee, rule) pair listed in callee_rules. By reference: extract by
-// value needs a structural type, and std::span is not one.
-consteval void list_callee_rules(Ctx &c) {
-  // A local: GCC evaluates a range-for over members_of(namespace) as of this
-  // definition, before any rule is declared.
-  const auto rules =
-      m::members_of(^^callee_rules, m::access_context::unchecked());
-  for (info r : rules) {
-    if (!m::is_type(r) || !m::is_class_type(r) || !m::is_complete_type(r))
-      continue;
-    if (const info cs = member_named(r, "callees"); cs != info{})
-      for (info f : m::extract<const std::span<const info> &>(cs)) {
-        c.listed_fn.push_back(f);
-        c.listed_rule.push_back(r);
-      }
+// Every (callee, rule) pair the rules in `rules` (a rule or a rule_set) list,
+// in order. By reference: extract by value needs a structural type, and
+// std::span is not one.
+consteval void list_rules(Ctx &c, info rules) {
+  rules = m::dealias(rules);
+  if (m::has_template_arguments(rules) && m::template_of(rules) == ^^rule_set) {
+    for (info r : m::template_arguments_of(rules))
+      list_rules(c, r);
+    return;
+  }
+  const info cs = m::is_class_type(rules) && m::is_complete_type(rules)
+                      ? member_named(rules, "callees")
+                      : info{};
+  if (cs == info{})
+    throw "nn::ad: a rule is a complete class with "
+          "`static constexpr std::span<const info> callees`";
+  for (info f : m::extract<const std::span<const info> &>(cs)) {
+    c.listed_fn.push_back(f);
+    c.listed_rule.push_back(rules);
   }
 }
 
-// The rule for `callee`: a class in callee_rules listing it, else
-// vjp<key(callee)> if it is defined, else a null reflection. The key of a
-// function template specialization is its template, so one rule covers every
-// shape.
+// The first rule listing `callee`, or its template for a specialization (so
+// one rule covers every shape); else a null reflection.
 consteval info rule_for(const Ctx &c, info callee) {
+  const info tmpl =
+      m::has_template_arguments(callee) ? m::template_of(callee) : info{};
   for (std::size_t i = 0; i < c.listed_fn.size(); ++i)
-    if (c.listed_fn[i] == callee)
+    if (c.listed_fn[i] == callee || c.listed_fn[i] == tmpl)
       return c.listed_rule[i];
-  const info spec = m::substitute(^^vjp, {
-                                             m::reflect_constant(key(callee))});
-  return m::is_complete_type(spec) ? spec : info{};
+  return info{};
 }
 
 consteval std::size_t lower(Ctx &c, info e);
@@ -414,7 +404,7 @@ consteval std::size_t lower_body(Ctx &c, info body) {
     if (!m::is_declaration_statement(s) && !m::is_return_statement(s))
       throw "nn::ad: unsupported statement; bodies are `T v = expr;` "
             "declarations and one `return expr;`. A function with loops or "
-            "branches needs a vjp rule (make it a primitive).";
+            "branches needs a rule (make it a primitive).";
 
   std::size_t ret = npos;
   for (info s : m::statements_of(body)) {
@@ -487,9 +477,10 @@ consteval void analyse(std::vector<Node> &ns, unsigned long long mask) {
         ns[ns[i].arg[k]].needed = true;
 }
 
-consteval std::vector<Node> build(info fn, unsigned long long mask) {
+consteval std::vector<Node> build(info fn, unsigned long long mask,
+                                  info rules) {
   Ctx c;
-  list_callee_rules(c);
+  list_rules(c, rules);
   const auto params = m::parameters_of(fn);
   if (params.size() > 64)
     throw "nn::ad: at most 64 parameters";
@@ -651,7 +642,7 @@ auto gradient_of(Vals &adj, const bool *seen, const In &in) {
 
 // The sweep behind value_and_grad (Value) and grad: grad computes only the
 // values the reverse sweep reads.
-template <info Fn, bool Value, std::size_t... Wrt, class... Args>
+template <info Fn, bool Value, class Rules, std::size_t... Wrt, class... Args>
 auto sweep(const Args &...args) {
   static_assert(sizeof...(Wrt) > 0,
                 "nn::ad: name the parameters to "
@@ -667,7 +658,8 @@ auto sweep(const Args &...args) {
        ...),
       "nn::ad: a differentiated parameter must not have an integer type");
   constexpr unsigned long long mask = ((1ull << Wrt) | ... | 0ull);
-  static constexpr auto nodes = std::define_static_array(build(Fn, mask));
+  static constexpr auto nodes =
+      std::define_static_array(build(Fn, mask, ^^Rules));
   static constexpr auto rnodes = std::define_static_array(reversed(nodes));
   constexpr std::size_t out = nodes.size() - 1;
   using Vals = typename[:storage_of(nodes):];
@@ -698,28 +690,33 @@ auto sweep(const Args &...args) {
 
 } // namespace detail
 
-// The DAG of Fn, analysed for differentiation w.r.t. the parameters in `Mask`
-// (bit i = parameter i). Exposed for inspection and tests.
-template <info Fn, unsigned long long Mask>
-inline constexpr std::span<const Node> tape =
-    std::define_static_array(detail::build(Fn, Mask));
-
 template <std::size_t... Wrt>
 inline constexpr unsigned long long mask_of = ((1ull << Wrt) | ... | 0ull);
 
-// Fn's value and its gradient w.r.t. parameters Wrt..., as
-// pair{value, tuple{dFn/d(param Wrt)...}}. A gradient has its parameter's type.
-template <info Fn, std::size_t... Wrt, class... Args>
-auto value_and_grad(const Args &...args) {
-  return detail::sweep<Fn, true, Wrt...>(args...);
-}
+// Differentiation with the primitives that `Rules` (rules and rule_sets of
+// them) list; the first rule listing a callee wins.
+template <class... Rules> struct engine {
+  // The DAG of Fn, analysed for differentiation w.r.t. the parameters in
+  // `Mask` (bit i = parameter i). Exposed for inspection and tests.
+  template <info Fn, unsigned long long Mask>
+  static constexpr std::span<const Node> tape =
+      std::define_static_array(detail::build(Fn, Mask, ^^rule_set<Rules...>));
 
-// Just the gradient: tuple{dFn/d(param Wrt)...}. Skips the values the reverse
-// sweep doesn't read, such as the result itself.
-template <info Fn, std::size_t... Wrt, class... Args>
-auto grad(const Args &...args) {
-  return detail::sweep<Fn, false, Wrt...>(args...);
-}
+  // Fn's value and its gradient w.r.t. parameters Wrt..., as
+  // pair{value, tuple{dFn/d(param Wrt)...}}. A gradient has its parameter's
+  // type.
+  template <info Fn, std::size_t... Wrt, class... Args>
+  static auto value_and_grad(const Args &...args) {
+    return detail::sweep<Fn, true, rule_set<Rules...>, Wrt...>(args...);
+  }
+
+  // Just the gradient: tuple{dFn/d(param Wrt)...}. Skips the values the
+  // reverse sweep doesn't read, such as the result itself.
+  template <info Fn, std::size_t... Wrt, class... Args>
+  static auto grad(const Args &...args) {
+    return detail::sweep<Fn, false, rule_set<Rules...>, Wrt...>(args...);
+  }
+};
 
 } // namespace nn::ad
 

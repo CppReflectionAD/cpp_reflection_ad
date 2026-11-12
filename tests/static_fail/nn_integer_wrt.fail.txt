@@ -1,14 +1,14 @@
 === Clang ===
-include/nn/autodiff.hpp:665:8: error: static assertion failed due to requirement '!m::is_integral_type(m::remove_cvref(m::type_of(m::parameters_of(^^(...))[1UL < sizeof...(Args) ? 1UL : 0])))': nn::ad: a differentiated parameter must not have an integer type
-  665 |       (!m::is_integral_type(m::remove_cvref(m::type_of(
+include/nn/autodiff.hpp:656:8: error: static assertion failed due to requirement '!m::is_integral_type(m::remove_cvref(m::type_of(m::parameters_of(^^(...))[1UL < sizeof...(Args) ? 1UL : 0])))': nn::ad: a differentiated parameter must not have an integer type
+  656 |       (!m::is_integral_type(m::remove_cvref(m::type_of(
       |        ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  666 |            m::parameters_of(Fn)[Wrt < sizeof...(Args) ? Wrt : 0]))) &&
+  657 |            m::parameters_of(Fn)[Wrt < sizeof...(Args) ? Wrt : 0]))) &&
       |            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 === GCC ===
-include/nn/autodiff.hpp:665:28: error: static assertion failed: nn::ad: a differentiated parameter must not have an integer type
-  665 |       (!m::is_integral_type(m::remove_cvref(m::type_of(
+include/nn/autodiff.hpp:656:28: error: static assertion failed: nn::ad: a differentiated parameter must not have an integer type
+  656 |       (!m::is_integral_type(m::remove_cvref(m::type_of(
       |         ~~~~~~~~~~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  666 |            m::parameters_of(Fn)[Wrt < sizeof...(Args) ? Wrt : 0]))) &&
+  657 |            m::parameters_of(Fn)[Wrt < sizeof...(Args) ? Wrt : 0]))) &&
       |            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   • '! std::meta::is_integral_type(std::meta::remove_cvref(std::meta::type_of(std::meta::parameters_of(^^scaled(double, unsigned char)).std::vector<std::meta::info>::operator[]((true ? 1 : 0)))))' evaluates to false

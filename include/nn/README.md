@@ -24,6 +24,10 @@ double loss(const Mat<8, 2> &W1, const Vec<8> &b1, const Mat<1, 8> &W2,
 
 auto [L, g] = nn::ad::value_and_grad<^^loss, 0, 1, 2, 3>(W1, b1, W2, b2, x, t);
 auto &[gW1, gb1, gW2, gb2] = g;   // each gradient has its parameter's type
+
+// The same with an explicit rule set, where a rule listed first wins:
+using E = nn::ad::engine<my_rule, nn::ad::default_rules>;
+auto [L2, g2] = E::value_and_grad<^^loss, 0, 1, 2, 3>(W1, b1, W2, b2, x, t);
 ```
 
 It works with both forks: Clang p2996 and GCC `-freflection`. The test is
@@ -43,19 +47,18 @@ or through CMake (target and test `nn_mlp`).
 | File | Contents |
 |---|---|
 | [tensor.hpp](tensor.hpp) | `Tensor<Extents>`, row-major, shaped by a `std::extents` whose extents are each static or dynamic (`nn::dyn`); `Vec<N>` and `Mat<R,C>` are aliases (`Mat<nn::dyn, 3>`: dynamic rows, 3 columns). Fully static shapes use `std::array` storage (trivially copyable, usable as `constexpr` constants); any dynamic extent uses `std::vector`. `view()` is a `std::mdspan`. Ops mix static and dynamic extents (`Vec<3> + Vec<nn::dyn>` is a `Vec<3>`). Static extents that disagree are a compile error, dynamic ones a `std::invalid_argument`. Primitives: `add sub hadamard scale relu sigmoid sum dot mse matvec matmul transpose outer`. Operators `* + -` as one-line wrappers. Helpers for rules and training (`zeros`, `zeros_like`, `like_as`, `relu_mask`, `sigmoid_slope`, `matvec_transposed`, `filled`, `filled_like`, `sgd_update`). No reflection. |
-| [autodiff.hpp](autodiff.hpp) | The engine, which knows no tensor type. It reflects a body into a DAG, then runs activity and liveness analysis. `value_and_grad` / `grad` generate the forward and reverse sweeps. `tape<Fn, Mask>` exposes the analysed DAG for inspection. |
-| [rules.hpp](rules.hpp) | One `nn::ad::vjp<key(^^nn::f)>` per primitive: the vector-Jacobian product (VJP) per argument. |
-| [cmath_rules.hpp](cmath_rules.hpp) | `exp log sqrt sin cos tanh` as primitives (float, double, long double), each a class in `nn::ad::callee_rules` giving dy/dx. |
-| [nn.hpp](nn.hpp) | Includes all three. |
+| [autodiff.hpp](autodiff.hpp) | The engine, which knows no tensor type and no primitive. `engine<Rules...>` reflects a body into a DAG, runs activity and liveness analysis, and its `value_and_grad` / `grad` generate the forward and reverse sweeps; `tape<Fn, Mask>` exposes the analysed DAG for inspection. `rule_set<...>` groups rules. |
+| [rules.hpp](rules.hpp) | `nn::tensor_rule_set`: one rule class per primitive, in `nn::tensor_rules`, giving the vector-Jacobian product (VJP) per argument. |
+| [cmath_rules.hpp](cmath_rules.hpp) | `nn::ad::cmath_rule_set`: `exp log sqrt sin cos tanh` as primitives (float, double, long double), each a class in `nn::ad::cmath_rules` giving dy/dx. |
+| [nn.hpp](nn.hpp) | Includes all three; `default_rules` (tensor, then `<cmath>`) and `nn::ad::value_and_grad`, `grad` and `tape` with them. |
 
 ## How it works
 
 1. **Lowering** (consteval, `detail::build`):
    - `statements_of(body_of(^^loss))` is walked. Each `T v = expr;` and the
      `return expr;` become SSA nodes.
-   - A call becomes a node if its callee has a rule. The rule is looked up by
-     reflection: `vjp<key(callee)>`, where a template specialization's key is
-     its template.
+   - A call becomes a node if one of the engine's rules lists its callee, or
+     for a template specialization its template. The first such rule wins.
    - Any other callee is **inlined**: `body_of(callee)` is lowered into the
      same DAG, with its parameters bound to the argument slots. This is how
      `W * x + b` works: `operator*` / `operator+` have no rule, so their
@@ -101,7 +104,9 @@ or through CMake (target and test `nn_mlp`).
 A rule looks like this:
 
 ```cpp
-template <> struct nn::ad::vjp<nn::ad::key(^^nn::matvec)> {   // z = W x
+struct matvec {                                                // z = W x
+  static constexpr std::span<const info> callees = listed({^^nn::matvec});
+  static constexpr nn::ad::reads reads = nn::ad::reads::args;
   template <std::size_t I>
   static constexpr auto pullback(const auto &g, const auto &z, const auto &W, const auto &x) {
     if constexpr (I == 0) return nn::outer(g, x);              // W̄ = z̄ xᵀ
@@ -110,16 +115,19 @@ template <> struct nn::ad::vjp<nn::ad::key(^^nn::matvec)> {   // z = W x
 };
 ```
 
+The engine names no rule: `engine<Rules...>` takes rules and `rule_set`s of
+them, so a scalar engine and a tensor engine are the same code with different
+rule sets, and a rule listed first overrides a later one.
+
 A primitive can have loops and anything else inside; only its rule matters.
 Code calling primitives must be straight-line. That is the split between
 "tensor level is straight-line, loops live inside primitives" and "every
 primitive has a hand-written VJP", which is the same design as PyTorch / JAX
 (Python libraries) at the op level.
 
-A function that can't be named can't key a `vjp<>`: `^^std::exp` names an
-overload set. Its rule is a class in namespace `nn::ad::callee_rules` that
-lists the overloads it covers, recovered by `probe_callee` from a one-line
-function calling them. The engine checks these first. A unary scalar rule can
+A function that can't be named can't be listed directly: `^^std::exp` names
+an overload set. Its rule lists the overloads it covers, recovered by
+`probe_callee` from a one-line function calling them. A unary scalar rule can
 give dy/dx instead of `pullback`, from the argument (`d_x`) or from the result
 (`d_y`); which one also says what the rule reads.
 
@@ -127,7 +135,7 @@ give dy/dx instead of `pullback`, from the argument (`d_x`) or from the result
 namespace nn::ad::cmath_probe {
 template <class T> T exp(T x) { return std::exp(x); }
 }
-struct nn::ad::callee_rules::exp {
+struct nn::ad::cmath_rules::exp {
   static constexpr std::span<const info> callees = probed(
       {^^cmath_probe::exp<float>, ^^cmath_probe::exp<double>, ^^cmath_probe::exp<long double>});
   static constexpr auto d_y(auto y) { return y; }   // (eˣ)' = eˣ = y
@@ -208,14 +216,14 @@ restores arithmetic ones itself:
 GCC (a gap in its P2996 support, not in P4395):
 - **Registry identity bug.** `template_of(spec) == ^^nn::matvec` is true, yet
   GCC treats the two as different template arguments: comparing
-  `vjp<template_of(spec)>` with `vjp<^^nn::matvec>` causes an internal
-  compiler error (ICE), "canonical types differ for identical types". The
-  workaround is `nn::ad::key()`, which normalises via `members_of(parent)`
-  and must be used when registering.
+  `X<template_of(spec)>` with `X<^^nn::matvec>` causes an internal
+  compiler error (ICE), "canonical types differ for identical types"
+  (`tests/known_gap/gcc/template_of_as_template_argument.cpp`, #272). The
+  engine only compares reflections with `==`, never uses them as template
+  arguments, so it isn't affected.
 - **A range-for over `members_of(namespace)` sees the namespace as it was
-  where the function is defined**, so the rules in `callee_rules` would be
-  missed. Binding the result to a local first gives the members reachable
-  where it is evaluated, as Clang does.
+  where the function is defined**. The engine takes its rules as template
+  arguments, so it doesn't scan namespaces.
 
 Clang accepts more than the standard here: `extract<T>` by value goes through
 `constant_of`, i.e. `reflect_constant`, so `T` must be structural. GCC rejects
@@ -276,6 +284,4 @@ Next, roughly in order:
    instead of one inlined copy per sample.
 4. More ops: elementwise `tanh` on tensors, softmax + cross-entropy (one fused primitive, for
    stability), maybe convolution as a primitive.
-5. Drop `nn::ad::key()` once GCC fixes the registry-identity bug, tracked by
-   `tests/known_gap/gcc/template_of_as_template_argument.cpp` (#272).
-6. GPU route 1 on a Linux + CUDA machine, then the Clang+NVPTX rebuild.
+5. GPU route 1 on a Linux + CUDA machine, then the Clang+NVPTX rebuild.

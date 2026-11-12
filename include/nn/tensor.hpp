@@ -1,8 +1,8 @@
 // nn/tensor.hpp — vector and matrix values, each dimension static or dynamic,
 // and the primitive ops a network is written with.
 //
-// Nothing here knows about differentiation: rules.hpp registers a VJP for each
-// primitive, and autodiff.hpp differentiates code that calls them.
+// Nothing here knows about differentiation: rules.hpp gives a rule (a VJP) for
+// each primitive, and autodiff.hpp differentiates code that calls them.
 //
 // Design constraints, all coming from what body reflection can see today:
 //
@@ -16,7 +16,7 @@
 //     `return expr;`; assignments and compound assignments are not modelled.
 //     (sgd_update below mutates, but it runs outside reflected code.)
 //   - Each primitive is a single function template with a unique name, so its
-//     rule can be keyed on `^^nn::matvec` etc. The operators (`W * x`,
+//     rule can list `^^nn::matvec` etc. The operators (`W * x`,
 //     `a + b`, ...) are one-line wrappers over the primitives: they have no
 //     rule, so the engine inlines their bodies and finds the primitive inside.
 //   - No expression templates: an operator returns a value, never a proxy.

@@ -1,7 +1,7 @@
 // nn/rules.hpp — vector-Jacobian products for the primitives of tensor.hpp.
 //
-// tensor.hpp stays AD-agnostic; this header is the seam. Each specialization
-// says "this function template is a primitive, and here is its VJP": for a
+// tensor.hpp stays AD-agnostic; this header is the seam. Each rule says "these
+// function templates are primitives, and here is their VJP": for a
 // call y = f(args...) and the adjoint g = dL/dy, pullback<I>(g, y, args...)
 // returns dL/d(arg I), with arg I's type (nn::like_as converts where the
 // arguments split static and dynamic extents differently). The engine calls it
@@ -9,9 +9,8 @@
 // which of y and args the pullback uses (like_as and filled_like use an
 // argument's shape), so grad() can skip computing the others.
 //
-// The key is the reflection of the template (`key(^^nn::matvec)`; key() only
-// normalises the representation, see autodiff.hpp), not its name: a `matvec`
-// in another namespace is not this primitive.
+// A rule lists the reflection of the template (`^^nn::matvec`), not its name:
+// a `matvec` in another namespace is not this primitive.
 
 #ifndef NN_RULES_HPP
 #define NN_RULES_HPP
@@ -20,9 +19,16 @@
 #include "tensor.hpp"
 
 #include <cstddef>
+#include <span>
+
+namespace nn::tensor_rules {
+
+using nn::ad::info;
+using nn::ad::listed;
 
 // z = a + b:  ā = z̄, b̄ = z̄
-template <> struct nn::ad::vjp<nn::ad::key(^^nn::add)> {
+struct add {
+  static constexpr std::span<const info> callees = listed({^^nn::add});
   static constexpr nn::ad::reads reads = nn::ad::reads::args;
   template <std::size_t I>
   static constexpr auto pullback(const auto &g, const auto &, const auto &a,
@@ -35,7 +41,8 @@ template <> struct nn::ad::vjp<nn::ad::key(^^nn::add)> {
 };
 
 // z = a - b:  ā = z̄, b̄ = -z̄
-template <> struct nn::ad::vjp<nn::ad::key(^^nn::sub)> {
+struct sub {
+  static constexpr std::span<const info> callees = listed({^^nn::sub});
   static constexpr nn::ad::reads reads = nn::ad::reads::args;
   template <std::size_t I>
   static constexpr auto pullback(const auto &g, const auto &, const auto &a,
@@ -48,7 +55,8 @@ template <> struct nn::ad::vjp<nn::ad::key(^^nn::sub)> {
 };
 
 // z = a ⊙ b:  ā = z̄ ⊙ b, b̄ = z̄ ⊙ a
-template <> struct nn::ad::vjp<nn::ad::key(^^nn::hadamard)> {
+struct hadamard {
+  static constexpr std::span<const info> callees = listed({^^nn::hadamard});
   static constexpr nn::ad::reads reads = nn::ad::reads::args;
   template <std::size_t I>
   static constexpr auto pullback(const auto &g, const auto &, const auto &a,
@@ -61,7 +69,8 @@ template <> struct nn::ad::vjp<nn::ad::key(^^nn::hadamard)> {
 };
 
 // z = s a:  s̄ = ⟨z̄, a⟩, ā = s z̄
-template <> struct nn::ad::vjp<nn::ad::key(^^nn::scale)> {
+struct scale {
+  static constexpr std::span<const info> callees = listed({^^nn::scale});
   static constexpr nn::ad::reads reads = nn::ad::reads::args;
   template <std::size_t I>
   static constexpr auto pullback(const auto &g, const auto &, double s,
@@ -74,7 +83,8 @@ template <> struct nn::ad::vjp<nn::ad::key(^^nn::scale)> {
 };
 
 // z = relu(a):  ā = z̄ ⊙ [a > 0]
-template <> struct nn::ad::vjp<nn::ad::key(^^nn::relu)> {
+struct relu {
+  static constexpr std::span<const info> callees = listed({^^nn::relu});
   static constexpr nn::ad::reads reads = nn::ad::reads::args;
   template <std::size_t I>
   static constexpr auto pullback(const auto &g, const auto &, const auto &a) {
@@ -83,7 +93,8 @@ template <> struct nn::ad::vjp<nn::ad::key(^^nn::relu)> {
 };
 
 // y = σ(a):  ā = ȳ ⊙ y(1 - y)   (from the output, not the input)
-template <> struct nn::ad::vjp<nn::ad::key(^^nn::sigmoid)> {
+struct sigmoid {
+  static constexpr std::span<const info> callees = listed({^^nn::sigmoid});
   static constexpr nn::ad::reads reads = nn::ad::reads::result;
   template <std::size_t I>
   static constexpr auto pullback(const auto &g, const auto &y, const auto &) {
@@ -92,7 +103,8 @@ template <> struct nn::ad::vjp<nn::ad::key(^^nn::sigmoid)> {
 };
 
 // s = Σ a:  ā = s̄ 1
-template <> struct nn::ad::vjp<nn::ad::key(^^nn::sum)> {
+struct sum {
+  static constexpr std::span<const info> callees = listed({^^nn::sum});
   static constexpr nn::ad::reads reads = nn::ad::reads::args;
   template <std::size_t I>
   static constexpr auto pullback(double g, double, const auto &a) {
@@ -101,7 +113,8 @@ template <> struct nn::ad::vjp<nn::ad::key(^^nn::sum)> {
 };
 
 // s = ⟨a, b⟩:  ā = s̄ b, b̄ = s̄ a
-template <> struct nn::ad::vjp<nn::ad::key(^^nn::dot)> {
+struct dot {
+  static constexpr std::span<const info> callees = listed({^^nn::dot});
   static constexpr nn::ad::reads reads = nn::ad::reads::args;
   template <std::size_t I>
   static constexpr auto pullback(double g, double, const auto &a,
@@ -114,7 +127,8 @@ template <> struct nn::ad::vjp<nn::ad::key(^^nn::dot)> {
 };
 
 // s = Σ (y - t)² / n:  ȳ = s̄ 2(y - t)/n, t̄ = -ȳ
-template <> struct nn::ad::vjp<nn::ad::key(^^nn::mse)> {
+struct mse {
+  static constexpr std::span<const info> callees = listed({^^nn::mse});
   static constexpr nn::ad::reads reads = nn::ad::reads::args;
   template <std::size_t I>
   static constexpr auto pullback(double g, double, const auto &y,
@@ -128,7 +142,8 @@ template <> struct nn::ad::vjp<nn::ad::key(^^nn::mse)> {
 };
 
 // z = W x:  W̄ = z̄ xᵀ, x̄ = Wᵀ z̄
-template <> struct nn::ad::vjp<nn::ad::key(^^nn::matvec)> {
+struct matvec {
+  static constexpr std::span<const info> callees = listed({^^nn::matvec});
   static constexpr nn::ad::reads reads = nn::ad::reads::args;
   template <std::size_t I>
   static constexpr auto pullback(const auto &g, const auto &, const auto &W,
@@ -141,7 +156,8 @@ template <> struct nn::ad::vjp<nn::ad::key(^^nn::matvec)> {
 };
 
 // Z = A B:  Ā = Z̄ Bᵀ, B̄ = Aᵀ Z̄
-template <> struct nn::ad::vjp<nn::ad::key(^^nn::matmul)> {
+struct matmul {
+  static constexpr std::span<const info> callees = listed({^^nn::matmul});
   static constexpr nn::ad::reads reads = nn::ad::reads::args;
   template <std::size_t I>
   static constexpr auto pullback(const auto &g, const auto &, const auto &A,
@@ -154,7 +170,8 @@ template <> struct nn::ad::vjp<nn::ad::key(^^nn::matmul)> {
 };
 
 // Z = Aᵀ:  Ā = Z̄ᵀ
-template <> struct nn::ad::vjp<nn::ad::key(^^nn::transpose)> {
+struct transpose {
+  static constexpr std::span<const info> callees = listed({^^nn::transpose});
   static constexpr nn::ad::reads reads = nn::ad::reads::nothing;
   template <std::size_t I>
   static constexpr auto pullback(const auto &g, const auto &, const auto &) {
@@ -163,7 +180,8 @@ template <> struct nn::ad::vjp<nn::ad::key(^^nn::transpose)> {
 };
 
 // Z = u vᵀ:  ū = Z̄ v, v̄ = Z̄ᵀ u
-template <> struct nn::ad::vjp<nn::ad::key(^^nn::outer)> {
+struct outer {
+  static constexpr std::span<const info> callees = listed({^^nn::outer});
   static constexpr nn::ad::reads reads = nn::ad::reads::args;
   template <std::size_t I>
   static constexpr auto pullback(const auto &g, const auto &, const auto &u,
@@ -174,5 +192,16 @@ template <> struct nn::ad::vjp<nn::ad::key(^^nn::outer)> {
       return nn::like_as(v, nn::matvec_transposed(g, u));
   }
 };
+
+} // namespace nn::tensor_rules
+
+namespace nn {
+using tensor_rule_set =
+    ad::rule_set<tensor_rules::add, tensor_rules::sub, tensor_rules::hadamard,
+                 tensor_rules::scale, tensor_rules::relu, tensor_rules::sigmoid,
+                 tensor_rules::sum, tensor_rules::dot, tensor_rules::mse,
+                 tensor_rules::matvec, tensor_rules::matmul,
+                 tensor_rules::transpose, tensor_rules::outer>;
+} // namespace nn
 
 #endif // NN_RULES_HPP
