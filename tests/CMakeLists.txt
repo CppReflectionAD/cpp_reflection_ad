@@ -40,6 +40,7 @@ endfunction()
 # Discover and register tests
 # ---------------------------------------------------------------------------
 file(GLOB _common   CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/common/*.cpp")
+file(GLOB _source_transformation   CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/source_transformation/*.cpp")
 file(GLOB _clang_only CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/clang_only/*.cpp")
 file(GLOB _gcc_only   CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/gcc_only/*.cpp")
 file(GLOB _static_fail CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -69,6 +70,11 @@ set_source_files_properties(known_gap/gcc/ubsan_reflection_repro.cpp
     PROPERTIES COMPILE_OPTIONS -fsanitize=float-divide-by-zero)
 
 foreach(_src IN LISTS _common)
+    get_filename_component(_name "${_src}" NAME_WE)
+    add_reflect_test(${_name} "${_src}")
+endforeach()
+
+foreach(_src IN LISTS _source_transformation)
     get_filename_component(_name "${_src}" NAME_WE)
     add_reflect_test(${_name} "${_src}")
 endforeach()
