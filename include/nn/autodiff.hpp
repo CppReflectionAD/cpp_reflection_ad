@@ -82,6 +82,11 @@ consteval info key(info fn) {
 //   template <> struct nn::ad::vjp<nn::ad::key(^^nn::matvec)> { ... };
 template <info Key> struct vjp;
 
+// The values a rule's pullback reads besides the adjoint, declared in the
+// rule as `static constexpr nn::ad::reads reads = ...;` (default: all). A value
+// nothing reads is not computed by grad().
+enum class reads : unsigned char { all, result, args, nothing };
+
 enum class Kind : unsigned char {
   Input, // parameter `input` of the differentiated function
   Const, // literal or constant variable; value in `leaf`
@@ -111,6 +116,7 @@ struct Node {
   // Analysis (see analyse()).
   bool varied = false;            // depends on a differentiated input
   bool live = false;              // its value reaches the result
+  bool needed = false;            // the reverse sweep reads its value
   bool arg_varied[max_args] = {}; // per argument: varied
 };
 
@@ -365,8 +371,17 @@ consteval std::size_t lower_body(Ctx &c, info body) {
   return ret;
 }
 
+consteval reads reads_of(info rule) {
+  for (info mem : m::members_of(rule, m::access_context::unchecked()))
+    if (m::has_identifier(mem) && m::identifier_of(mem) == "reads")
+      return m::extract<reads>(mem);
+  return reads::all;
+}
+
 // Varied: forward, from the differentiated inputs. Live: backward, from the
-// output. Nodes are in topological order (arguments before their users).
+// output. Needed: backward, from the values the reverse sweep reads, through
+// the values they are computed from. Nodes are in topological order
+// (arguments before their users).
 consteval void analyse(std::vector<Node> &ns, unsigned long long mask) {
   for (Node &n : ns) {
     if (n.kind == Kind::Input)
@@ -381,6 +396,24 @@ consteval void analyse(std::vector<Node> &ns, unsigned long long mask) {
     if (ns[i].live)
       for (std::size_t k = 0; k < ns[i].nargs; ++k)
         ns[ns[i].arg[k]].live = true;
+
+  for (Node &n : ns) {
+    if (!n.live || !n.varied)
+      continue;
+    const reads r = n.kind == Kind::Call ? reads_of(n.rule)
+                    : n.kind == Kind::Mul || n.kind == Kind::Div
+                        ? reads::args
+                        : reads::nothing;
+    if (r == reads::all || r == reads::result)
+      n.needed = true;
+    if (r == reads::all || r == reads::args)
+      for (std::size_t k = 0; k < n.nargs; ++k)
+        ns[n.arg[k]].needed = true;
+  }
+  for (std::size_t i = ns.size(); i-- > 0;)
+    if (ns[i].needed)
+      for (std::size_t k = 0; k < ns[i].nargs; ++k)
+        ns[ns[i].arg[k]].needed = true;
 }
 
 consteval std::vector<Node> build(info fn, unsigned long long mask) {
@@ -417,8 +450,17 @@ consteval info storage_of(std::span<const Node> ns) {
   return m::substitute(^^std::tuple, types);
 }
 
-template <class T, class G> constexpr void accumulate(T &acc, const G &g) {
-  acc = acc + g;
+// The first contribution to an adjoint is assigned, so an adjoint never needs
+// a zero of its value's shape (a value grad() skips has none).
+template <std::size_t I, class Vals, class G>
+constexpr void accumulate(Vals &adj, bool *seen, const G &g) {
+  auto &acc = std::get<I>(adj);
+  if (seen[I]) {
+    acc = acc + g;
+  } else {
+    acc = g;
+    seen[I] = true;
+  }
 }
 
 template <class T> constexpr T zero_like(const T &v) {
@@ -461,58 +503,117 @@ constexpr void forward(Vals &val, const In &in) {
 
 // dL/d(argument K) of a primitive call, from its rule.
 template <Node N, std::size_t K, class Vals>
-constexpr void pull(const Vals &val, Vals &adj) {
+constexpr void pull(const Vals &val, Vals &adj, bool *seen) {
   if constexpr (N.arg_varied[K]) {
     using Rule = typename[:N.rule:];
     [&]<std::size_t... J>(std::index_sequence<J...>) {
-      accumulate(std::get<N.arg[K]>(adj),
-                 Rule::template pullback<K>(std::get<N.self>(adj),
-                                            std::get<N.self>(val),
-                                            std::get<N.arg[J]>(val)...));
+      accumulate<N.arg[K]>(adj, seen,
+                           Rule::template pullback<K>(
+                               std::get<N.self>(adj), std::get<N.self>(val),
+                               std::get<N.arg[J]>(val)...));
     }(std::make_index_sequence<N.nargs>{});
   }
 }
 
 template <Node N, class Vals>
-constexpr void backward(const Vals &val, Vals &adj) {
+constexpr void backward(const Vals &val, Vals &adj, bool *seen) {
+  if (!seen[N.self])
+    return; // no contribution reached it: its adjoint is zero
   const auto &g = std::get<N.self>(adj);
+  [[maybe_unused]] constexpr std::size_t a0 = N.arg[0], a1 = N.arg[1];
   if constexpr (N.kind == Kind::Call) {
     [&]<std::size_t... K>(std::index_sequence<K...>) {
-      (pull<N, K>(val, adj), ...);
+      (pull<N, K>(val, adj, seen), ...);
     }(std::make_index_sequence<N.nargs>{});
   } else if constexpr (N.kind == Kind::Output || N.kind == Kind::Convert) {
-    using A = std::tuple_element_t<N.arg[0], Vals>;
-    accumulate(std::get<N.arg[0]>(adj), static_cast<A>(g));
+    using A = std::tuple_element_t<a0, Vals>;
+    accumulate<a0>(adj, seen, static_cast<A>(g));
   } else if constexpr (N.kind == Kind::Neg) {
-    accumulate(std::get<N.arg[0]>(adj), -g);
+    accumulate<a0>(adj, seen, -g);
   } else if constexpr (N.kind == Kind::Add || N.kind == Kind::Sub ||
                        N.kind == Kind::Mul || N.kind == Kind::Div) {
-    const auto &a = std::get<N.arg[0]>(val);
-    const auto &b = std::get<N.arg[1]>(val);
-    auto &ga = std::get<N.arg[0]>(adj);
-    auto &gb = std::get<N.arg[1]>(adj);
+    const auto &a = std::get<a0>(val);
+    const auto &b = std::get<a1>(val);
     if constexpr (N.kind == Kind::Add) {
       if constexpr (N.arg_varied[0])
-        accumulate(ga, g);
+        accumulate<a0>(adj, seen, g);
       if constexpr (N.arg_varied[1])
-        accumulate(gb, g);
+        accumulate<a1>(adj, seen, g);
     } else if constexpr (N.kind == Kind::Sub) {
       if constexpr (N.arg_varied[0])
-        accumulate(ga, g);
+        accumulate<a0>(adj, seen, g);
       if constexpr (N.arg_varied[1])
-        accumulate(gb, -g);
+        accumulate<a1>(adj, seen, -g);
     } else if constexpr (N.kind == Kind::Mul) {
       if constexpr (N.arg_varied[0])
-        accumulate(ga, g * b);
+        accumulate<a0>(adj, seen, g * b);
       if constexpr (N.arg_varied[1])
-        accumulate(gb, g * a);
+        accumulate<a1>(adj, seen, g * a);
     } else {
       if constexpr (N.arg_varied[0])
-        accumulate(ga, g / b);
+        accumulate<a0>(adj, seen, g / b);
       if constexpr (N.arg_varied[1])
-        accumulate(gb, -(g * a / (b * b)));
+        accumulate<a1>(adj, seen, -(g * a / (b * b)));
     }
   }
+}
+
+// The gradient for parameter W, in its node's type. A parameter no adjoint
+// reached (unused, or not on the result's path) gets a zero of its argument's
+// shape.
+template <std::size_t W, class Vals, class In>
+auto gradient_of(Vals &adj, const bool *seen, const In &in) {
+  using T = std::tuple_element_t<W, Vals>;
+  if (seen[W])
+    return std::move(std::get<W>(adj));
+  return static_cast<T>(zero_like(std::get<W>(in)));
+}
+
+// The sweep behind value_and_grad (Value) and grad: grad computes only the
+// values the reverse sweep reads.
+template <info Fn, bool Value, std::size_t... Wrt, class... Args>
+auto sweep(const Args &...args) {
+  static_assert(sizeof...(Wrt) > 0,
+                "nn::ad: name the parameters to "
+                "differentiate, e.g. value_and_grad<^^f, 0>");
+  static_assert(sizeof...(Args) == m::parameters_of(Fn).size(),
+                "nn::ad: wrong number of arguments");
+  static_assert(((Wrt < sizeof...(Args)) && ...),
+                "nn::ad: a Wrt index is not a parameter of Fn");
+  // An adjoint has its node's type, so an integer one would truncate.
+  static_assert(
+      (!m::is_integral_type(m::remove_cvref(m::type_of(
+           m::parameters_of(Fn)[Wrt < sizeof...(Args) ? Wrt : 0]))) &&
+       ...),
+      "nn::ad: a differentiated parameter must not have an integer type");
+  constexpr unsigned long long mask = ((1ull << Wrt) | ... | 0ull);
+  static constexpr auto nodes = std::define_static_array(build(Fn, mask));
+  static constexpr auto rnodes = std::define_static_array(reversed(nodes));
+  constexpr std::size_t out = nodes.size() - 1;
+  using Vals = typename[:storage_of(nodes):];
+
+  const auto in = std::forward_as_tuple(args...);
+  Vals val{};
+  Vals adj{};
+  bool seen[nodes.size()] = {};
+
+  template for (constexpr Node n : nodes) {
+    if constexpr (Value ? n.live : n.needed)
+      forward<n>(val, in);
+  }
+
+  std::get<out>(adj) = 1;
+  seen[out] = true;
+  template for (constexpr Node n : rnodes) {
+    if constexpr (n.live && n.varied)
+      backward<n>(val, adj, seen);
+  }
+
+  auto grads = std::tuple{gradient_of<Wrt>(adj, seen, in)...};
+  if constexpr (Value)
+    return std::pair{std::get<out>(val), std::move(grads)};
+  else
+    return grads;
 }
 
 } // namespace detail
@@ -530,55 +631,14 @@ inline constexpr unsigned long long mask_of = ((1ull << Wrt) | ... | 0ull);
 // pair{value, tuple{dFn/d(param Wrt)...}}. A gradient has its parameter's type.
 template <info Fn, std::size_t... Wrt, class... Args>
 auto value_and_grad(const Args &...args) {
-  static_assert(sizeof...(Wrt) > 0,
-                "nn::ad: name the parameters to "
-                "differentiate, e.g. value_and_grad<^^f, 0>");
-  static_assert(sizeof...(Args) == m::parameters_of(Fn).size(),
-                "nn::ad: wrong number of arguments");
-  static_assert(((Wrt < sizeof...(Args)) && ...),
-                "nn::ad: a Wrt index is not a parameter of Fn");
-  // An adjoint has its node's type, so an integer one would truncate.
-  static_assert(
-      (!m::is_integral_type(m::remove_cvref(m::type_of(
-           m::parameters_of(Fn)[Wrt < sizeof...(Args) ? Wrt : 0]))) &&
-       ...),
-      "nn::ad: a differentiated parameter must not have an integer type");
-  constexpr unsigned long long mask = mask_of<Wrt...>;
-  static constexpr auto nodes = tape<Fn, mask>;
-  static constexpr auto rnodes =
-      std::define_static_array(detail::reversed(nodes));
-  constexpr std::size_t out = nodes.size() - 1;
-  using Vals = typename[:detail::storage_of(nodes):];
-
-  const auto in = std::forward_as_tuple(args...);
-  Vals val{};
-  Vals adj{};
-
-  template for (constexpr Node n : nodes) {
-    if constexpr (n.live)
-      detail::forward<n>(val, in);
-  }
-
-  // An unused parameter has no value, so its zero comes from the argument.
-  template for (constexpr Node n : nodes) {
-    if constexpr (n.varied && n.kind == Kind::Input)
-      std::get<n.self>(adj) = detail::zero_like(std::get<n.input>(in));
-    else if constexpr (n.varied && n.live)
-      std::get<n.self>(adj) = detail::zero_like(std::get<n.self>(val));
-  }
-  std::get<out>(adj) = 1;
-  template for (constexpr Node n : rnodes) {
-    if constexpr (n.live && n.varied)
-      detail::backward<n>(val, adj);
-  }
-
-  return std::pair{std::get<out>(val), std::tuple{std::get<Wrt>(adj)...}};
+  return detail::sweep<Fn, true, Wrt...>(args...);
 }
 
-// Just the gradient: tuple{dFn/d(param Wrt)...}.
+// Just the gradient: tuple{dFn/d(param Wrt)...}. Skips the values the reverse
+// sweep doesn't read, such as the result itself.
 template <info Fn, std::size_t... Wrt, class... Args>
 auto grad(const Args &...args) {
-  return value_and_grad<Fn, Wrt...>(args...).second;
+  return detail::sweep<Fn, false, Wrt...>(args...);
 }
 
 } // namespace nn::ad

@@ -74,14 +74,23 @@ or through CMake (target and test `nn_mlp`).
    the target type is known.
 3. **Analysis:**
    - *varied*: depends on one of the `Wrt` parameters, as in `requires_grad`;
-   - *live*: reaches the result.
+   - *live*: reaches the result;
+   - *needed*: the reverse sweep reads it, or a needed value is computed from
+     it. A rule declares what its pullback reads,
+     `static constexpr nn::ad::reads reads = nn::ad::reads::args;`
+     (`result`, `args`, `nothing`, or the default `all`); built-in `*` and `/`
+     read their operands.
 
    Dead nodes are never evaluated. Non-varied nodes get no reverse work. A rule
-   is only asked for the adjoints of varied arguments.
+   is only asked for the adjoints of varied arguments. `value_and_grad`
+   evaluates the live nodes; `grad` only the needed ones, so it skips the loss
+   itself and anything only it depends on.
 4. **Codegen:**
-   - Values and adjoints live in a `std::tuple` of the node types. Each
-     adjoint starts as `zeros_like(value)`, found by ADL (or `T{}`), so a
-     tensor with dynamic extents gets its shape.
+   - Values and adjoints live in a `std::tuple` of the node types. An
+     adjoint's first contribution is assigned and later ones added, so no
+     zero of a value's shape is needed (`grad` may not have the value). A
+     parameter no contribution reaches gets `zeros_like(argument)`, found by
+     ADL (or `T{}`).
    - Two expansion statements (`template for`) emit one statement per node.
      Forward: `std::get<i>(val) = [:fn:](args...)`. Reverse:
      `accumulate(adj[arg], Rule::pullback<k>(adj[i], val[i], args...))`.

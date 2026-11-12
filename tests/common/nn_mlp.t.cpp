@@ -129,6 +129,12 @@ double matrix_ops(const Mat<R, C> &A, const Mat<C, R> &B, const Vec<R> &u,
 // Negation promotes like arithmetic: -c is an int, not an unsigned char.
 inline double neg_promoted(double x, unsigned char c) { return -c * x; }
 
+// W.r.t. b, grad() computes neither sigmoid(a) nor its sum: they don't depend
+// on b, and dot's pullback reads only a and b.
+inline double pruned(const DVec &a, const DVec &b) {
+  return dot(a, b) + sum(sigmoid(a));
+}
+
 // k::t is the constant, not the parameter t.
 namespace k {
 inline constexpr double t = 100;
@@ -155,6 +161,14 @@ consteval std::size_t count_live(std::span<const nad::Node> tape,
   return n;
 }
 
+template <nad::Kind K>
+consteval std::size_t count_needed(std::span<const nad::Node> tape) {
+  std::size_t n = 0;
+  for (const nad::Node &node : tape)
+    n += node.kind == K && node.needed;
+  return n;
+}
+
 // The 2-H-1 MLP of the XOR test.
 constexpr auto mlp = ^^model::mlp_loss<2, model::H, 1>;
 
@@ -166,6 +180,8 @@ static_assert(count_live<nad::Kind::Call>(mlp_all, true) == 7);
 // The data (x, t) are inputs but not differentiated.
 static_assert(mlp_all[0].varied && mlp_all[3].varied);
 static_assert(!mlp_all[4].varied && !mlp_all[5].varied);
+// The reverse sweep doesn't read the loss, so grad() skips the mse call.
+static_assert(count_needed<nad::Kind::Call>(mlp_all) == 6);
 
 // Differentiating the output layer only: the hidden layer's three calls are
 // not varied, so the reverse sweep skips them.
@@ -194,6 +210,11 @@ static_assert(count_live<nad::Kind::Call>(mixed_tape) == 6);
 constexpr auto ops_tape =
     nad::tape<^^model::matrix_ops<2, 3>, nad::mask_of<0, 1, 2, 3>>;
 static_assert(count_live<nad::Kind::Call>(ops_tape) == 9);
+
+// dot, sigmoid, sum are live, but grad<1>() computes none of them.
+constexpr auto pruned_tape = nad::tape<^^model::pruned, nad::mask_of<1>>;
+static_assert(count_live<nad::Kind::Call>(pruned_tape) == 3);
+static_assert(count_needed<nad::Kind::Call>(pruned_tape) == 0);
 
 // ---------------------------------------------------------------------------
 // Run time.
@@ -277,6 +298,12 @@ void test_mlp() {
   auto [gW2_only] = nad::grad<mlp, 2>(W1, b1, W2, b2, x, t);
   for (std::size_t i = 0; i < H; ++i)
     EXPECT_EQUAL(gW2_only.d[i], gW2.d[i]);
+
+  // grad() skips the loss value but not the gradient.
+  const auto [hW1, hb1, hW2, hb2] =
+      nad::grad<mlp, 0, 1, 2, 3>(W1, b1, W2, b2, x, t);
+  EXPECT_TRUE(hW1.d == gW1.d && hb1.d == gb1.d);
+  EXPECT_TRUE(hW2.d == gW2.d && hb2.d == gb2.d);
 }
 
 void test_regularised() {
@@ -354,6 +381,13 @@ void test_dynamic_extents() {
   const auto eargs = std::tuple{a, c};
   expect_matches_fd<0>(elementwise, eargs, ga);
   expect_matches_fd<1>(elementwise, eargs, gc);
+
+  // The skipped values are dynamic: grad() still gets every shape it reads.
+  auto [gb_pruned] = nad::grad<^^model::pruned, 1>(c, c);
+  EXPECT_TRUE(gb_pruned.d == c.d);
+  const auto [Lp, gp] = nad::value_and_grad<^^model::pruned, 1>(c, c);
+  EXPECT_NEAR_ABS(Lp, model::pruned(c, c), 1e-15);
+  EXPECT_TRUE(std::get<0>(gp).d == c.d);
 }
 
 void test_matrix_ops() {
