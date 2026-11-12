@@ -135,8 +135,8 @@ template <tensor T, class... I> constexpr T zeros(I... sizes) {
   return t;
 }
 
-// A zero tensor of a's shape. The engine also finds it by ADL to start each
-// adjoint.
+// A zero tensor of a's shape. The engine also finds it by ADL, for the
+// gradient of a parameter that no adjoint reaches.
 template <tensor T> constexpr T zeros_like(const T &a) {
   T t{};
   t.dims = a.dims;

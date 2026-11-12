@@ -47,7 +47,8 @@
 // Activity: only the parameters listed in `Wrt` are differentiated. A node is
 // "varied" if it depends on one of them; the reverse sweep visits only varied
 // nodes and asks a rule only for the arguments that are varied. A node whose
-// value never reaches the result is not evaluated at all.
+// value never reaches the result is not evaluated at all, and grad() skips
+// the values the reverse sweep doesn't read (see `reads`).
 //
 // Compilers: Clang (p2996 fork) and GCC (with -freflection).
 

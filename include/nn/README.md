@@ -97,7 +97,8 @@ or through CMake (target and test `nn_mlp`).
      ADL (or `T{}`).
    - Two expansion statements (`template for`) emit one statement per node.
      Forward: `std::get<i>(val) = [:fn:](args...)`. Reverse:
-     `accumulate(adj[arg], Rule::pullback<k>(adj[i], val[i], args...))`.
+     `accumulate<arg>(adj, seen, Rule::pullback<k>(adj[i], val[i], args...))`,
+     or `g * Rule::d_y(y)` / `g * Rule::d_x(x)` for a derivative rule.
    - There is no run-time tape, graph object or virtual call. Tensors with
      dynamic extents allocate their storage.
 
@@ -141,6 +142,38 @@ struct nn::ad::cmath_rules::exp {
   static constexpr auto d_y(auto y) { return y; }   // (eˣ)' = eˣ = y
 };
 ```
+
+## Why a separate engine from include/ad, and how they converge
+
+`include/ad` differentiates scalar code, and `ad::gradient_wrt`
+(`include/ad/autograd_tensor.h`) runs its reverse sweep on tensors. Its core
+doesn't fit tensor models:
+
+| | `include/ad` | `include/nn` |
+|---|---|---|
+| Value types | One type per tape (`T val[N]`) | One per node: a `double` loss, `Vec<3>` and `Mat<nn::dyn, 3>` in one function; a static shape mismatch is a compile error, and each gradient has its parameter's type |
+| Operands per node | Two (`a`, `b`) | Up to `max_args` (`mse(y, t)`, `scale(s, a)`) |
+| Primitives | A closed `OpKind` enum, its derivatives written into each sweep; `ad::primitive<^^f>` maps a function onto an existing `OpKind` | The engine names none: rules are classes passed as `engine<Rules...>`, so a primitive is a new rule, not an engine change |
+| Body shape (tensor sweep) | One named op per statement | Operators and user layers are inlined |
+
+`include/nn` lacks what `include/ad` has beyond that: guards and `?:`,
+assignments and compound assignments, forward mode, higher-order (Taylor)
+derivatives and discontinuity analysis. Neither replaces the other yet.
+
+The rule sets are what let them converge. Because the engine knows no
+primitive, `include/ad`'s `OpKind` math is a rule set on this core:
+`cmath_rule_set` already covers `exp log sqrt sin cos tanh` as `d_x` / `d_y`
+rules, from the same probe trick `include/ad` uses. The plan:
+
+1. Port `include/ad`'s front end (guards, `?:`, assignments) to this core.
+2. Express its remaining operations (`abs`, `max`/`min`, `erfc`,
+   comparisons) as a scalar rule set, and check `include/ad`'s benchmarks
+   against it: its closed enum is what makes the scalar sweeps cheap today.
+3. Let rules declare what `include/ad`'s analyses read (continuity, kinks),
+   and drive forward and higher-order modes from the same `d_x` / `d_y`
+   derivatives (`dy = d · dx`).
+4. Move `include/ad` onto the core: one engine, used as
+   `engine<scalar_rules>` or `engine<scalar_rules, nn::tensor_rule_set>`.
 
 ## Design notes
 
@@ -217,10 +250,9 @@ GCC (a gap in its P2996 support, not in P4395):
 - **Registry identity bug.** `template_of(spec) == ^^nn::matvec` is true, yet
   GCC treats the two as different template arguments: comparing
   `X<template_of(spec)>` with `X<^^nn::matvec>` causes an internal
-  compiler error (ICE), "canonical types differ for identical types"
-  (`tests/known_gap/gcc/template_of_as_template_argument.cpp`, #272). The
-  engine only compares reflections with `==`, never uses them as template
-  arguments, so it isn't affected.
+  compiler error (ICE), "canonical types differ for identical types" (#272).
+  The engine only compares reflections with `==`, never uses them as
+  template arguments, so it isn't affected.
 - **A range-for over `members_of(namespace)` sees the namespace as it was
   where the function is defined**. The engine takes its rules as template
   arguments, so it doesn't scan namespaces.
