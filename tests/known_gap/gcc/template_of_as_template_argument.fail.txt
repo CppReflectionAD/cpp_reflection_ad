@@ -1,0 +1,6 @@
+=== GCC ===
+tests/known_gap/gcc/template_of_as_template_argument.cpp:19:42: error: static assertion failed
+   19 | static_assert(std::meta::is_complete_type(std::meta::substitute(
+      |               ~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~
+   20 |     ^^reg, {std::meta::reflect_constant(std::meta::template_of(^^f<3>))})));
+      |     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
