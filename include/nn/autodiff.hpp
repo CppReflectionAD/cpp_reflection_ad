@@ -38,8 +38,7 @@
 // nodes and asks a rule only for the arguments that are varied. A node whose
 // value never reaches the result is not evaluated at all.
 //
-// Compilers: Clang (p2996 fork) and GCC (with -freflection), each of which
-// reflects some constructs differently -- see strip() below.
+// Compilers: Clang (p2996 fork) and GCC (with -freflection).
 
 #ifndef NN_AUTODIFF_HPP
 #define NN_AUTODIFF_HPP
@@ -144,53 +143,13 @@ consteval std::size_t emit(Ctx &c, Node n) {
 
 consteval info value_type(info t) { return m::remove_cvref(t); }
 
-// Peel the nodes that carry no computation, to reach the expression that does.
-// What wraps an operand differs by compiler:
-//   - both: implicit conversions (lvalue-to-rvalue, derived-to-base, ...) are
-//     conversions. Arithmetic conversions are restored where the type is known
-//     (coerce()), since a conversion's target type cannot be queried.
-//   - Clang: a copy or move of a class value is a one-operand construct.
-//   - A temporary, or the return slot, as a construct of an unnamed variable
-//     from its initializer. If the class has a non-trivial destructor, a
-//     temporary's construct has a third operand: the destructor call that
-//     cleans it up.
+// Peel the conversions (lvalue-to-rvalue, derived-to-base, a copy of a class
+// value, ...) to reach the expression that computes. Arithmetic conversions
+// are restored where the type is known (coerce()), since a conversion's target
+// type cannot be queried.
 consteval info strip(info e) {
-  while (m::is_expression(e)) {
-    if (m::is_conversion(e)) {
-      e = m::operands_of(e)[0];
-      continue;
-    }
-    if (m::is_construct(e)) {
-      auto ops = m::operands_of(e);
-      if (ops.size() == 1) {
-        e = ops[0];
-        continue;
-      }
-      // The cleanup is a call on the temporary (`&tmp`). Its callee is GCC's
-      // destructor clone, for which is_destructor() is false, so match the
-      // operand rather than the callee.
-      const auto cleans_up = [&](info call) {
-        if (!m::is_expression(call) || !m::is_function_call(call))
-          return false;
-        const auto args = m::operands_of(call);
-        if (args.size() != 1 || !m::is_expression(args[0]) ||
-            !m::is_operator_expression(args[0]) ||
-            m::expression_operator_of(args[0]) != m::operators::op_ampersand)
-          return false;
-        const info target = m::operands_of(args[0])[0];
-        return m::is_expression(target) && m::is_id_expression(target) &&
-               m::declaration_of(target) == m::declaration_of(ops[0]);
-      };
-      if ((ops.size() == 2 || ops.size() == 3) && m::is_expression(ops[0]) &&
-          m::is_id_expression(ops[0]) &&
-          !m::has_identifier(m::declaration_of(ops[0])) &&
-          (ops.size() == 2 || cleans_up(ops[2]))) {
-        e = ops[1];
-        continue;
-      }
-    }
-    break;
-  }
+  while (m::is_expression(e) && m::is_conversion(e))
+    e = m::operands_of(e)[0];
   return e;
 }
 
@@ -310,8 +269,8 @@ consteval std::size_t lower(Ctx &c, info e) {
                         .leaf = v});
   }
 
-  // Before the operators: clang reports an overloaded operator as both a call
-  // and an operator expression, GCC as a call only.
+  // Before the operators: an overloaded operator is both a call and an
+  // operator expression.
   if (m::is_function_call(e))
     return lower_call(c, e);
 

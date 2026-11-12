@@ -161,11 +161,11 @@ Both forks:
   `is_operator_expression`**, so the engine checks for calls first. The
   proposal (§4.2) says `a+b` classifies as an operator.
 - Operands come in the order written (`0.5 * s` is `0.5, s`).
+- A copy of a class value is a conversion.
 
 Clang:
 - Reading a scalar variable is a conversion (lvalue-to-rvalue), and
   `double four = 4;` has a conversion node.
-- A copy of a class value is a one-operand `construct`.
 
 GCC:
 - Reading a scalar variable has no conversion node, and `double four = 4;` is
@@ -188,8 +188,7 @@ aarch64-apple-darwin without offload targets. macOS has no CUDA.
    body (and its rule's helpers) with cuBLAS / cuDNN calls on
    device-resident tensors. Reflection and codegen stay in host code, so this
    works with either fork. It needs Linux plus CUDA, and a tensor type holding
-   a device pointer. That type must be trivially copyable for GCC; a non-owning
-   handle is.
+   a device pointer.
 2. **Custom kernels in separate `.cu` files** compiled by nvcc, called from
    primitives. Same as (1).
 3. **Device code generated from reflection** (generated fused kernels) needs
