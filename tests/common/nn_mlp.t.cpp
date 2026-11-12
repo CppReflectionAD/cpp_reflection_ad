@@ -144,6 +144,16 @@ inline double qualified_constant(double t) {
   return u * k::t;
 }
 
+// <cmath> calls are primitives too, around tensor code.
+template <std::size_t N> double cmath_mix(const Vec<N> &w, double s) {
+  double e = std::exp(s);
+  double l = std::log(dot(w, w));
+  return e * l + std::sin(s) * std::cos(s) + std::tanh(sum(w)) + std::sqrt(s);
+}
+
+// The float overloads.
+inline float cmath_float(float x) { return std::exp(x) * std::sin(x); }
+
 } // namespace model
 
 // ---------------------------------------------------------------------------
@@ -215,6 +225,12 @@ static_assert(count_live<nad::Kind::Call>(ops_tape) == 9);
 constexpr auto pruned_tape = nad::tape<^^model::pruned, nad::mask_of<1>>;
 static_assert(count_live<nad::Kind::Call>(pruned_tape) == 3);
 static_assert(count_needed<nad::Kind::Call>(pruned_tape) == 0);
+
+// dot, sum and six <cmath> calls. W.r.t. s, grad() skips tanh(sum(w)): nothing
+// varied reads it.
+constexpr auto cmath_tape = nad::tape<^^model::cmath_mix<3>, nad::mask_of<1>>;
+static_assert(count_live<nad::Kind::Call>(cmath_tape) == 8);
+static_assert(count_needed<nad::Kind::Call>(cmath_tape) == 6);
 
 // ---------------------------------------------------------------------------
 // Run time.
@@ -420,6 +436,29 @@ void test_scalar_semantics() {
   EXPECT_EQUAL(std::get<0>(g2), 200.0);
 }
 
+void test_cmath() {
+  const auto w = filled_with<Vec<3>>(2.1, 1.0);
+  const double s = 0.7;
+  auto [L, g] = nad::value_and_grad<^^model::cmath_mix<3>, 0, 1>(w, s);
+  const auto &[gw, gs] = g;
+
+  constexpr auto f = model::cmath_mix<3>;
+  EXPECT_EQUAL(L, f(w, s));
+  expect_matches_fd<0>(f, std::tuple{w, s}, gw);
+  constexpr double h = 1e-6;
+  EXPECT_NEAR_ABS(gs, (f(w, s + h) - f(w, s - h)) / (2 * h), 1e-7);
+
+  auto [gs_only] = nad::grad<^^model::cmath_mix<3>, 1>(w, s);
+  EXPECT_EQUAL(gs_only, gs);
+
+  const float x = 0.5f;
+  auto [vf, gf] = nad::value_and_grad<^^model::cmath_float, 0>(x);
+  static_assert(std::is_same_v<decltype(vf), float>);
+  EXPECT_EQUAL(vf, model::cmath_float(x));
+  EXPECT_NEAR_ABS(std::get<0>(gf), std::exp(x) * (std::sin(x) + std::cos(x)),
+                  1e-6);
+}
+
 void test_xor_training() {
   auto W1 = filled_with<Mat<H, 2>>(1.0, 1.0);
   auto b1 = nn::filled<Vec<H>>(0.1);
@@ -469,6 +508,7 @@ int main() {
   test_dynamic_extents();
   test_matrix_ops();
   test_scalar_semantics();
+  test_cmath();
   test_xor_training();
   TEST_END;
 }

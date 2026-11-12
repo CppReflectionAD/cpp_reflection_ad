@@ -29,11 +29,16 @@
 //                          const auto &x);   // dL/d(arg I), given g = dL/dy
 //   };
 //
+// A function that can't be named, such as one overload of std::exp, gets a
+// class in namespace nn::ad::callee_rules listing its callees instead (see
+// probe_callee). A unary scalar rule can give dy/dx in place of pullback:
+// `d_x(x)` from the argument, or `d_y(y)` from the result.
+//
 // The engine knows no tensor type. Values live in a std::tuple of the node
 // types (from the callees' return types and the parameter types: there is no
-// type_of(expression)), and adjoints are summed with `+`. An adjoint starts
-// as `zeros_like(value)`, found by ADL, or as `T{}` if there is none: a
-// tensor with dynamic extents needs its shape.
+// type_of(expression)), and adjoints are summed with `+`. An adjoint's first
+// contribution is assigned; a parameter none reaches gets
+// `zeros_like(argument)`, found by ADL, or `T{}` if there is none.
 //
 // Activity: only the parameters listed in `Wrt` are differentiated. A node is
 // "varied" if it depends on one of them; the reverse sweep visits only varied
@@ -48,6 +53,7 @@
 #include <ad/meta.h>
 
 #include <cstddef>
+#include <initializer_list>
 #include <meta>
 #include <span>
 #include <string_view>
@@ -86,6 +92,32 @@ template <info Key> struct vjp;
 // rule as `static constexpr nn::ad::reads reads = ...;` (default: all). A value
 // nothing reads is not computed by grad().
 enum class reads : unsigned char { all, result, args, nothing };
+
+// The function called by the one call in a probe's body. `^^std::exp` names an
+// overload set, so a rule recovers each overload from a probe such as
+// `template <class T> T p_exp(T x) { return std::exp(x); }`.
+consteval info probe_callee(info probe) {
+  for (info s : m::statements_of(m::body_of(probe)))
+    if (m::is_return_statement(s)) {
+      info e = m::return_operand_of(s);
+      while (m::is_conversion(e))
+        e = m::operands_of(e)[0];
+      return m::declaration_of(m::callee_of(e));
+    }
+  throw "nn::ad: a probe is `return f(args...);`";
+}
+
+// A rule's `callees`, from probes: one per overload it covers.
+consteval std::span<const info> probed(std::initializer_list<info> probes) {
+  std::vector<info> fns;
+  for (info p : probes)
+    fns.push_back(probe_callee(p));
+  return std::define_static_array(fns);
+}
+
+// The second registry, checked before vjp<>: each class here with
+// `static constexpr std::span<const info> callees` is the rule for them.
+namespace callee_rules {}
 
 enum class Kind : unsigned char {
   Input, // parameter `input` of the differentiated function
@@ -142,6 +174,7 @@ struct Ctx {
   std::vector<std::size_t> env_slot;
   std::size_t scope = 0;
   std::vector<info> call_stack; // functions being lowered (recursion guard)
+  std::vector<info> listed_fn, listed_rule; // from callee_rules
 };
 
 consteval std::size_t emit(Ctx &c, Node n) {
@@ -188,10 +221,40 @@ consteval std::size_t coerce(Ctx &c, std::size_t slot, info to) {
         "conversions are modelled";
 }
 
+// The member of class `cls` called `name`, or a null reflection.
+consteval info member_named(info cls, std::string_view name) {
+  for (info mem : m::members_of(cls, m::access_context::unchecked()))
+    if (m::has_identifier(mem) && m::identifier_of(mem) == name)
+      return mem;
+  return info{};
+}
+
+// Every (callee, rule) pair listed in callee_rules. By reference: GCC extracts
+// only structural types by value.
+consteval void list_callee_rules(Ctx &c) {
+  // A local: GCC evaluates a range-for over members_of(namespace) as of this
+  // definition, before any rule is declared.
+  const auto rules =
+      m::members_of(^^callee_rules, m::access_context::unchecked());
+  for (info r : rules) {
+    if (!m::is_type(r) || !m::is_class_type(r) || !m::is_complete_type(r))
+      continue;
+    if (const info cs = member_named(r, "callees"); cs != info{})
+      for (info f : m::extract<const std::span<const info> &>(cs)) {
+        c.listed_fn.push_back(f);
+        c.listed_rule.push_back(r);
+      }
+  }
+}
+
+// The rule for `callee`: a class in callee_rules listing it, else
 // vjp<key(callee)> if it is defined, else a null reflection. The key of a
 // function template specialization is its template, so one rule covers every
 // shape.
-consteval info rule_for(info callee) {
+consteval info rule_for(const Ctx &c, info callee) {
+  for (std::size_t i = 0; i < c.listed_fn.size(); ++i)
+    if (c.listed_fn[i] == callee)
+      return c.listed_rule[i];
   const info spec = m::substitute(^^vjp, {
                                              m::reflect_constant(key(callee))});
   return m::is_complete_type(spec) ? spec : info{};
@@ -241,12 +304,16 @@ consteval std::size_t lower_call(Ctx &c, info call) {
     args.push_back(
         coerce(c, lower(c, ops[i]), value_type(m::type_of(params[i]))));
 
-  const info rule = rule_for(callee);
+  const info rule = rule_for(c, callee);
   if (rule == info{})
     return inline_call(c, callee, args);
 
   if (args.size() > max_args)
     throw "nn::ad: a primitive takes at most max_args arguments";
+  if (args.size() != 1 && (member_named(rule, "d_x") != info{} ||
+                           member_named(rule, "d_y") != info{}))
+    throw "nn::ad: a rule giving d_x or d_y must be for a unary function; "
+          "give pullback<I> instead";
   Node n{.kind = Kind::Call,
          .type = value_type(m::return_type_of(callee)),
          .fn = callee,
@@ -371,10 +438,14 @@ consteval std::size_t lower_body(Ctx &c, info body) {
   return ret;
 }
 
+// A rule's `reads`; otherwise implied by d_y / d_x, else all.
 consteval reads reads_of(info rule) {
-  for (info mem : m::members_of(rule, m::access_context::unchecked()))
-    if (m::has_identifier(mem) && m::identifier_of(mem) == "reads")
-      return m::extract<reads>(mem);
+  if (const info r = member_named(rule, "reads"); r != info{})
+    return m::extract<reads>(r);
+  if (member_named(rule, "d_y") != info{})
+    return reads::result;
+  if (member_named(rule, "d_x") != info{})
+    return reads::args;
   return reads::all;
 }
 
@@ -418,6 +489,7 @@ consteval void analyse(std::vector<Node> &ns, unsigned long long mask) {
 
 consteval std::vector<Node> build(info fn, unsigned long long mask) {
   Ctx c;
+  list_callee_rules(c);
   const auto params = m::parameters_of(fn);
   if (params.size() > 64)
     throw "nn::ad: at most 64 parameters";
@@ -506,12 +578,20 @@ template <Node N, std::size_t K, class Vals>
 constexpr void pull(const Vals &val, Vals &adj, bool *seen) {
   if constexpr (N.arg_varied[K]) {
     using Rule = typename[:N.rule:];
-    [&]<std::size_t... J>(std::index_sequence<J...>) {
-      accumulate<N.arg[K]>(adj, seen,
-                           Rule::template pullback<K>(
-                               std::get<N.self>(adj), std::get<N.self>(val),
-                               std::get<N.arg[J]>(val)...));
-    }(std::make_index_sequence<N.nargs>{});
+    const auto &g = std::get<N.self>(adj);
+    const auto &y = std::get<N.self>(val);
+    const auto &x = std::get<N.arg[0]>(val);
+    if constexpr (requires { Rule::d_y(y); }) {
+      accumulate<N.arg[K]>(adj, seen, g * Rule::d_y(y));
+    } else if constexpr (requires { Rule::d_x(x); }) {
+      accumulate<N.arg[K]>(adj, seen, g * Rule::d_x(x));
+    } else {
+      [&]<std::size_t... J>(std::index_sequence<J...>) {
+        accumulate<N.arg[K]>(
+            adj, seen,
+            Rule::template pullback<K>(g, y, std::get<N.arg[J]>(val)...));
+      }(std::make_index_sequence<N.nargs>{});
+    }
   }
 }
 

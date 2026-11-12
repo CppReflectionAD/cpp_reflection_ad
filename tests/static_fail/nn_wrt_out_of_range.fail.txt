@@ -1,6 +1,6 @@
 === Clang ===
-include/nn/autodiff.hpp:582:19: error: static assertion failed due to requirement '2UL < sizeof...(Args)': nn::ad: a Wrt index is not a parameter of Fn
-  582 |   static_assert(((Wrt < sizeof...(Args)) && ...),
+include/nn/autodiff.hpp:661:19: error: static assertion failed due to requirement '2UL < sizeof...(Args)': nn::ad: a Wrt index is not a parameter of Fn
+  661 |   static_assert(((Wrt < sizeof...(Args)) && ...),
       |                   ^~~~~~~~~~~~~~~~~~~~~
 build/clang-p2996/include/c++/v1/__tuple/tuple_element.h:45:17: error: static assertion failed due to requirement '2UL < sizeof...(_Types)': tuple_element index out of range
    45 |   static_assert(_Ip < sizeof...(_Types), "tuple_element index out of range");
@@ -10,8 +10,8 @@ build/clang-p2996/include/c++/v1/tuple:1081:10: error: no viable conversion from
       |          ^                                           ~~~~~~~~~~~
 
 === GCC ===
-include/nn/autodiff.hpp:582:23: error: static assertion failed: nn::ad: a Wrt index is not a parameter of Fn
-  582 |   static_assert(((Wrt < sizeof...(Args)) && ...),
+include/nn/autodiff.hpp:661:23: error: static assertion failed: nn::ad: a Wrt index is not a parameter of Fn
+  661 |   static_assert(((Wrt < sizeof...(Args)) && ...),
       |                  ~~~~~^~~~~~~~~~~~~~~~~~
   • the comparison reduces to '(2 < 2)'
 build/gcc-p2996/artifacts/include/c++/17.0.0/tuple:2445:25: error: static assertion failed: tuple index must be in range
@@ -21,6 +21,6 @@ build/gcc-p2996/artifacts/include/c++/17.0.0/tuple:2445:25: error: static assert
 build/gcc-p2996/artifacts/include/c++/17.0.0/bits/utility.h:556:13: error: pack index '2' is out of range for pack of length '2'
   556 |     { using type = __type_pack_element<_Np, _Types...>; };
       |             ^~~~
-include/nn/autodiff.hpp:570:46: error: use of deleted function 'constexpr std::__enable_if_t<(__i >= sizeof... (_Types))> std::get(const tuple<_Elements ...>&) [with long unsigned int __i = 2; _Elements = {const double&, const double&}; __enable_if_t<(__i >= sizeof... (_Types))> = void]'
-  570 |   return static_cast<T>(zero_like(std::get<W>(in)));
+include/nn/autodiff.hpp:649:46: error: use of deleted function 'constexpr std::__enable_if_t<(__i >= sizeof... (_Types))> std::get(const tuple<_Elements ...>&) [with long unsigned int __i = 2; _Elements = {const double&, const double&}; __enable_if_t<(__i >= sizeof... (_Types))> = void]'
+  649 |   return static_cast<T>(zero_like(std::get<W>(in)));
       |                                   ~~~~~~~~~~~^~~~

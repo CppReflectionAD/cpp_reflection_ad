@@ -45,6 +45,7 @@ or through CMake (target and test `nn_mlp`).
 | [tensor.hpp](tensor.hpp) | `Tensor<Extents>`, row-major, shaped by a `std::extents` whose extents are each static or dynamic (`nn::dyn`); `Vec<N>` and `Mat<R,C>` are aliases (`Mat<nn::dyn, 3>`: dynamic rows, 3 columns). Fully static shapes use `std::array` storage (trivially copyable, usable as `constexpr` constants); any dynamic extent uses `std::vector`. `view()` is a `std::mdspan`. Ops mix static and dynamic extents (`Vec<3> + Vec<nn::dyn>` is a `Vec<3>`). Static extents that disagree are a compile error, dynamic ones a `std::invalid_argument`. Primitives: `add sub hadamard scale relu sigmoid sum dot mse matvec matmul transpose outer`. Operators `* + -` as one-line wrappers. Helpers for rules and training (`zeros`, `zeros_like`, `like_as`, `relu_mask`, `sigmoid_slope`, `matvec_transposed`, `filled`, `filled_like`, `sgd_update`). No reflection. |
 | [autodiff.hpp](autodiff.hpp) | The engine, which knows no tensor type. It reflects a body into a DAG, then runs activity and liveness analysis. `value_and_grad` / `grad` generate the forward and reverse sweeps. `tape<Fn, Mask>` exposes the analysed DAG for inspection. |
 | [rules.hpp](rules.hpp) | One `nn::ad::vjp<key(^^nn::f)>` per primitive: the vector-Jacobian product (VJP) per argument. |
+| [cmath_rules.hpp](cmath_rules.hpp) | `exp log sqrt sin cos tanh` as primitives (float, double, long double), each a class in `nn::ad::callee_rules` giving dy/dx. |
 | [nn.hpp](nn.hpp) | Includes all three. |
 
 ## How it works
@@ -115,6 +116,24 @@ Code calling primitives must be straight-line. That is the split between
 primitive has a hand-written VJP", which is the same design as PyTorch / JAX
 (Python libraries) at the op level.
 
+A function that can't be named can't key a `vjp<>`: `^^std::exp` names an
+overload set. Its rule is a class in namespace `nn::ad::callee_rules` that
+lists the overloads it covers, recovered by `probe_callee` from a one-line
+function calling them. The engine checks these first. A unary scalar rule can
+give dy/dx instead of `pullback`, from the argument (`d_x`) or from the result
+(`d_y`); which one also says what the rule reads.
+
+```cpp
+namespace nn::ad::cmath_probe {
+template <class T> T exp(T x) { return std::exp(x); }
+}
+struct nn::ad::callee_rules::exp {
+  static constexpr std::span<const info> callees = probed(
+      {^^cmath_probe::exp<float>, ^^cmath_probe::exp<double>, ^^cmath_probe::exp<long double>});
+  static constexpr auto d_y(auto y) { return y; }   // (eˣ)' = eˣ = y
+};
+```
+
 ## Design notes
 
 - **Feed-forward networks are straight-line at the tensor level.** For each
@@ -157,8 +176,8 @@ primitive has a hand-written VJP", which is the same design as PyTorch / JAX
   2. 2-layer MLP on XOR — **done**;
   3. depth fixed by a template;
   4. NN mixed with scalar C++ such as Black-Scholes or physics. The scalar
-     glue works (`regularised` in the test), but scalar `<cmath>` calls are not
-     primitives here yet; see next steps.
+     glue works (`regularised` in the test), and `<cmath>` calls are
+     primitives (`cmath_mix`); a model of that kind is still to do.
 
 ## Compiler notes
 
@@ -193,6 +212,12 @@ GCC (a gap in its P2996 support, not in P4395):
   compiler error (ICE), "canonical types differ for identical types". The
   workaround is `nn::ad::key()`, which normalises via `members_of(parent)`
   and must be used when registering.
+- **A range-for over `members_of(namespace)` sees the namespace as it was
+  where the function is defined**, so the rules in `callee_rules` would be
+  missed. Binding the result to a local first gives the members reachable
+  where it is evaluated, as Clang does.
+- `extract<T>` of a variable requires a structural `T`, so the engine reads
+  `callees` (a `std::span`) as `extract<const std::span<const info> &>`.
 
 ## GPU: possible directions (not implemented; current builds are CPU-only)
 
@@ -241,14 +266,12 @@ Next, roughly in order:
 1. **Template-depth MLP** (milestone 3), e.g. `mlp<Sizes...>` recursing
    through a layer template with `if constexpr`. Check how discarded branches
    reflect on both compilers.
-2. **Scalar `<cmath>` primitives** (`exp`, `log`, `tanh`, ...) for mixing with
-   scalar models. Reuse the probe trick from `include/ad/autograd.h`:
-   `^^std::exp` names an overload set, so recover the callee from a one-line
-   probe function. Then a Black-Scholes-style model with a NN term
-   (milestone 4).
+2. **A Black-Scholes-style model with a NN term** (milestone 4), using the
+   `<cmath>` primitives. Integer-argument overloads (`std::exp(1)`) and
+   binary functions (`pow`, `atan2`, which need `pullback`) are not covered.
 3. **Batched data**: `Mat<B, In>` inputs with a row-broadcast bias primitive,
    instead of one inlined copy per sample.
-4. More ops: `tanh`, softmax + cross-entropy (one fused primitive, for
+4. More ops: elementwise `tanh` on tensors, softmax + cross-entropy (one fused primitive, for
    stability), maybe convolution as a primitive.
 5. Drop `nn::ad::key()` once GCC fixes the registry-identity bug, tracked by
    `tests/known_gap/gcc/template_of_as_template_argument.cpp` (#272).

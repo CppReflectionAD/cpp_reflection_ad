@@ -5,6 +5,7 @@
 #define NN_NN_HPP
 
 #include "autodiff.hpp"
+#include "cmath_rules.hpp"
 #include "rules.hpp"
 #include "tensor.hpp"
 
