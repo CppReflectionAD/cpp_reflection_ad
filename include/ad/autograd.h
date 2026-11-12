@@ -741,7 +741,7 @@ consteval std::size_t inline_call(Ctx &c, info call) {
   // (b) open a lexical scope; bind callee parameters to the argument slots.
   std::size_t mark = c.envDecl.size();
   for (std::size_t i = 0; i < params.size(); ++i) {
-    c.envDecl.push_back(params[i]);
+    c.envDecl.push_back(m::parameter_variable(params[i]));
     c.envSlot.push_back(argSlots[i]);
   }
 
@@ -769,7 +769,7 @@ template <info Fn> consteval std::vector<Node> build_nodes() {
   for (info p : m::parameters_of(Fn)) {
     std::size_t s = c.nodes.size();
     c.nodes.push_back(Node{OpKind::Input, s, 0, 0});
-    c.envDecl.push_back(p);
+    c.envDecl.push_back(m::parameter_variable(p));
     c.envSlot.push_back(s);
   }
 
