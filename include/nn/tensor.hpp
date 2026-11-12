@@ -1,15 +1,16 @@
-// nn/tensor.hpp — fixed-size vector / matrix values and the primitive ops a
-// network is written with.
+// nn/tensor.hpp — vector and matrix values, each dimension static or dynamic,
+// and the primitive ops a network is written with.
 //
 // Nothing here knows about differentiation: rules.hpp registers a VJP for each
 // primitive, and autodiff.hpp differentiates code that calls them.
 //
 // Design constraints, all coming from what body reflection can see today:
 //
-//   - Shapes are template parameters and the types are trivially copyable
-//     (std::array storage, no heap), so shape errors are compile errors. The
-//     engine also handles heap-backed types (tests/common/nn_mlp.t.cpp has
-//     one).
+//   - A tensor's shape is a std::extents. With every extent static (Vec<3>,
+//     Mat<2, 3>) the storage is a std::array: trivially copyable, usable as a
+//     constexpr constant. Any std::dynamic_extent (`nn::dyn`) makes it a
+//     std::vector. Two static extents that disagree are a compile error; a
+//     mismatch involving a dynamic one throws std::invalid_argument.
 //   - Values, not in-place updates. Reflected code is `T v = expr;` and
 //     `return expr;`; assignments and compound assignments are not modelled.
 //     (sgd_update below mutates, but it runs outside reflected code.)
@@ -26,39 +27,123 @@
 #include <cmath>
 #include <concepts>
 #include <cstddef>
+#include <mdspan>
+#include <stdexcept>
+#include <type_traits>
+#include <vector>
 
 namespace nn {
 
-template <std::size_t N> struct Vec {
-  static constexpr std::size_t size = N;
-  std::array<double, N> d{};
+inline constexpr std::size_t dyn = std::dynamic_extent;
 
-  constexpr double &operator[](std::size_t i) { return d[i]; }
-  constexpr const double &operator[](std::size_t i) const { return d[i]; }
+namespace detail {
+
+struct no_extents {};
+
+// The element count of a fully static shape, else 0.
+template <class E> consteval std::size_t static_size() {
+  if constexpr (E::rank_dynamic() > 0)
+    return 0;
+  std::size_t n = 1;
+  for (std::size_t r = 0; r < E::rank(); ++r)
+    n *= E::static_extent(r);
+  return n;
+}
+
+template <class E>
+using storage_t = std::conditional_t<E::rank_dynamic() == 0,
+                                     std::array<double, static_size<E>()>,
+                                     std::vector<double>>;
+
+template <class E>
+using dims_t = std::conditional_t<E::rank_dynamic() == 0, no_extents,
+                                  std::array<std::size_t, E::rank_dynamic()>>;
+
+constexpr void check(bool same_shape) {
+  if (!same_shape)
+    throw std::invalid_argument("nn: shape mismatch");
+}
+
+} // namespace detail
+
+// Row-major. `dims` holds only the dynamic extents, so a fully static tensor
+// is an aggregate of its elements: `Vec<2>{{1.0, 2.0}}`.
+template <class E> struct Tensor {
+  using extents_type = E;
+  detail::storage_t<E> d{};
+  detail::dims_t<E> dims{};
+
+  constexpr E extents() const {
+    if constexpr (E::rank_dynamic() == 0)
+      return E{};
+    else
+      return E(dims);
+  }
+  constexpr auto view() { return std::mdspan(d.data(), extents()); }
+  constexpr auto view() const { return std::mdspan(d.data(), extents()); }
+  constexpr double &operator[](auto... i) { return view()[i...]; }
+  constexpr const double &operator[](auto... i) const { return view()[i...]; }
 };
 
-// Row-major.
-template <std::size_t R, std::size_t C> struct Mat {
-  static constexpr std::size_t rows = R;
-  static constexpr std::size_t cols = C;
-  static constexpr std::size_t size = R * C;
-  std::array<double, R * C> d{};
+template <std::size_t N> using Vec = Tensor<std::extents<std::size_t, N>>;
+template <std::size_t R, std::size_t C>
+using Mat = Tensor<std::extents<std::size_t, R, C>>;
 
-  constexpr double &operator()(std::size_t i, std::size_t j) {
-    return d[i * C + j];
-  }
-  constexpr const double &operator()(std::size_t i, std::size_t j) const {
-    return d[i * C + j];
-  }
-};
-
-// Vec and Mat: a flat array `d` of `size` doubles. Elementwise ops work on any
-// such type.
+// A flat array `d` of doubles with a std::extents shape. Elementwise ops work
+// on any such type.
 template <class T>
-concept tensor = requires(T t) {
-  { T::size } -> std::convertible_to<std::size_t>;
+concept tensor = requires(const T &t) {
+  typename T::extents_type;
+  { t.extents() } -> std::same_as<typename T::extents_type>;
+  { t.d.size() } -> std::convertible_to<std::size_t>;
   { t.d[0] } -> std::convertible_to<double>;
 };
+template <class T>
+concept vector_like = tensor<T> && T::extents_type::rank() == 1;
+template <class T>
+concept matrix_like = tensor<T> && T::extents_type::rank() == 2;
+
+// Extent R of T's type: a size, or dyn.
+template <tensor T, std::size_t R>
+inline constexpr std::size_t extent_v = T::extents_type::static_extent(R);
+
+// A zero tensor of type T, given its dynamic extents (or all its extents).
+template <tensor T, class... I> constexpr T zeros(I... sizes) {
+  using E = typename T::extents_type;
+  const E ext(static_cast<std::size_t>(sizes)...);
+  T t{};
+  if constexpr (E::rank_dynamic() > 0) {
+    std::size_t n = 1;
+    for (std::size_t r = 0, k = 0; r < E::rank(); ++r) {
+      n *= ext.extent(r);
+      if (E::static_extent(r) == dyn)
+        t.dims[k++] = ext.extent(r);
+    }
+    t.d.assign(n, 0.0);
+  }
+  return t;
+}
+
+// A zero tensor of a's shape. The engine also finds it by ADL to start each
+// adjoint.
+template <tensor T> constexpr T zeros_like(const T &a) {
+  T t{};
+  t.dims = a.dims;
+  if constexpr (T::extents_type::rank_dynamic() > 0)
+    t.d.assign(a.d.size(), 0.0);
+  return t;
+}
+
+namespace detail {
+
+template <std::size_t A, std::size_t B>
+inline constexpr bool compatible = A == dyn || B == dyn || A == B;
+
+template <tensor T> constexpr void same_shape(const T &a, const T &b) {
+  check(a.extents() == b.extents());
+}
+
+} // namespace detail
 
 // ---------------------------------------------------------------------------
 // Primitives. Each has a VJP rule in rules.hpp; keep the names unique (one
@@ -66,107 +151,122 @@ concept tensor = requires(T t) {
 // ---------------------------------------------------------------------------
 
 template <tensor T> constexpr T add(const T &a, const T &b) {
-  T o;
-  for (std::size_t i = 0; i < T::size; ++i)
+  detail::same_shape(a, b);
+  T o = zeros_like(a);
+  for (std::size_t i = 0; i < a.d.size(); ++i)
     o.d[i] = a.d[i] + b.d[i];
   return o;
 }
 
 template <tensor T> constexpr T sub(const T &a, const T &b) {
-  T o;
-  for (std::size_t i = 0; i < T::size; ++i)
+  detail::same_shape(a, b);
+  T o = zeros_like(a);
+  for (std::size_t i = 0; i < a.d.size(); ++i)
     o.d[i] = a.d[i] - b.d[i];
   return o;
 }
 
 // Elementwise product.
 template <tensor T> constexpr T hadamard(const T &a, const T &b) {
-  T o;
-  for (std::size_t i = 0; i < T::size; ++i)
+  detail::same_shape(a, b);
+  T o = zeros_like(a);
+  for (std::size_t i = 0; i < a.d.size(); ++i)
     o.d[i] = a.d[i] * b.d[i];
   return o;
 }
 
 template <tensor T> constexpr T scale(double s, const T &a) {
-  T o;
-  for (std::size_t i = 0; i < T::size; ++i)
+  T o = zeros_like(a);
+  for (std::size_t i = 0; i < a.d.size(); ++i)
     o.d[i] = s * a.d[i];
   return o;
 }
 
 template <tensor T> constexpr T relu(const T &a) {
-  T o;
-  for (std::size_t i = 0; i < T::size; ++i)
+  T o = zeros_like(a);
+  for (std::size_t i = 0; i < a.d.size(); ++i)
     o.d[i] = a.d[i] > 0.0 ? a.d[i] : 0.0;
   return o;
 }
 
 template <tensor T> T sigmoid(const T &a) {
-  T o;
-  for (std::size_t i = 0; i < T::size; ++i)
+  T o = zeros_like(a);
+  for (std::size_t i = 0; i < a.d.size(); ++i)
     o.d[i] = 1.0 / (1.0 + std::exp(-a.d[i]));
   return o;
 }
 
 template <tensor T> constexpr double sum(const T &a) {
   double s = 0.0;
-  for (std::size_t i = 0; i < T::size; ++i)
+  for (std::size_t i = 0; i < a.d.size(); ++i)
     s += a.d[i];
   return s;
 }
 
 template <tensor T> constexpr double dot(const T &a, const T &b) {
+  detail::same_shape(a, b);
   double s = 0.0;
-  for (std::size_t i = 0; i < T::size; ++i)
+  for (std::size_t i = 0; i < a.d.size(); ++i)
     s += a.d[i] * b.d[i];
   return s;
 }
 
 // Mean squared error.
 template <tensor T> constexpr double mse(const T &y, const T &t) {
+  detail::same_shape(y, t);
   double s = 0.0;
-  for (std::size_t i = 0; i < T::size; ++i)
+  for (std::size_t i = 0; i < y.d.size(); ++i)
     s += (y.d[i] - t.d[i]) * (y.d[i] - t.d[i]);
-  return s / static_cast<double>(T::size);
+  return s / static_cast<double>(y.d.size());
 }
 
 // W x
-template <std::size_t R, std::size_t C>
-constexpr Vec<R> matvec(const Mat<R, C> &W, const Vec<C> &x) {
-  Vec<R> o;
-  for (std::size_t i = 0; i < R; ++i)
-    for (std::size_t j = 0; j < C; ++j)
-      o.d[i] += W(i, j) * x.d[j];
+template <matrix_like W, vector_like X>
+constexpr Vec<extent_v<W, 0>> matvec(const W &w, const X &x) {
+  static_assert(detail::compatible<extent_v<W, 1>, extent_v<X, 0>>,
+                "nn::matvec: W has as many columns as x has elements");
+  const std::size_t rows = w.extents().extent(0), cols = w.extents().extent(1);
+  detail::check(cols == x.extents().extent(0));
+  auto o = zeros<Vec<extent_v<W, 0>>>(rows);
+  for (std::size_t i = 0; i < rows; ++i)
+    for (std::size_t j = 0; j < cols; ++j)
+      o.d[i] += w[i, j] * x.d[j];
   return o;
 }
 
 // A B
-template <std::size_t R, std::size_t K, std::size_t C>
-constexpr Mat<R, C> matmul(const Mat<R, K> &A, const Mat<K, C> &B) {
-  Mat<R, C> o;
-  for (std::size_t i = 0; i < R; ++i)
-    for (std::size_t k = 0; k < K; ++k)
-      for (std::size_t j = 0; j < C; ++j)
-        o(i, j) += A(i, k) * B(k, j);
+template <matrix_like A, matrix_like B>
+constexpr Mat<extent_v<A, 0>, extent_v<B, 1>> matmul(const A &a, const B &b) {
+  static_assert(detail::compatible<extent_v<A, 1>, extent_v<B, 0>>,
+                "nn::matmul: A has as many columns as B has rows");
+  const std::size_t rows = a.extents().extent(0), inner = a.extents().extent(1),
+                    cols = b.extents().extent(1);
+  detail::check(inner == b.extents().extent(0));
+  auto o = zeros<Mat<extent_v<A, 0>, extent_v<B, 1>>>(rows, cols);
+  for (std::size_t i = 0; i < rows; ++i)
+    for (std::size_t k = 0; k < inner; ++k)
+      for (std::size_t j = 0; j < cols; ++j)
+        o[i, j] += a[i, k] * b[k, j];
   return o;
 }
 
-template <std::size_t R, std::size_t C>
-constexpr Mat<C, R> transpose(const Mat<R, C> &A) {
-  Mat<C, R> o;
-  for (std::size_t i = 0; i < R; ++i)
-    for (std::size_t j = 0; j < C; ++j)
-      o(j, i) = A(i, j);
+template <matrix_like A>
+constexpr Mat<extent_v<A, 1>, extent_v<A, 0>> transpose(const A &a) {
+  const std::size_t rows = a.extents().extent(0), cols = a.extents().extent(1);
+  auto o = zeros<Mat<extent_v<A, 1>, extent_v<A, 0>>>(cols, rows);
+  for (std::size_t i = 0; i < rows; ++i)
+    for (std::size_t j = 0; j < cols; ++j)
+      o[j, i] = a[i, j];
   return o;
 }
 
 // u vᵀ
-template <std::size_t R, std::size_t C>
-constexpr Mat<R, C> outer(const Vec<R> &u, const Vec<C> &v) {
-  Mat<R, C> o;
-  for (std::size_t i = 0; i < R; ++i)
-    for (std::size_t j = 0; j < C; ++j)
-      o(i, j) = u.d[i] * v.d[j];
+template <vector_like U, vector_like V>
+constexpr Mat<extent_v<U, 0>, extent_v<V, 0>> outer(const U &u, const V &v) {
+  auto o = zeros<Mat<extent_v<U, 0>, extent_v<V, 0>>>(u.d.size(), v.d.size());
+  for (std::size_t i = 0; i < u.d.size(); ++i)
+    for (std::size_t j = 0; j < v.d.size(); ++j)
+      o[i, j] = u.d[i] * v.d[j];
   return o;
 }
 
@@ -174,14 +274,15 @@ constexpr Mat<R, C> outer(const Vec<R> &u, const Vec<C> &v) {
 // Operators: plain wrappers, no rules. The engine inlines them.
 // ---------------------------------------------------------------------------
 
-template <std::size_t R, std::size_t C>
-constexpr Vec<R> operator*(const Mat<R, C> &W, const Vec<C> &x) {
-  return matvec(W, x);
+template <matrix_like W, vector_like X>
+constexpr Vec<extent_v<W, 0>> operator*(const W &w, const X &x) {
+  return matvec(w, x);
 }
 
-template <std::size_t R, std::size_t K, std::size_t C>
-constexpr Mat<R, C> operator*(const Mat<R, K> &A, const Mat<K, C> &B) {
-  return matmul(A, B);
+template <matrix_like A, matrix_like B>
+constexpr Mat<extent_v<A, 0>, extent_v<B, 1>> operator*(const A &a,
+                                                        const B &b) {
+  return matmul(a, b);
 }
 
 template <tensor T> constexpr T operator*(double s, const T &a) {
@@ -202,41 +303,50 @@ template <tensor T> constexpr T operator-(const T &a, const T &b) {
 // ---------------------------------------------------------------------------
 
 // Wᵀ g, without forming Wᵀ.
-template <std::size_t R, std::size_t C>
-constexpr Vec<C> matvec_transposed(const Mat<R, C> &W, const Vec<R> &g) {
-  Vec<C> o;
-  for (std::size_t i = 0; i < R; ++i)
-    for (std::size_t j = 0; j < C; ++j)
-      o.d[j] += W(i, j) * g.d[i];
+template <matrix_like W, vector_like G>
+constexpr Vec<extent_v<W, 1>> matvec_transposed(const W &w, const G &g) {
+  const std::size_t rows = w.extents().extent(0), cols = w.extents().extent(1);
+  detail::check(rows == g.extents().extent(0));
+  auto o = zeros<Vec<extent_v<W, 1>>>(cols);
+  for (std::size_t i = 0; i < rows; ++i)
+    for (std::size_t j = 0; j < cols; ++j)
+      o.d[j] += w[i, j] * g.d[i];
   return o;
 }
 
 // 1 where a > 0, else 0: relu's derivative (0 at the kink).
 template <tensor T> constexpr T relu_mask(const T &a) {
-  T o;
-  for (std::size_t i = 0; i < T::size; ++i)
+  T o = zeros_like(a);
+  for (std::size_t i = 0; i < a.d.size(); ++i)
     o.d[i] = a.d[i] > 0.0 ? 1.0 : 0.0;
   return o;
 }
 
 // σ'(a) from y = σ(a): y (1 - y).
 template <tensor T> constexpr T sigmoid_slope(const T &y) {
-  T o;
-  for (std::size_t i = 0; i < T::size; ++i)
+  T o = zeros_like(y);
+  for (std::size_t i = 0; i < y.d.size(); ++i)
     o.d[i] = y.d[i] * (1.0 - y.d[i]);
   return o;
 }
 
-template <tensor T> constexpr T filled(double v) {
-  T o;
-  for (std::size_t i = 0; i < T::size; ++i)
-    o.d[i] = v;
+// A tensor of a's shape with every element v.
+template <tensor T> constexpr T filled_like(const T &a, double v) {
+  T o = zeros_like(a);
+  for (double &x : o.d)
+    x = v;
   return o;
+}
+
+// A T with every element v, given its dynamic extents (or all of them).
+template <tensor T, class... I> constexpr T filled(double v, I... sizes) {
+  return filled_like(zeros<T>(sizes...), v);
 }
 
 // p -= lr * g
 template <tensor T> constexpr void sgd_update(T &p, const T &g, double lr) {
-  for (std::size_t i = 0; i < T::size; ++i)
+  detail::same_shape(p, g);
+  for (std::size_t i = 0; i < p.d.size(); ++i)
     p.d[i] -= lr * g.d[i];
 }
 

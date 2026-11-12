@@ -17,7 +17,6 @@
 #include "tensor.hpp"
 
 #include <cstddef>
-#include <type_traits>
 
 // z = a + b:  ā = z̄, b̄ = z̄
 template <> struct nn::ad::vjp<nn::ad::key(^^nn::add)> {
@@ -84,8 +83,7 @@ template <> struct nn::ad::vjp<nn::ad::key(^^nn::sigmoid)> {
 template <> struct nn::ad::vjp<nn::ad::key(^^nn::sum)> {
   template <std::size_t I>
   static constexpr auto pullback(double g, double, const auto &a) {
-    using T = std::remove_cvref_t<decltype(a)>;
-    return nn::filled<T>(g);
+    return nn::filled_like(a, g);
   }
 };
 
@@ -106,8 +104,7 @@ template <> struct nn::ad::vjp<nn::ad::key(^^nn::mse)> {
   template <std::size_t I>
   static constexpr auto pullback(double g, double, const auto &y,
                                  const auto &t) {
-    using T = std::remove_cvref_t<decltype(y)>;
-    const double k = 2.0 * g / static_cast<double>(T::size);
+    const double k = 2.0 * g / static_cast<double>(y.d.size());
     return nn::scale(I == 0 ? k : -k, nn::sub(y, t));
   }
 };

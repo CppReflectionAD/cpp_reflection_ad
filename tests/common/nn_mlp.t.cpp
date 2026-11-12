@@ -10,20 +10,15 @@
 #include <cstddef>
 #include <iostream>
 #include <span>
+#include <stdexcept>
 #include <tuple>
 #include <type_traits>
-#include <vector>
 
-// A tensor with heap storage, so with a non-trivial destructor. In nn, like
-// Vec, so that nn's operators are found for it, in user code and in the code
-// the engine generates.
-namespace nn {
-template <std::size_t N> struct HeapVec {
-  static constexpr std::size_t size = N;
-  std::vector<double> d = std::vector<double>(N);
-};
-static_assert(!std::is_trivially_destructible_v<HeapVec<3>>);
-} // namespace nn
+// Dynamic extents: heap storage, so a non-trivial destructor.
+using DVec = nn::Vec<nn::dyn>;
+using DMat = nn::Mat<nn::dyn, nn::dyn>;
+static_assert(!std::is_trivially_destructible_v<DVec>);
+static_assert(std::is_trivially_copyable_v<nn::Mat<2, 3>>);
 
 namespace model {
 
@@ -96,11 +91,19 @@ inline double predict(const Mat<H, 2> &W1, const Vec<H> &b1,
   return nn::sigmoid(W2 * dense_relu(W1, b1, x) + b2)[0];
 }
 
-// Two locals of the heap-backed type.
-inline double heap_loss(const nn::HeapVec<3> &a, const nn::HeapVec<3> &b,
-                        const nn::HeapVec<3> &t) {
-  nn::HeapVec<3> h = relu(a + b);
-  nn::HeapVec<3> y = sigmoid(hadamard(h, a));
+// The same layer with every size dynamic.
+inline double dense_mse_dyn(const DMat &W, const DVec &b, const DVec &x,
+                            const DVec &t) {
+  DVec y = W * x + b;
+  return mse(y, t);
+}
+
+// Static and dynamic extents mixed: W has dynamic rows and 3 columns, so W * x
+// is dynamic. Two locals of a heap-backed type.
+inline double mixed_loss(const nn::Mat<nn::dyn, 3> &W, const DVec &b,
+                         const nn::Vec<3> &x, const DVec &t) {
+  DVec h = relu(W * x + b);
+  DVec y = sigmoid(hadamard(h, b));
   return mse(y, t);
 }
 
@@ -159,18 +162,21 @@ constexpr auto xor_tape =
     nad::tape<^^model::xor_loss, nad::mask_of<0, 1, 2, 3>>;
 static_assert(count_live<nad::Kind::Call>(xor_tape) == 4 * 7);
 
-// add (inlined from operator+), relu, hadamard, sigmoid, mse.
-constexpr auto heap_tape = nad::tape<^^model::heap_loss, nad::mask_of<0, 1>>;
-static_assert(count_live<nad::Kind::Call>(heap_tape) == 5);
+// matvec, add, relu, hadamard, sigmoid, mse.
+constexpr auto mixed_tape =
+    nad::tape<^^model::mixed_loss, nad::mask_of<0, 1, 2>>;
+static_assert(count_live<nad::Kind::Call>(mixed_tape) == 6);
 
 // ---------------------------------------------------------------------------
 // Run time.
 // ---------------------------------------------------------------------------
 
-// Deterministic, roughly uniform in [-scale, scale].
-template <nn::tensor T> T filled_with(double seed, double scale) {
-  T t;
-  for (std::size_t i = 0; i < T::size; ++i)
+// Deterministic, roughly uniform in [-scale, scale]. `sizes` are T's dynamic
+// extents.
+template <nn::tensor T, class... I>
+T filled_with(double seed, double scale, I... sizes) {
+  T t = nn::zeros<T>(sizes...);
+  for (std::size_t i = 0; i < t.d.size(); ++i)
     t.d[i] = scale * std::sin(seed + 1.7 * static_cast<double>(i) +
                               0.3 * static_cast<double>(i * i));
   return t;
@@ -182,7 +188,7 @@ template <std::size_t I, class F, class Args, class G>
 void expect_matches_fd(F f, Args args, const G &g) {
   constexpr double h = 1e-6;
   auto &p = std::get<I>(args);
-  for (std::size_t k = 0; k < G::size; ++k) {
+  for (std::size_t k = 0; k < g.d.size(); ++k) {
     const double orig = p.d[k];
     p.d[k] = orig + h;
     const double up = std::apply(f, args);
@@ -259,19 +265,47 @@ void test_regularised() {
   expect_matches_fd<1>(model::regularised, args, gb);
 }
 
-void test_heap_storage() {
-  using V = nn::HeapVec<3>;
-  const auto a = filled_with<V>(0.9, 1.0);
-  const auto b = filled_with<V>(1.1, 0.5);
-  const auto t = filled_with<V>(1.3, 1.0);
+void test_dynamic_extents() {
+  {
+    const auto W = filled_with<DMat>(0.1, 1.0, 2, 3);
+    const auto b = filled_with<DVec>(0.2, 0.5, 2);
+    const auto x = filled_with<DVec>(0.3, 1.0, 3);
+    const auto t = filled_with<DVec>(0.4, 1.0, 2);
 
-  auto [L, g] = nad::value_and_grad<^^model::heap_loss, 0, 1>(a, b, t);
-  const auto &[ga, gb] = g;
+    auto [L, g] =
+        nad::value_and_grad<^^model::dense_mse_dyn, 0, 1, 2>(W, b, x, t);
+    const auto &[gW, gb, gx] = g;
 
-  EXPECT_EQUAL(L, model::heap_loss(a, b, t));
-  const auto args = std::tuple{a, b, t};
-  expect_matches_fd<0>(model::heap_loss, args, ga);
-  expect_matches_fd<1>(model::heap_loss, args, gb);
+    EXPECT_EQUAL(L, model::dense_mse_dyn(W, b, x, t));
+    EXPECT_TRUE(gW.extents() == W.extents());
+    const auto args = std::tuple{W, b, x, t};
+    expect_matches_fd<0>(model::dense_mse_dyn, args, gW);
+    expect_matches_fd<1>(model::dense_mse_dyn, args, gb);
+    expect_matches_fd<2>(model::dense_mse_dyn, args, gx);
+  }
+
+  const auto W = filled_with<nn::Mat<nn::dyn, 3>>(0.9, 1.0, 4);
+  const auto b = filled_with<DVec>(1.1, 0.5, 4);
+  const auto x = filled_with<Vec<3>>(1.2, 1.0);
+  const auto t = filled_with<DVec>(1.3, 1.0, 4);
+
+  auto [L, g] = nad::value_and_grad<^^model::mixed_loss, 0, 1, 2>(W, b, x, t);
+  const auto &[gW, gb, gx] = g;
+
+  EXPECT_EQUAL(L, model::mixed_loss(W, b, x, t));
+  const auto args = std::tuple{W, b, x, t};
+  expect_matches_fd<0>(model::mixed_loss, args, gW);
+  expect_matches_fd<1>(model::mixed_loss, args, gb);
+  expect_matches_fd<2>(model::mixed_loss, args, gx);
+
+  // Dynamic extents that disagree are a run-time error.
+  bool threw = false;
+  try {
+    (void)model::mixed_loss(W, filled_with<DVec>(1.1, 0.5, 5), x, t);
+  } catch (const std::invalid_argument &) {
+    threw = true;
+  }
+  EXPECT_TRUE(threw);
 }
 
 void test_scalar_semantics() {
@@ -330,7 +364,7 @@ int main() {
   test_dense_mse();
   test_mlp();
   test_regularised();
-  test_heap_storage();
+  test_dynamic_extents();
   test_scalar_semantics();
   test_xor_training();
   TEST_END;

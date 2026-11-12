@@ -42,7 +42,7 @@ or through CMake (target and test `nn_mlp`).
 
 | File | Contents |
 |---|---|
-| [tensor.hpp](tensor.hpp) | `Vec<N>`, `Mat<R,C>` (fixed size, `std::array` storage, trivially copyable). Primitives: `add sub hadamard scale relu sigmoid sum dot mse matvec matmul transpose outer`. Operators `* + -` as one-line wrappers. Helpers for rules and training (`relu_mask`, `sigmoid_slope`, `matvec_transposed`, `filled`, `sgd_update`). No reflection. |
+| [tensor.hpp](tensor.hpp) | `Tensor<Extents>`, row-major, shaped by a `std::extents` whose extents are each static or dynamic (`nn::dyn`); `Vec<N>` and `Mat<R,C>` are aliases (`Mat<nn::dyn, 3>`: dynamic rows, 3 columns). Fully static shapes use `std::array` storage (trivially copyable, usable as `constexpr` constants); any dynamic extent uses `std::vector`. `view()` is a `std::mdspan`. Static extents that disagree are a compile error, dynamic ones a `std::invalid_argument`. Primitives: `add sub hadamard scale relu sigmoid sum dot mse matvec matmul transpose outer`. Operators `* + -` as one-line wrappers. Helpers for rules and training (`zeros`, `zeros_like`, `relu_mask`, `sigmoid_slope`, `matvec_transposed`, `filled`, `filled_like`, `sgd_update`). No reflection. |
 | [autodiff.hpp](autodiff.hpp) | The engine, which knows no tensor type. It reflects a body into a DAG, then runs activity and liveness analysis. `value_and_grad` / `grad` generate the forward and reverse sweeps. `tape<Fn, Mask>` exposes the analysed DAG for inspection. |
 | [rules.hpp](rules.hpp) | One `nn::ad::vjp<key(^^nn::f)>` per primitive: the vector-Jacobian product (VJP) per argument. |
 | [nn.hpp](nn.hpp) | Includes all three. |
@@ -79,12 +79,14 @@ or through CMake (target and test `nn_mlp`).
    Dead nodes are never evaluated. Non-varied nodes get no reverse work. A rule
    is only asked for the adjoints of varied arguments.
 4. **Codegen:**
-   - Values and adjoints live in a `std::tuple` of the node types, with the
-     adjoints zero-initialized.
+   - Values and adjoints live in a `std::tuple` of the node types. Each
+     adjoint starts as `zeros_like(value)`, found by ADL (or `T{}`), so a
+     tensor with dynamic extents gets its shape.
    - Two expansion statements (`template for`) emit one statement per node.
      Forward: `std::get<i>(val) = [:fn:](args...)`. Reverse:
      `accumulate(adj[arg], Rule::pullback<k>(adj[i], val[i], args...))`.
-   - There is no run-time tape, graph object, virtual call or allocation.
+   - There is no run-time tape, graph object or virtual call. Tensors with
+     dynamic extents allocate their storage.
 
 A rule looks like this:
 
@@ -192,8 +194,8 @@ NVPTX and GCC without offload targets.
    The engine already treats primitives as opaque calls. Replace a primitive's
    body (and its rule's helpers) with cuBLAS / cuDNN calls on
    device-resident tensors. Reflection and codegen stay in host code, so this
-   works with either fork. It needs Linux plus CUDA, and a tensor type holding
-   a device pointer.
+   works with either fork. It needs Linux plus CUDA, and a tensor whose
+   storage is a device buffer; primitives can pass kernels its `mdspan`.
 2. **Custom kernels in separate `.cu` files** compiled by nvcc, called from
    primitives. Same as (1).
 3. **Device code generated from reflection** (generated fused kernels) needs

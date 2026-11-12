@@ -6,7 +6,7 @@
 // forward sweep (the primal) and a reverse sweep (the adjoints) as straight
 // C++: each node is one call or one built-in operator, unrolled with an
 // expansion statement. Nothing is recorded at run time; there is no tape
-// object, no virtual call, no allocation.
+// object and no virtual call, and the engine itself allocates nothing.
 //
 // What the engine reads in a body:
 //   - `T v = expr;` declarations and a single `return expr;` (straight-line
@@ -31,7 +31,9 @@
 //
 // The engine knows no tensor type. Values live in a std::tuple of the node
 // types (from the callees' return types and the parameter types: there is no
-// type_of(expression)), and adjoints are summed with `+`.
+// type_of(expression)), and adjoints are summed with `+`. An adjoint starts
+// as `zeros_like(value)`, found by ADL, or as `T{}` if there is none: a
+// tensor with dynamic extents needs its shape.
 //
 // Activity: only the parameters listed in `Wrt` are differentiated. A node is
 // "varied" if it depends on one of them; the reverse sweep visits only varied
@@ -419,6 +421,13 @@ template <class T, class G> constexpr void accumulate(T &acc, const G &g) {
   acc = acc + g;
 }
 
+template <class T> constexpr T zero_like(const T &v) {
+  if constexpr (requires { zeros_like(v); })
+    return zeros_like(v);
+  else
+    return T{};
+}
+
 template <Node N, class Vals, class In>
 constexpr void forward(Vals &val, const In &in) {
   auto &out = std::get<N.self>(val);
@@ -537,13 +546,20 @@ auto value_and_grad(const Args &...args) {
 
   const auto in = std::forward_as_tuple(args...);
   Vals val{};
-  Vals adj{}; // zero: value-initialized doubles and tensors
+  Vals adj{};
 
   template for (constexpr Node n : nodes) {
     if constexpr (n.live)
       detail::forward<n>(val, in);
   }
 
+  // An unused parameter has no value, so its zero comes from the argument.
+  template for (constexpr Node n : nodes) {
+    if constexpr (n.varied && n.kind == Kind::Input)
+      std::get<n.self>(adj) = detail::zero_like(std::get<n.input>(in));
+    else if constexpr (n.varied && n.live)
+      std::get<n.self>(adj) = detail::zero_like(std::get<n.self>(val));
+  }
   std::get<out>(adj) = 1;
   template for (constexpr Node n : rnodes) {
     if constexpr (n.live && n.varied)
