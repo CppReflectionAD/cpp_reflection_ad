@@ -1,0 +1,5 @@
+=== GCC ===
+tests/known_gap/gcc/sanitize_nonnull_static_string.cpp:25:17: error: non-constant condition for static assertion
+   25 | static_assert(p != nullptr, "a static string is never null");
+      |               ~~^~~~~~~~~~
+tests/known_gap/gcc/sanitize_nonnull_static_string.cpp:25:17: error: '(((const char*)(&"abc")) != 0)' is not a constant expression

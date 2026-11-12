@@ -67,6 +67,10 @@ endif()
 # The gap only shows with this UBSan check enabled.
 set_source_files_properties(known_gap/gcc/ubsan_reflection_repro.cpp
     PROPERTIES COMPILE_OPTIONS -fsanitize=float-divide-by-zero)
+# Nor this one (#262). On clang, where it passes, the flag checks that it still
+# does under the sanitizer.
+set_source_files_properties(known_gap/gcc/sanitize_nonnull_static_string.cpp
+    PROPERTIES COMPILE_OPTIONS -fsanitize=nonnull-attribute)
 
 foreach(_src IN LISTS _common)
     get_filename_component(_name "${_src}" NAME_WE)
