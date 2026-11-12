@@ -1,0 +1,4 @@
+=== Clang ===
+tests/known_gap/clang/extract_non_structural_by_value.cpp:28:15: error: static assertion failed due to requirement 'n != 2': Clang accepted extract<std::span<const int>> by value
+   28 | static_assert(n != 2, "Clang accepted extract<std::span<const int>> by value");
+      |               ^~~~~~
