@@ -89,6 +89,12 @@ or through CMake (target and test `nn_mlp`).
    is only asked for the adjoints of varied arguments. `value_and_grad`
    evaluates the live nodes; `grad` only the needed ones, so it skips the loss
    itself and anything only it depends on.
+
+   An integer value (`int k = x;`) is varied, since it depends on `x`, but
+   piecewise constant: no adjoint flows into it, so the gradient through it is
+   the pointwise derivative, 0. Its jumps (at each integer, or at 0 for
+   `bool`) aren't handled; the `Convert` node and its source and target types
+   stay on the tape for a discontinuity analysis to find.
 4. **Codegen:**
    - Values and adjoints live in a `std::tuple` of the node types. An
      adjoint's first contribution is assigned and later ones added, so no
@@ -205,9 +211,10 @@ rules, from the same probe trick `include/ad` uses. The plan:
     libraries such as Eigen therefore don't fit: they rely on proxies and
     implicit conversions. The library uses value-returning ops only.
     An explicit cast is peeled like an implicit conversion, so a
-    value-changing one (`static_cast<int>(x)`) is silently lost: Clang can't
-    tell the two apart (GCC has `is_cast`), and a conversion's target type
-    can't be queried.
+    value-changing one (`static_cast<int>(x)`) is silently lost: neither fork
+    can tell the two apart (GCC's `is_cast` is also true for the implicit
+    conversion in `int k = x;`), and a conversion's target type can't be
+    queried.
   - *No in-place ops in reflected code.* Write `T v = expr;`, not `+=`.
   - *No `type_of(expr)`.* See "Types" above.
   - *No expression splicing / code injection.* Codegen uses the existing

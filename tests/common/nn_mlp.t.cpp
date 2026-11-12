@@ -156,6 +156,14 @@ inline float cmath_float(float x) { return std::exp(x) * std::sin(x); }
 
 inline double just_exp(double x) { return std::exp(x); }
 
+// k is piecewise constant in x: d/dx (k x) = k wherever k doesn't jump.
+inline double truncated(double x) {
+  int k = x;
+  return k * x;
+}
+inline int to_int(double x) { return x; }
+inline double truncated_call(double x) { return to_int(x) * x; }
+
 } // namespace model
 
 // ---------------------------------------------------------------------------
@@ -245,6 +253,19 @@ struct doubled_exp {
       nad::probed({^^nad::cmath_probe::exp<double>});
   static constexpr auto d_y(auto y) { return 2 * y; }
 };
+
+// `int k = x` is a Convert node to int that stays varied (it depends on x),
+// but no adjoint flows into it.
+consteval bool integer_step_is_varied(std::span<const nad::Node> tape) {
+  for (const nad::Node &n : tape)
+    if (n.kind == nad::Kind::Convert && std::meta::is_integral_type(n.type))
+      return n.varied && n.live;
+  return false;
+}
+static_assert(
+    integer_step_is_varied(nad::tape<^^model::truncated, nad::mask_of<0>>));
+static_assert(integer_step_is_varied(
+    nad::tape<^^model::truncated_call, nad::mask_of<0>>));
 
 // ---------------------------------------------------------------------------
 // Run time.
@@ -448,6 +469,14 @@ void test_scalar_semantics() {
   auto [v2, g2] = nad::value_and_grad<^^model::qualified_constant, 0>(1.5);
   EXPECT_EQUAL(v2, 300.0);
   EXPECT_EQUAL(std::get<0>(g2), 200.0);
+
+  // No gradient through the truncation: d/dx (k x) = k = 1 at 1.5.
+  auto [v3, g3] = nad::value_and_grad<^^model::truncated, 0>(1.5);
+  EXPECT_EQUAL(v3, 1.5);
+  EXPECT_EQUAL(std::get<0>(g3), 1.0);
+  auto [v4, g4] = nad::value_and_grad<^^model::truncated_call, 0>(1.5);
+  EXPECT_EQUAL(v4, 1.5);
+  EXPECT_EQUAL(std::get<0>(g4), 1.0);
 }
 
 void test_cmath() {

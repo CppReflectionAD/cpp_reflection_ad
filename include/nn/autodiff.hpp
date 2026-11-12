@@ -46,7 +46,10 @@
 //
 // Activity: only the parameters listed in `Wrt` are differentiated. A node is
 // "varied" if it depends on one of them; the reverse sweep visits only varied
-// nodes and asks a rule only for the arguments that are varied. A node whose
+// nodes and asks a rule only for the arguments that are varied. An integer
+// value (`int k = x;`) is varied but piecewise constant: no adjoint flows into
+// it, so the gradient through it is the pointwise derivative 0, and its jumps
+// are left on the tape for a discontinuity analysis. A node whose
 // value never reaches the result is not evaluated at all, and grad() skips
 // the values the reverse sweep doesn't read (see `reads`).
 //
@@ -139,6 +142,7 @@ struct Node {
   bool live = false;              // its value reaches the result
   bool needed = false;            // the reverse sweep reads its value
   bool arg_varied[max_args] = {}; // per argument: varied
+  bool arg_diff[max_args] = {};   // varied, and not an integer (derivative 0)
 };
 
 namespace detail {
@@ -450,6 +454,8 @@ consteval void analyse(std::vector<Node> &ns, unsigned long long mask) {
       n.varied = (mask >> n.input) & 1ull;
     for (std::size_t i = 0; i < n.nargs; ++i) {
       n.arg_varied[i] = ns[n.arg[i]].varied;
+      n.arg_diff[i] =
+          n.arg_varied[i] && !m::is_integral_type(ns[n.arg[i]].type);
       n.varied = n.varied || n.arg_varied[i];
     }
   }
@@ -568,7 +574,7 @@ constexpr void forward(Vals &val, const In &in) {
 // dL/d(argument K) of a primitive call, from its rule.
 template <Node N, std::size_t K, class Vals>
 constexpr void pull(const Vals &val, Vals &adj, bool *seen) {
-  if constexpr (N.arg_varied[K]) {
+  if constexpr (N.arg_diff[K]) {
     using Rule = typename[:N.rule:];
     const auto &g = std::get<N.self>(adj);
     const auto &y = std::get<N.self>(val);
@@ -599,32 +605,34 @@ constexpr void backward(const Vals &val, Vals &adj, bool *seen) {
     }(std::make_index_sequence<N.nargs>{});
   } else if constexpr (N.kind == Kind::Output || N.kind == Kind::Convert) {
     using A = std::tuple_element_t<a0, Vals>;
-    accumulate<a0>(adj, seen, static_cast<A>(g));
+    if constexpr (N.arg_diff[0])
+      accumulate<a0>(adj, seen, static_cast<A>(g));
   } else if constexpr (N.kind == Kind::Neg) {
-    accumulate<a0>(adj, seen, -g);
+    if constexpr (N.arg_diff[0])
+      accumulate<a0>(adj, seen, -g);
   } else if constexpr (N.kind == Kind::Add || N.kind == Kind::Sub ||
                        N.kind == Kind::Mul || N.kind == Kind::Div) {
     const auto &a = std::get<a0>(val);
     const auto &b = std::get<a1>(val);
     if constexpr (N.kind == Kind::Add) {
-      if constexpr (N.arg_varied[0])
+      if constexpr (N.arg_diff[0])
         accumulate<a0>(adj, seen, g);
-      if constexpr (N.arg_varied[1])
+      if constexpr (N.arg_diff[1])
         accumulate<a1>(adj, seen, g);
     } else if constexpr (N.kind == Kind::Sub) {
-      if constexpr (N.arg_varied[0])
+      if constexpr (N.arg_diff[0])
         accumulate<a0>(adj, seen, g);
-      if constexpr (N.arg_varied[1])
+      if constexpr (N.arg_diff[1])
         accumulate<a1>(adj, seen, -g);
     } else if constexpr (N.kind == Kind::Mul) {
-      if constexpr (N.arg_varied[0])
+      if constexpr (N.arg_diff[0])
         accumulate<a0>(adj, seen, g * b);
-      if constexpr (N.arg_varied[1])
+      if constexpr (N.arg_diff[1])
         accumulate<a1>(adj, seen, g * a);
     } else {
-      if constexpr (N.arg_varied[0])
+      if constexpr (N.arg_diff[0])
         accumulate<a0>(adj, seen, g / b);
-      if constexpr (N.arg_varied[1])
+      if constexpr (N.arg_diff[1])
         accumulate<a1>(adj, seen, -(g * a / (b * b)));
     }
   }
