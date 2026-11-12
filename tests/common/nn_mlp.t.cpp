@@ -25,12 +25,13 @@ namespace model {
 using nn::Mat;
 using nn::Vec;
 
-// One affine layer and a loss. `W * x + b` calls nn::operator* and
-// nn::operator+, which have no rule: the engine inlines them and records the
-// primitives inside (matvec, add).
-inline double dense_mse(const Mat<2, 3> &W, const Vec<2> &b, const Vec<3> &x,
-                        const Vec<2> &t) {
-  Vec<2> y = W * x + b;
+// One affine layer and a loss, at any shape (nn::dyn included). `W * x + b`
+// calls nn::operator* and nn::operator+, which have no rule: the engine
+// inlines them and records the primitives inside (matvec, add).
+template <std::size_t O, std::size_t I>
+double dense_mse(const Mat<O, I> &W, const Vec<O> &b, const Vec<I> &x,
+                 const Vec<O> &t) {
+  Vec<O> y = W * x + b;
   return mse(y, t);
 }
 
@@ -44,11 +45,12 @@ Vec<O> dense_relu(const Mat<O, I> &W, const Vec<O> &b, const Vec<I> &x) {
 
 inline constexpr std::size_t H = 8; // hidden width
 
-inline double mlp_loss(const Mat<H, 2> &W1, const Vec<H> &b1,
-                       const Mat<1, H> &W2, const Vec<1> &b2, const Vec<2> &x,
-                       const Vec<1> &t) {
-  Vec<H> h = dense_relu(W1, b1, x);
-  Vec<1> y = sigmoid(W2 * h + b2);
+template <std::size_t In, std::size_t Hid, std::size_t Out>
+double mlp_loss(const Mat<Hid, In> &W1, const Vec<Hid> &b1,
+                const Mat<Out, Hid> &W2, const Vec<Out> &b2, const Vec<In> &x,
+                const Vec<Out> &t) {
+  Vec<Hid> h = dense_relu(W1, b1, x);
+  Vec<Out> y = sigmoid(W2 * h + b2);
   return mse(y, t);
 }
 
@@ -57,8 +59,9 @@ inline double mlp_loss(const Mat<H, 2> &W1, const Vec<H> &b1,
 // (dot(W, W)), and a local that does not reach the result.
 inline constexpr double weight_decay = 1e-2;
 
-inline double regularised(const Mat<2, 3> &W, const Vec<2> &b, const Vec<3> &x,
-                          const Vec<2> &t) {
+template <std::size_t O, std::size_t I>
+double regularised(const Mat<O, I> &W, const Vec<O> &b, const Vec<I> &x,
+                   const Vec<O> &t) {
   double data = dense_mse(W, b, x, t);
   double penalty = dot(W, W);
   [[maybe_unused]] double unused = sum(b); // dead: never evaluated
@@ -76,8 +79,9 @@ inline constexpr Vec<2> x11{{1.0, 1.0}};
 inline constexpr Vec<1> lo{{0.0}};
 inline constexpr Vec<1> hi{{1.0}};
 
-inline double xor_loss(const Mat<H, 2> &W1, const Vec<H> &b1,
-                       const Mat<1, H> &W2, const Vec<1> &b2) {
+template <std::size_t Hid>
+double xor_loss(const Mat<Hid, 2> &W1, const Vec<Hid> &b1,
+                const Mat<1, Hid> &W2, const Vec<1> &b2) {
   double l00 = mlp_loss(W1, b1, W2, b2, x00, lo);
   double l01 = mlp_loss(W1, b1, W2, b2, x01, hi);
   double l10 = mlp_loss(W1, b1, W2, b2, x10, hi);
@@ -86,22 +90,18 @@ inline double xor_loss(const Mat<H, 2> &W1, const Vec<H> &b1,
 }
 
 // Inference: ordinary C++, not reflected.
-inline double predict(const Mat<H, 2> &W1, const Vec<H> &b1,
-                      const Mat<1, H> &W2, const Vec<1> &b2, const Vec<2> &x) {
-  return nn::sigmoid(W2 * dense_relu(W1, b1, x) + b2)[0];
+template <std::size_t In, std::size_t Hid, std::size_t Out>
+Vec<Out> predict(const Mat<Hid, In> &W1, const Vec<Hid> &b1,
+                 const Mat<Out, Hid> &W2, const Vec<Out> &b2,
+                 const Vec<In> &x) {
+  return nn::sigmoid(W2 * dense_relu(W1, b1, x) + b2);
 }
 
-// The same layer with every size dynamic.
-inline double dense_mse_dyn(const DMat &W, const DVec &b, const DVec &x,
-                            const DVec &t) {
-  DVec y = W * x + b;
-  return mse(y, t);
-}
-
-// Static and dynamic extents mixed: W has dynamic rows and 3 columns, so W * x
+// Static and dynamic extents mixed: W has dynamic rows and I columns, so W * x
 // is dynamic. Two locals of a heap-backed type.
-inline double mixed_loss(const nn::Mat<nn::dyn, 3> &W, const DVec &b,
-                         const nn::Vec<3> &x, const DVec &t) {
+template <std::size_t I>
+double mixed_loss(const nn::Mat<nn::dyn, I> &W, const DVec &b,
+                  const nn::Vec<I> &x, const DVec &t) {
   DVec h = relu(W * x + b);
   DVec y = sigmoid(hadamard(h, b));
   return mse(y, t);
@@ -136,9 +136,12 @@ consteval std::size_t count_live(std::span<const nad::Node> tape,
   return n;
 }
 
+// The 2-H-1 MLP of the XOR test.
+constexpr auto mlp = ^^model::mlp_loss<2, model::H, 1>;
+
 // Seven primitive calls: matvec, add, relu, matvec, add, sigmoid, mse. The
 // operators and dense_relu were inlined, so none of them is a call node.
-constexpr auto mlp_all = nad::tape<^^model::mlp_loss, nad::mask_of<0, 1, 2, 3>>;
+constexpr auto mlp_all = nad::tape<mlp, nad::mask_of<0, 1, 2, 3>>;
 static_assert(count_live<nad::Kind::Call>(mlp_all) == 7);
 static_assert(count_live<nad::Kind::Call>(mlp_all, true) == 7);
 // The data (x, t) are inputs but not differentiated.
@@ -147,24 +150,25 @@ static_assert(!mlp_all[4].varied && !mlp_all[5].varied);
 
 // Differentiating the output layer only: the hidden layer's three calls are
 // not varied, so the reverse sweep skips them.
-constexpr auto mlp_out = nad::tape<^^model::mlp_loss, nad::mask_of<2, 3>>;
+constexpr auto mlp_out = nad::tape<mlp, nad::mask_of<2, 3>>;
 static_assert(count_live<nad::Kind::Call>(mlp_out, true) == 4);
 
 // dense_mse's matvec, add, mse, then dot; `sum(b)` is dead. (`double four =
 // 4` is a Convert node on Clang; GCC folds it to 4.0 before reflection sees
 // it.)
-constexpr auto reg = nad::tape<^^model::regularised, nad::mask_of<0, 1, 2>>;
+constexpr auto reg =
+    nad::tape<^^model::regularised<2, 3>, nad::mask_of<0, 1, 2>>;
 static_assert(count_live<nad::Kind::Call>(reg) == 4);
 static_assert(count_live<nad::Kind::Neg>(reg) == 1);
 
 // Four inlined copies of the MLP.
 constexpr auto xor_tape =
-    nad::tape<^^model::xor_loss, nad::mask_of<0, 1, 2, 3>>;
+    nad::tape<^^model::xor_loss<model::H>, nad::mask_of<0, 1, 2, 3>>;
 static_assert(count_live<nad::Kind::Call>(xor_tape) == 4 * 7);
 
 // matvec, add, relu, hadamard, sigmoid, mse.
 constexpr auto mixed_tape =
-    nad::tape<^^model::mixed_loss, nad::mask_of<0, 1, 2>>;
+    nad::tape<^^model::mixed_loss<3>, nad::mask_of<0, 1, 2>>;
 static_assert(count_live<nad::Kind::Call>(mixed_tape) == 6);
 
 // ---------------------------------------------------------------------------
@@ -210,14 +214,15 @@ void test_dense_mse() {
   const auto t = filled_with<Vec<2>>(0.4, 1.0);
 
   // Parameters and, for once, the input too (a saliency map).
-  auto [L, g] = nad::value_and_grad<^^model::dense_mse, 0, 1, 2>(W, b, x, t);
+  auto [L, g] =
+      nad::value_and_grad<^^model::dense_mse<2, 3>, 0, 1, 2>(W, b, x, t);
   const auto &[gW, gb, gx] = g;
 
   EXPECT_EQUAL(L, model::dense_mse(W, b, x, t));
   const auto args = std::tuple{W, b, x, t};
-  expect_matches_fd<0>(model::dense_mse, args, gW);
-  expect_matches_fd<1>(model::dense_mse, args, gb);
-  expect_matches_fd<2>(model::dense_mse, args, gx);
+  expect_matches_fd<0>(model::dense_mse<2, 3>, args, gW);
+  expect_matches_fd<1>(model::dense_mse<2, 3>, args, gb);
+  expect_matches_fd<2>(model::dense_mse<2, 3>, args, gx);
 
   // In closed form: dL/db = 2 (y - t) / 2.
   const Vec<2> y = W * x + b;
@@ -233,19 +238,19 @@ void test_mlp() {
   const auto x = filled_with<Vec<2>>(5.0, 1.0);
   const Vec<1> t{{1.0}};
 
-  auto [L, g] =
-      nad::value_and_grad<^^model::mlp_loss, 0, 1, 2, 3>(W1, b1, W2, b2, x, t);
+  auto [L, g] = nad::value_and_grad<mlp, 0, 1, 2, 3>(W1, b1, W2, b2, x, t);
   const auto &[gW1, gb1, gW2, gb2] = g;
 
-  EXPECT_EQUAL(L, model::mlp_loss(W1, b1, W2, b2, x, t));
+  constexpr auto f = model::mlp_loss<2, H, 1>;
+  EXPECT_EQUAL(L, f(W1, b1, W2, b2, x, t));
   const auto args = std::tuple{W1, b1, W2, b2, x, t};
-  expect_matches_fd<0>(model::mlp_loss, args, gW1);
-  expect_matches_fd<1>(model::mlp_loss, args, gb1);
-  expect_matches_fd<2>(model::mlp_loss, args, gW2);
-  expect_matches_fd<3>(model::mlp_loss, args, gb2);
+  expect_matches_fd<0>(f, args, gW1);
+  expect_matches_fd<1>(f, args, gb1);
+  expect_matches_fd<2>(f, args, gW2);
+  expect_matches_fd<3>(f, args, gb2);
 
   // Fewer parameters, same values for those asked.
-  auto [gW2_only] = nad::grad<^^model::mlp_loss, 2>(W1, b1, W2, b2, x, t);
+  auto [gW2_only] = nad::grad<mlp, 2>(W1, b1, W2, b2, x, t);
   for (std::size_t i = 0; i < H; ++i)
     EXPECT_EQUAL(gW2_only.d[i], gW2.d[i]);
 }
@@ -256,13 +261,15 @@ void test_regularised() {
   const auto x = filled_with<Vec<3>>(0.7, 1.0);
   const auto t = filled_with<Vec<2>>(0.8, 1.0);
 
-  auto [L, g] = nad::value_and_grad<^^model::regularised, 0, 1>(W, b, x, t);
+  auto [L, g] =
+      nad::value_and_grad<^^model::regularised<2, 3>, 0, 1>(W, b, x, t);
   const auto &[gW, gb] = g;
 
-  EXPECT_NEAR_ABS(L, model::regularised(W, b, x, t), 1e-15);
+  constexpr auto f = model::regularised<2, 3>;
+  EXPECT_NEAR_ABS(L, f(W, b, x, t), 1e-15);
   const auto args = std::tuple{W, b, x, t};
-  expect_matches_fd<0>(model::regularised, args, gW);
-  expect_matches_fd<1>(model::regularised, args, gb);
+  expect_matches_fd<0>(f, args, gW);
+  expect_matches_fd<1>(f, args, gb);
 }
 
 void test_dynamic_extents() {
@@ -272,16 +279,18 @@ void test_dynamic_extents() {
     const auto x = filled_with<DVec>(0.3, 1.0, 3);
     const auto t = filled_with<DVec>(0.4, 1.0, 2);
 
+    constexpr auto fn = model::dense_mse<nn::dyn, nn::dyn>;
     auto [L, g] =
-        nad::value_and_grad<^^model::dense_mse_dyn, 0, 1, 2>(W, b, x, t);
+        nad::value_and_grad<^^model::dense_mse<nn::dyn, nn::dyn>, 0, 1, 2>(
+            W, b, x, t);
     const auto &[gW, gb, gx] = g;
 
-    EXPECT_EQUAL(L, model::dense_mse_dyn(W, b, x, t));
+    EXPECT_EQUAL(L, fn(W, b, x, t));
     EXPECT_TRUE(gW.extents() == W.extents());
     const auto args = std::tuple{W, b, x, t};
-    expect_matches_fd<0>(model::dense_mse_dyn, args, gW);
-    expect_matches_fd<1>(model::dense_mse_dyn, args, gb);
-    expect_matches_fd<2>(model::dense_mse_dyn, args, gx);
+    expect_matches_fd<0>(fn, args, gW);
+    expect_matches_fd<1>(fn, args, gb);
+    expect_matches_fd<2>(fn, args, gx);
   }
 
   const auto W = filled_with<nn::Mat<nn::dyn, 3>>(0.9, 1.0, 4);
@@ -289,14 +298,16 @@ void test_dynamic_extents() {
   const auto x = filled_with<Vec<3>>(1.2, 1.0);
   const auto t = filled_with<DVec>(1.3, 1.0, 4);
 
-  auto [L, g] = nad::value_and_grad<^^model::mixed_loss, 0, 1, 2>(W, b, x, t);
+  auto [L, g] =
+      nad::value_and_grad<^^model::mixed_loss<3>, 0, 1, 2>(W, b, x, t);
   const auto &[gW, gb, gx] = g;
 
-  EXPECT_EQUAL(L, model::mixed_loss(W, b, x, t));
+  constexpr auto mixed = model::mixed_loss<3>;
+  EXPECT_EQUAL(L, mixed(W, b, x, t));
   const auto args = std::tuple{W, b, x, t};
-  expect_matches_fd<0>(model::mixed_loss, args, gW);
-  expect_matches_fd<1>(model::mixed_loss, args, gb);
-  expect_matches_fd<2>(model::mixed_loss, args, gx);
+  expect_matches_fd<0>(mixed, args, gW);
+  expect_matches_fd<1>(mixed, args, gb);
+  expect_matches_fd<2>(mixed, args, gx);
 
   // Dynamic extents that disagree are a run-time error.
   bool threw = false;
@@ -326,38 +337,39 @@ void test_xor_training() {
   auto b2 = Vec<1>{};
 
   // The batch gradient: four inlined MLPs sharing the parameters.
+  constexpr auto loss = model::xor_loss<H>;
   {
     auto [L, g] =
-        nad::value_and_grad<^^model::xor_loss, 0, 1, 2, 3>(W1, b1, W2, b2);
+        nad::value_and_grad<^^model::xor_loss<H>, 0, 1, 2, 3>(W1, b1, W2, b2);
     const auto &[gW1, gb1, gW2, gb2] = g;
-    EXPECT_EQUAL(L, model::xor_loss(W1, b1, W2, b2));
+    EXPECT_EQUAL(L, loss(W1, b1, W2, b2));
     const auto args = std::tuple{W1, b1, W2, b2};
-    expect_matches_fd<0>(model::xor_loss, args, gW1);
-    expect_matches_fd<1>(model::xor_loss, args, gb1);
-    expect_matches_fd<2>(model::xor_loss, args, gW2);
-    expect_matches_fd<3>(model::xor_loss, args, gb2);
+    expect_matches_fd<0>(loss, args, gW1);
+    expect_matches_fd<1>(loss, args, gb1);
+    expect_matches_fd<2>(loss, args, gW2);
+    expect_matches_fd<3>(loss, args, gb2);
   }
 
   // Full-batch gradient descent.
-  const double initial = model::xor_loss(W1, b1, W2, b2);
+  const double initial = loss(W1, b1, W2, b2);
   constexpr double lr = 2.0;
   for (int step = 0; step < 2000; ++step) {
     auto [gW1, gb1, gW2, gb2] =
-        nad::grad<^^model::xor_loss, 0, 1, 2, 3>(W1, b1, W2, b2);
+        nad::grad<^^model::xor_loss<H>, 0, 1, 2, 3>(W1, b1, W2, b2);
     nn::sgd_update(W1, gW1, lr);
     nn::sgd_update(b1, gb1, lr);
     nn::sgd_update(W2, gW2, lr);
     nn::sgd_update(b2, gb2, lr);
   }
-  const double final_loss = model::xor_loss(W1, b1, W2, b2);
+  const double final_loss = loss(W1, b1, W2, b2);
   std::cout << "XOR loss: " << initial << " -> " << final_loss << '\n';
 
   EXPECT_LESS_THAN(final_loss, 0.01);
   EXPECT_LESS_THAN(final_loss, initial / 10);
-  EXPECT_LESS_THAN(model::predict(W1, b1, W2, b2, model::x00), 0.5);
-  EXPECT_LESS_THAN(0.5, model::predict(W1, b1, W2, b2, model::x01));
-  EXPECT_LESS_THAN(0.5, model::predict(W1, b1, W2, b2, model::x10));
-  EXPECT_LESS_THAN(model::predict(W1, b1, W2, b2, model::x11), 0.5);
+  EXPECT_LESS_THAN(model::predict(W1, b1, W2, b2, model::x00)[0], 0.5);
+  EXPECT_LESS_THAN(0.5, model::predict(W1, b1, W2, b2, model::x01)[0]);
+  EXPECT_LESS_THAN(0.5, model::predict(W1, b1, W2, b2, model::x10)[0]);
+  EXPECT_LESS_THAN(model::predict(W1, b1, W2, b2, model::x11)[0], 0.5);
 }
 
 int main() {
