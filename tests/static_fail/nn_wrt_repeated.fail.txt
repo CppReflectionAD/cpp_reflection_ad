@@ -1,0 +1,10 @@
+=== Clang ===
+include/nn/autodiff.hpp:675:17: error: static assertion failed due to requirement 'all_distinct<0UL, 0UL>()': nn::ad: a Wrt index is listed twice
+  675 |   static_assert(all_distinct<Wrt...>(), "nn::ad: a Wrt index is listed twice");
+      |                 ^~~~~~~~~~~~~~~~~~~~~~
+
+=== GCC ===
+include/nn/autodiff.hpp:675:37: error: static assertion failed: nn::ad: a Wrt index is listed twice
+  675 |   static_assert(all_distinct<Wrt...>(), "nn::ad: a Wrt index is listed twice");
+      |                 ~~~~~~~~~~~~~~~~~~~~^~
+  • 'nn::ad::detail::all_distinct<0, 0>()' evaluates to false

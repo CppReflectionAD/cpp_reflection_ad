@@ -60,6 +60,7 @@
 
 #include <ad/meta.h>
 
+#include <array>
 #include <cstddef>
 #include <initializer_list>
 #include <meta>
@@ -649,6 +650,15 @@ auto gradient_of(Vals &adj, const bool *seen, const In &in) {
   return static_cast<T>(zero_like(std::get<W>(in)));
 }
 
+template <std::size_t... I> consteval bool all_distinct() {
+  const std::array<std::size_t, sizeof...(I)> v{I...};
+  for (std::size_t i = 0; i < v.size(); ++i)
+    for (std::size_t j = i + 1; j < v.size(); ++j)
+      if (v[i] == v[j])
+        return false;
+  return true;
+}
+
 // The sweep behind value_and_grad (Value) and grad: grad computes only the
 // values the reverse sweep reads.
 template <info Fn, bool Value, class Rules, std::size_t... Wrt, class... Args>
@@ -660,6 +670,9 @@ auto sweep(const Args &...args) {
                 "nn::ad: wrong number of arguments");
   static_assert(((Wrt < sizeof...(Args)) && ...),
                 "nn::ad: a Wrt index is not a parameter of Fn");
+  // Each gradient is moved out of its adjoint, so a repeated one would be
+  // empty.
+  static_assert(all_distinct<Wrt...>(), "nn::ad: a Wrt index is listed twice");
   // An adjoint has its node's type, so an integer one would truncate.
   static_assert(
       (!m::is_integral_type(m::remove_cvref(m::type_of(
