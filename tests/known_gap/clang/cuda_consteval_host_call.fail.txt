@@ -1,0 +1,16 @@
+=== Clang ===
+tests/known_gap/clang/cuda_consteval_host_call.cpp:30:5: error: reference to __host__ function 'host_only' in __host__ __device__ function
+   30 |     host_only();
+      |     ^
+build/clang-p2996/include/c++/v1/__vector/vector.h:573:13: error: reference to __host__ function '__throw_length_error' in __host__ __device__ function
+  573 |       this->__throw_length_error();
+      |             ^
+build/clang-p2996/include/c++/v1/__memory/allocator.h:102:12: error: reference to __host__ function '__throw_bad_array_new_length' in __host__ __device__ function
+  102 |       std::__throw_bad_array_new_length();
+      |            ^
+build/clang-p2996/include/c++/v1/__algorithm/unwrap_range.h:65:12: error: reference to __host__ function '<deduction guide for pair><std::meta::__range_of_infos::iterator<std::meta::__range_of_infos::front_parameter_of_fn, std::meta::__range_of_infos::next_parameter_of_fn, std::meta::__range_of_infos::map_identity_fn>, std::meta::__range_of_infos::iterator<std::meta::__range_of_infos::front_parameter_of_fn, std::meta::__range_of_infos::next_parameter_of_fn, std::meta::__range_of_infos::map_identity_fn>>' in __host__ __device__ function
+   65 |     return pair{std::__unwrap_iter(std::move(__first)), std::__unwrap_iter(std::move(__last))};
+      |            ^
+build/clang-p2996/include/c++/v1/__memory/construct_at.h:40:10: error: reference to __host__ function 'operator delete' in __host__ __device__ function
+   40 |   return ::new (static_cast<void*>(__location)) _Tp(std::forward<_Args>(__args)...);
+      |          ^
