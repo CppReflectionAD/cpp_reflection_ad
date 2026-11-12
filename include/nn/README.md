@@ -133,6 +133,10 @@ primitive has a hand-written VJP", which is the same design as PyTorch / JAX
   - *Casts are deferred*, so their target type is unknown. Expression-template
     libraries such as Eigen therefore don't fit: they rely on proxies and
     implicit conversions. The library uses value-returning ops only.
+    An explicit cast is peeled like an implicit conversion, so a
+    value-changing one (`static_cast<int>(x)`) is silently lost: Clang can't
+    tell the two apart (GCC has `is_cast`), and a conversion's target type
+    can't be queried.
   - *No in-place ops in reflected code.* Write `T v = expr;`, not `+=`.
   - *No `type_of(expr)`.* See "Types" above.
   - *No expression splicing / code injection.* Codegen uses the existing
@@ -181,9 +185,8 @@ GCC (a gap in its P2996 support, not in P4395):
 
 ## GPU: possible directions (not implemented; current builds are CPU-only)
 
-The current builds target macOS AArch64. The Clang fork is built with
-`LLVM_TARGETS_TO_BUILD=AArch64` (no NVPTX). GCC is configured for
-aarch64-apple-darwin without offload targets. macOS has no CUDA.
+This repo's builds have no GPU target: the Clang fork is built without
+NVPTX and GCC without offload targets.
 
 1. **Host-side reflection, library kernels (works with both compilers).**
    The engine already treats primitives as opaque calls. Replace a primitive's

@@ -124,6 +124,7 @@ template <class A, class B>
 using mul_t = decltype(std::declval<A>() * std::declval<B>());
 template <class A, class B>
 using div_t = decltype(std::declval<A>() / std::declval<B>());
+template <class A> using neg_t = decltype(-std::declval<A>());
 
 struct Ctx {
   std::vector<Node> nodes;
@@ -155,7 +156,8 @@ consteval info strip(info e) {
 
 consteval std::size_t lookup(const Ctx &c, std::string_view name) {
   for (std::size_t i = c.env_decl.size(); i-- > c.scope;)
-    if (m::identifier_of(c.env_decl[i]) == name)
+    if (m::has_identifier(c.env_decl[i]) &&
+        m::identifier_of(c.env_decl[i]) == name)
       return c.env_slot[i];
   return npos;
 }
@@ -252,7 +254,8 @@ consteval std::size_t lower(Ctx &c, info e) {
 
   if (m::is_id_expression(e)) {
     const info decl = m::declaration_of(e);
-    if (m::has_identifier(decl))
+    // Only a function's own names can be parameters or locals (not `k::t`).
+    if (m::has_identifier(decl) && m::is_function(m::parent_of(decl)))
       if (std::size_t s = lookup(c, m::identifier_of(decl)); s != npos)
         return s;
     // Not a parameter or local: a constant (e.g. a constexpr global), folded.
@@ -282,11 +285,14 @@ consteval std::size_t lower(Ctx &c, info e) {
       throw "nn::ad: built-in operator on a non-arithmetic value";
     if (op == m::operators::op_plus)
       return a;
-    if (op == m::operators::op_minus)
+    if (op == m::operators::op_minus) {
+      const info t = m::substitute(^^neg_t, {
+                                                c.nodes[a].type});
       return emit(c, Node{.kind = Kind::Neg,
-                          .type = c.nodes[a].type,
+                          .type = m::dealias(t),
                           .nargs = 1,
                           .arg = {a}});
+    }
     throw "nn::ad: unsupported unary operator";
   }
 
@@ -520,6 +526,8 @@ auto value_and_grad(const Args &...args) {
                 "differentiate, e.g. value_and_grad<^^f, 0>");
   static_assert(sizeof...(Args) == m::parameters_of(Fn).size(),
                 "nn::ad: wrong number of arguments");
+  static_assert(((Wrt < sizeof...(Args)) && ...),
+                "nn::ad: a Wrt index is not a parameter of Fn");
   constexpr unsigned long long mask = mask_of<Wrt...>;
   static constexpr auto nodes = tape<Fn, mask>;
   static constexpr auto rnodes =

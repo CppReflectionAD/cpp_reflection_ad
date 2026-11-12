@@ -104,6 +104,18 @@ inline double heap_loss(const nn::HeapVec<3> &a, const nn::HeapVec<3> &b,
   return mse(y, t);
 }
 
+// Negation promotes like arithmetic: -c is an int, not an unsigned char.
+inline double neg_promoted(double x, unsigned char c) { return -c * x; }
+
+// k::t is the constant, not the parameter t.
+namespace k {
+inline constexpr double t = 100;
+}
+inline double qualified_constant(double t) {
+  double u = t * 2.0;
+  return u * k::t;
+}
+
 } // namespace model
 
 // ---------------------------------------------------------------------------
@@ -262,6 +274,17 @@ void test_heap_storage() {
   expect_matches_fd<1>(model::heap_loss, args, gb);
 }
 
+void test_scalar_semantics() {
+  const unsigned char one = 1;
+  auto [v1, g1] = nad::value_and_grad<^^model::neg_promoted, 0>(2.0, one);
+  EXPECT_EQUAL(v1, -2.0);
+  EXPECT_EQUAL(std::get<0>(g1), -1.0);
+
+  auto [v2, g2] = nad::value_and_grad<^^model::qualified_constant, 0>(1.5);
+  EXPECT_EQUAL(v2, 300.0);
+  EXPECT_EQUAL(std::get<0>(g2), 200.0);
+}
+
 void test_xor_training() {
   auto W1 = filled_with<Mat<H, 2>>(1.0, 1.0);
   auto b1 = nn::filled<Vec<H>>(0.1);
@@ -308,6 +331,7 @@ int main() {
   test_mlp();
   test_regularised();
   test_heap_storage();
+  test_scalar_semantics();
   test_xor_training();
   TEST_END;
 }
