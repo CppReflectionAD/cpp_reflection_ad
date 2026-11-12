@@ -1,0 +1,10 @@
+=== Clang ===
+include/nn/autodiff.hpp:538:19: error: static assertion failed due to requirement '2UL < sizeof...(Args)': nn::ad: a Wrt index is not a parameter of Fn
+  538 |   static_assert(((Wrt < sizeof...(Args)) && ...),
+      |                   ^~~~~~~~~~~~~~~~~~~~~
+
+=== GCC ===
+include/nn/autodiff.hpp:538:23: error: static assertion failed: nn::ad: a Wrt index is not a parameter of Fn
+  538 |   static_assert(((Wrt < sizeof...(Args)) && ...),
+      |                  ~~~~~^~~~~~~~~~~~~~~~~~
+  • the comparison reduces to '(2 < 2)'

@@ -115,6 +115,17 @@ double mixed_elementwise(const Vec<N> &a, const DVec &b) {
   return dot(y, b) + mse(a, b);
 }
 
+// The primitives the MLPs don't use: matmul, outer, sub, scale, transpose,
+// sum. transpose(A) is not square, so a wrong transpose rule shows.
+template <std::size_t R, std::size_t C>
+double matrix_ops(const Mat<R, C> &A, const Mat<C, R> &B, const Vec<R> &u,
+                  const Vec<C> &v) {
+  Mat<R, R> Q = A * B - outer(u, u);
+  Mat<R, C> S = 0.5 * outer(u, v);
+  Mat<C, R> T = transpose(A);
+  return sum(Q) + dot(S, A) + dot(T, B);
+}
+
 // Negation promotes like arithmetic: -c is an int, not an unsigned char.
 inline double neg_promoted(double x, unsigned char c) { return -c * x; }
 
@@ -178,6 +189,11 @@ static_assert(count_live<nad::Kind::Call>(xor_tape) == 4 * 7);
 constexpr auto mixed_tape =
     nad::tape<^^model::mixed_loss<3>, nad::mask_of<0, 1, 2>>;
 static_assert(count_live<nad::Kind::Call>(mixed_tape) == 6);
+
+// matmul, outer, sub, outer, scale, transpose, sum, dot, dot.
+constexpr auto ops_tape =
+    nad::tape<^^model::matrix_ops<2, 3>, nad::mask_of<0, 1, 2, 3>>;
+static_assert(count_live<nad::Kind::Call>(ops_tape) == 9);
 
 // ---------------------------------------------------------------------------
 // Run time.
@@ -340,6 +356,25 @@ void test_dynamic_extents() {
   expect_matches_fd<1>(elementwise, eargs, gc);
 }
 
+void test_matrix_ops() {
+  const auto A = filled_with<Mat<2, 3>>(1.6, 1.0);
+  const auto B = filled_with<Mat<3, 2>>(1.7, 1.0);
+  const auto u = filled_with<Vec<2>>(1.8, 1.0);
+  const auto v = filled_with<Vec<3>>(1.9, 1.0);
+
+  auto [L, g] =
+      nad::value_and_grad<^^model::matrix_ops<2, 3>, 0, 1, 2, 3>(A, B, u, v);
+  const auto &[gA, gB, gu, gv] = g;
+
+  constexpr auto f = model::matrix_ops<2, 3>;
+  EXPECT_NEAR_ABS(L, f(A, B, u, v), 1e-14);
+  const auto args = std::tuple{A, B, u, v};
+  expect_matches_fd<0>(f, args, gA);
+  expect_matches_fd<1>(f, args, gB);
+  expect_matches_fd<2>(f, args, gu);
+  expect_matches_fd<3>(f, args, gv);
+}
+
 void test_scalar_semantics() {
   const unsigned char one = 1;
   auto [v1, g1] = nad::value_and_grad<^^model::neg_promoted, 0>(2.0, one);
@@ -398,6 +433,7 @@ int main() {
   test_mlp();
   test_regularised();
   test_dynamic_extents();
+  test_matrix_ops();
   test_scalar_semantics();
   test_xor_training();
   TEST_END;
