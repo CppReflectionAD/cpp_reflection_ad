@@ -340,20 +340,19 @@ consteval std::size_t lower(Ctx &c, info e);
 consteval std::size_t lower_body(Ctx &c, info body);
 consteval std::size_t inline_call(Ctx &c, info call);
 
-// Resolve a parameter or local of the body being lowered to its SSA slot by
-// identifier name. We match by name (unique within a straight-line body) rather
-// than reflection identity because parameters_of yields
-// ReflectionKind::Parameter while a decl_ref's declaration_of yields
-// ReflectionKind::Declaration — different kinds that never compare equal.
-// Last-wins so a local shadowing an outer name, or a name assigned to since,
-// resolves to the most recent binding. Only the body's own bindings count, so
-// an inlined helper can't reach a caller's local of the same name.
-//
-// A name match alone would let `::k` find a local `k`, so only a declaration
-// whose parent is a function is looked up at all. That leaves out globals,
-// static members, enumerators and variable templates, whatever they're called.
-// An unnamed parameter is bound, so that the arguments line up, but nothing can
-// name it.
+// Resolve a parameter or local of the body being lowered to its SSA slot. A
+// use's declaration_of is the variable itself, and a parameter is bound as its
+// variable. That tells apart the unnamed elements of an expanded pack, and a
+// local from a global or an outer local of the same name. Last-wins so a
+// variable assigned to since resolves to its most recent binding. Only the
+// body's own bindings count, so an inlined helper can't reach a caller's local.
+consteval std::optional<std::size_t> boundSlot(const Ctx &c, info var) {
+  for (std::size_t i = c.envDecl.size(); i-- > c.scopeBase;)
+    if (c.envDecl[i] == var)
+      return c.envSlot[i];
+  return std::nullopt;
+}
+
 consteval std::optional<std::size_t> boundSlot(const Ctx &c, info var) {
   if (!m::is_function(m::parent_of(var)))
     return std::nullopt;
@@ -741,7 +740,7 @@ consteval std::size_t inline_call(Ctx &c, info call) {
   // (b) open a lexical scope; bind callee parameters to the argument slots.
   std::size_t mark = c.envDecl.size();
   for (std::size_t i = 0; i < params.size(); ++i) {
-    c.envDecl.push_back(m::parameter_variable(params[i]));
+    c.envDecl.push_back(m::variable_of(params[i]));
     c.envSlot.push_back(argSlots[i]);
   }
 
@@ -769,7 +768,7 @@ template <info Fn> consteval std::vector<Node> build_nodes() {
   for (info p : m::parameters_of(Fn)) {
     std::size_t s = c.nodes.size();
     c.nodes.push_back(Node{OpKind::Input, s, 0, 0});
-    c.envDecl.push_back(m::parameter_variable(p));
+    c.envDecl.push_back(m::variable_of(params[i]));
     c.envSlot.push_back(s);
   }
 
