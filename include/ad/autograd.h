@@ -353,17 +353,6 @@ consteval std::optional<std::size_t> boundSlot(const Ctx &c, info var) {
   return std::nullopt;
 }
 
-consteval std::optional<std::size_t> boundSlot(const Ctx &c, info var) {
-  if (!m::is_function(m::parent_of(var)))
-    return std::nullopt;
-  const std::string_view name = m::identifier_of(var);
-  for (std::size_t i = c.envDecl.size(); i-- > c.scopeBase;)
-    if (m::has_identifier(c.envDecl[i]) &&
-        m::identifier_of(c.envDecl[i]) == name)
-      return c.envSlot[i];
-  return std::nullopt;
-}
-
 // As boundSlot, for a name that must have a slot. Erroring beats returning a
 // sentinel that would index the node array out of bounds.
 consteval std::size_t findSlot(const Ctx &c, info var) {
