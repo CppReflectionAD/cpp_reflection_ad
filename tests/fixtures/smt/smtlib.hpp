@@ -129,9 +129,8 @@ template <class I> consteval I label(I s) {
 
 } // namespace detail
 
-// Whether the compiler can reflect gotos and labels, which recognizing a
-// lowered loop needs.
-inline constexpr bool loops_supported = detail::has_jump_api<m::info>;
+// Both GCC and Clang support Option 2 loop reflection.
+inline constexpr bool loops_supported = true;
 
 namespace detail {
 
@@ -156,7 +155,8 @@ struct state {
   std::vector<std::pair<std::string, std::string>> env; // C++ name -> symbol
   std::string ret = "(_ bv0 32)";
   std::string returned = "false";
-  std::string broken = "false"; // out of the innermost loop by a break
+  std::string broken = "false";    // out of the innermost loop by a break
+  std::string continued = "false"; // to the end of the loop iteration
   std::vector<jump> pending;
   std::string path = "true"; // the condition under which this point is reached
 };
@@ -307,7 +307,7 @@ consteval std::string ite(context &c, const std::string &name,
 // Where the statements at this point don't run: after a return, a break, or a
 // goto past them.
 consteval std::string skip(const state &s) {
-  std::string r = or_(s.returned, s.broken);
+  std::string r = or_(or_(s.returned, s.broken), s.continued);
   for (const jump &j : s.pending)
     r = or_(r, j.taken);
   return r;
@@ -756,6 +756,7 @@ consteval state merge(context &c, const std::string &cond, const state &before,
   r.ret = ite(c, "ret", cond, a.ret, b.ret);
   r.returned = ite(c, "returned", cond, a.returned, b.returned, true);
   r.broken = ite(c, "broken", cond, a.broken, b.broken, true);
+  r.continued = ite(c, "continued", cond, a.continued, b.continued, true);
   r.pending.clear();
   for (const state *side : {&a, &b})
     for (const jump &j : side->pending)
@@ -767,23 +768,10 @@ consteval state merge(context &c, const std::string &cond, const state &before,
   return r;
 }
 
-// An if statement's branches. GCC reflects an if as a conditional, whose
-// missing else is a void conversion; clang has then/else accessors.
-consteval m::info then_of(m::info st) {
-#if defined(_GLIBCXX_META)
-  return m::true_expression_of(st);
-#else
-  return m::then_statement_of(st);
-#endif
-}
+// An if statement's branches.
+consteval m::info then_of(m::info st) { return m::then_statement_of(st); }
 
-consteval m::info else_of(m::info st) {
-#if defined(_GLIBCXX_META)
-  return m::false_expression_of(st);
-#else
-  return m::else_statement_of(st);
-#endif
-}
+consteval m::info else_of(m::info st) { return m::else_statement_of(st); }
 
 consteval bool is_subscript(m::info e);
 
@@ -821,6 +809,16 @@ consteval void assigned_in(m::info st, std::vector<std::string> &out) {
   if (m::is_if_statement(st)) {
     assigned_in(then_of(st), out);
     assigned_in(else_of(st), out);
+    return;
+  }
+  if (m::is_for_statement(st)) {
+    assigned_in(m::init_statement_of(st), out);
+    assigned_in(m::loop_body_of(st), out);
+    assigned_in(m::increment_of(st), out);
+    return;
+  }
+  if (m::is_while_statement(st) || m::is_do_statement(st)) {
+    assigned_in(m::loop_body_of(st), out);
     return;
   }
   if (m::is_expression_statement(st))
@@ -918,36 +916,9 @@ struct loop_match {
   m::info cond_if, exit;
 };
 
-// Whether K[P] is `if (c) goto B; else goto X;` and K[P + 1] is `X:`.
-consteval bool loop_condition_at(const std::vector<m::info> &k, std::size_t p,
-                                 m::info b) {
-  if (p + 1 >= k.size() || !m::is_if_statement(k[p]) || !is_label(k[p + 1]))
-    return false;
-  const m::info t = m::true_expression_of(k[p]);
-  const m::info f = m::false_expression_of(k[p]);
-  return is_goto(t) && is_goto(f) && label(t) == b &&
-         label(f) == label(k[p + 1]);
-}
-
-consteval loop_match match_loop(const std::vector<m::info> &k, std::size_t j) {
-  loop_match r;
-  if constexpr (!loops_supported)
-    return r;
-  const std::size_t n = k.size();
-  if (j + 1 < n && is_goto(k[j]) && is_label(k[j + 1])) {
-    const m::info cond_label = label(k[j]), body = label(k[j + 1]);
-    for (std::size_t p = j + 2; p + 2 < n; ++p)
-      if (is_label(k[p]) && label(k[p]) == cond_label &&
-          loop_condition_at(k, p + 1, body))
-        return {true, false, j + 2, p, p + 3, k[p + 1], label(k[p + 2])};
-  }
-  if (is_label(k[j])) {
-    const m::info body = label(k[j]);
-    for (std::size_t p = j + 1; p + 1 < n; ++p)
-      if (loop_condition_at(k, p, body))
-        return {true, true, j + 1, p, p + 2, k[p], label(k[p + 1])};
-  }
-  return r;
+consteval bool is_loop(m::info st) {
+  return m::is_while_statement(st) || m::is_do_statement(st) ||
+         m::is_for_statement(st);
 }
 
 consteval void stmt(context &c, state &s, m::info st);
@@ -955,32 +926,47 @@ consteval void stmt(context &c, state &s, m::info st);
 consteval void block(context &c, state &s, const std::vector<m::info> &k,
                      std::size_t begin, std::size_t end);
 
-consteval void run_loop(context &c, state &s, const std::vector<m::info> &k,
-                        const loop_match &lm) {
+consteval void run_loop(context &c, state &s, m::info st) {
   if (c.unroll <= 0)
     throw "smt: a loop needs an unrolling bound";
-  const m::info cond = m::condition_of(lm.cond_if);
+  const bool is_do = m::is_do_statement(st);
+  const bool is_for = m::is_for_statement(st);
+  if (is_for) {
+    if (const m::info init = m::init_statement_of(st); init != m::info{})
+      stmt(c, s, init);
+  }
+  const m::info cond = m::condition_of(st);
+  const m::info body = m::loop_body_of(st);
+  const m::info inc = is_for ? m::increment_of(st) : m::info{};
   const std::string outer_broken = s.broken;
+  const std::string outer_continued = s.continued;
   s.broken = "false";
-  c.loops.push_back({lm.exit});
+  s.continued = "false";
   for (int it = 0; it < c.unroll; ++it) {
-    const std::string go = lm.is_do && it == 0 ? std::string("true")
-                                               : as_bool(c, expr(c, cond, s));
+    const std::string go =
+        (is_do && it == 0)
+            ? std::string("true")
+            : (cond == m::info{} ? std::string("true")
+                                 : as_bool(c, expr(c, cond, s)));
     const std::string enter = and_(not_(skip(s)), go);
     state a = s;
-    a.returned = a.broken = "false";
+    a.returned = a.broken = a.continued = "false";
     a.pending.clear();
     a.path = and_(s.path, enter);
-    block(c, a, k, lm.body_begin, lm.body_end);
-    a.pending.clear(); // the condition is reached again
+    stmt(c, a, body);
+    a.continued = "false";
+    if (inc != m::info{})
+      stmt(c, a, inc);
+    a.pending.clear();
     s = merge(c, enter, s, a, s);
   }
   // Another iteration would have started nowhere.
-  const std::string more =
-      and_(and_(s.path, not_(skip(s))), as_bool(c, expr(c, cond, s)));
+  const std::string more = and_(
+      and_(s.path, not_(skip(s))),
+      cond == m::info{} ? std::string("true") : as_bool(c, expr(c, cond, s)));
   c.unwound.push_back(not_(more));
-  c.loops.pop_back();
   s.broken = outer_broken;
+  s.continued = outer_continued;
 }
 
 consteval void find_invariant(const std::vector<m::info> &k, std::size_t begin,
@@ -990,6 +976,8 @@ consteval void find_invariant(const std::vector<m::info> &k, std::size_t begin,
 // in a nested loop or an if's branches. The lambda's closure is a temporary,
 // which makes a loop's body a block of its own.
 consteval void find_invariant(m::info st, m::info &inv) {
+  if (st == m::info{} || is_loop(st))
+    return;
   if (m::is_compound_statement(st)) {
     const std::vector<m::info> k = m::statements_of(st);
     find_invariant(k, 0, k.size(), inv);
@@ -1007,21 +995,15 @@ consteval void find_invariant(m::info st, m::info &inv) {
 // The same among the statements K[BEGIN, END), skipping the loops in them.
 consteval void find_invariant(const std::vector<m::info> &k, std::size_t begin,
                               std::size_t end, m::info &inv) {
-  for (std::size_t j = begin; j < end;) {
-    const loop_match lm = match_loop(k, j);
-    if (lm.found && lm.end <= end)
-      j = lm.end;
-    else
-      find_invariant(k[j++], inv);
-  }
+  for (std::size_t j = begin; j < end; ++j)
+    find_invariant(k[j], inv);
 }
 
 // The invariant of a loop: the smt::invariant among the statements of its
 // body.
-consteval m::info loop_invariant(const std::vector<m::info> &k,
-                                 const loop_match &lm) {
+consteval m::info loop_invariant(m::info st) {
   m::info inv;
-  find_invariant(k, lm.body_begin, lm.body_end, inv);
+  find_invariant(m::loop_body_of(st), inv);
   if (inv == m::info{})
     throw "smt: verify needs an smt::invariant(...) in each loop";
   return inv;
@@ -1047,18 +1029,26 @@ consteval void hypothesis(context &c, const std::string &h) {
 // that is where the loop is reached (ENTER): a loop in an if's branch or in
 // another loop's body is reached only on some paths, and elsewhere the state
 // stays as it was.
-consteval void verify_loop(context &c, state &s, const std::vector<m::info> &k,
-                           const loop_match &lm) {
+consteval void verify_loop(context &c, state &s, m::info st) {
+  const bool is_do = m::is_do_statement(st);
+  const bool is_for = m::is_for_statement(st);
+  if (is_for) {
+    if (const m::info init = m::init_statement_of(st); init != m::info{})
+      stmt(c, s, init);
+  }
   const std::string enter = and_(s.path, not_(skip(s)));
   const state before = s;
-  const m::info inv = loop_invariant(k, lm);
-  const m::info cond = m::condition_of(lm.cond_if);
+  const m::info inv = loop_invariant(st);
+  const m::info cond = m::condition_of(st);
+  const m::info body = m::loop_body_of(st);
+  const m::info inc = is_for ? m::increment_of(st) : m::info{};
   require(c, "the loop invariant holds on entry",
           implies(enter, ghost(c, inv, s)));
 
   std::vector<std::string> names;
-  for (std::size_t j = lm.body_begin; j < lm.body_end; ++j)
-    assigned_in(k[j], names);
+  assigned_in(body, names);
+  if (inc != m::info{})
+    assigned_in(inc, names);
   // Each variable in scope that the loop assigns, once.
   const auto in_scope = s.env;
   for (const auto &e : in_scope)
@@ -1079,20 +1069,25 @@ consteval void verify_loop(context &c, state &s, const std::vector<m::info> &k,
 
   const state head = s;
   const std::string go =
-      lm.is_do ? std::string("true") : as_bool(c, expr(c, cond, head));
+      is_do ? std::string("true")
+            : (cond == m::info{} ? std::string("true")
+                                 : as_bool(c, expr(c, cond, head)));
   state a = head;
-  // Where the loop is entered, nothing has returned, broken out or jumped.
-  a.returned = a.broken = "false";
+  // Where the loop is entered, nothing has returned, broken out or continued.
+  a.returned = a.broken = a.continued = "false";
   a.pending.clear();
   a.path = and_(enter, go);
-  c.loops.push_back({lm.exit});
-  block(c, a, k, lm.body_begin, lm.body_end);
-  c.loops.pop_back();
+  stmt(c, a, body);
+  a.continued = "false";
+  if (inc != m::info{})
+    stmt(c, a, inc);
   a.pending.clear();
   const std::string done = or_(a.returned, a.broken);
   state after;
-  if (lm.is_do) {
-    const std::string again = as_bool(c, expr(c, cond, a));
+  if (is_do) {
+    const std::string again =
+        cond == m::info{} ? std::string("true")
+                          : as_bool(c, expr(c, cond, a));
     require(c, "the loop invariant is preserved",
             implies(and_(enter, and_(not_(done), again)), ghost(c, inv, a)));
     after = a;
@@ -1104,26 +1099,19 @@ consteval void verify_loop(context &c, state &s, const std::vector<m::info> &k,
     hypothesis(c, implies(enter, or_(not_(go), done)));
   }
   after.broken = before.broken;
+  after.continued = before.continued;
   after.pending = before.pending;
   s = merge(c, enter, before, after, before);
   s.broken = before.broken;
+  s.continued = before.continued;
   s.pending = before.pending;
   s.path = before.path;
 }
 
 consteval void block(context &c, state &s, const std::vector<m::info> &k,
                      std::size_t begin, std::size_t end) {
-  for (std::size_t j = begin; j < end;) {
-    const loop_match lm = match_loop(k, j);
-    if (lm.found && lm.end <= end) {
-      if (c.ints)
-        verify_loop(c, s, k, lm);
-      else
-        run_loop(c, s, k, lm);
-      j = lm.end;
-    } else
-      stmt(c, s, k[j++]);
-  }
+  for (std::size_t j = begin; j < end; ++j)
+    stmt(c, s, k[j]);
 }
 
 consteval void stmt(context &c, state &s, m::info st) {
@@ -1173,6 +1161,21 @@ consteval void stmt(context &c, state &s, m::info st) {
     b.path = and_(s.path, not_(cond));
     stmt(c, b, else_of(st));
     s = merge(c, cond, s, a, b);
+    return;
+  }
+  if (is_loop(st)) {
+    if (c.ints)
+      verify_loop(c, s, st);
+    else
+      run_loop(c, s, st);
+    return;
+  }
+  if (m::is_break_statement(st)) {
+    s.broken = taken(c, s, s.broken, "broken");
+    return;
+  }
+  if (m::is_continue_statement(st)) {
+    s.continued = taken(c, s, s.continued, "continued");
     return;
   }
   if (is_goto(st) && !c.loops.empty()) {
