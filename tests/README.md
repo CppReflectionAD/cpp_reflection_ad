@@ -8,7 +8,7 @@ says which compilers it runs on and what it checks:
 | `common/` | Tests that run under **both** compilers | it compiles and runs without a failed check |
 | `clang_only/` | Tests that need the clang fork | as above, on clang only |
 | `gcc_only/` | Tests that need the GCC fork | as above, on GCC only |
-| `static_fail/` | Code the engine must **reject** (a `static_assert` it should trip) | it fails to compile with the errors in its `.fail.txt` |
+| `static_fail/` | Code that must be **rejected**: by the engine (a `static_assert` it should trip), or by every compiler because the standard makes it ill-formed | it fails to compile with the errors in its `.fail.txt` |
 | `known_gap/clang/`, `known_gap/gcc/` | Code a compiler fork **should** accept but can't yet (a bug or missing feature in the fork), or accepts but should reject (then a `static_assert` fails only because it was accepted) | it fails to compile on that compiler with the errors in its `.fail.txt` |
 
 `fixtures/` is not a test directory. It holds headers that tests (and
@@ -45,7 +45,16 @@ first 10 lines instead: both `ctest` and `run_tests.py` then build and run it
 as an ordinary test on that compiler, so one file checks the same asserts on
 both.
 
-When a known gap is fixed, the `known_gap/` test starts failing (the file
-compiles). Move the file to `common/` or the right `*_only/` directory, turn
-its expected failures into checks, drop any `TEST-PASSES-ON` line, and delete
-its `.fail.txt`.
+When a known gap is fixed, the `known_gap/` test starts failing. What to do
+depends on the kind of gap:
+
+- **Valid code the compiler rejected:** the file now compiles. Move it to
+  `common/` or the right `*_only/` directory, turn its expected failures into
+  checks, drop any `TEST-PASSES-ON` line, and delete its `.fail.txt`.
+- **Ill-formed code the compiler accepted:** the compiler now rejects it, so
+  its errors no longer match the `.fail.txt`. Move the file to `static_fail/`,
+  delete the `static_assert` that tripped only because the code was accepted,
+  keep the comment naming the wording that makes the code ill-formed, and
+  regenerate the `.fail.txt` on both compilers. Don't delete it: it is the
+  check that another compiler, or a later pin, gets this case right. Any valid
+  code next to it goes to `common/`.
