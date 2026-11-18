@@ -1,0 +1,14 @@
+=== Clang ===
+tests/static_fail/extract_non_structural_by_value.cpp:30:23: error: constexpr variable 'n' must be initialized by a constant expression
+   30 | constexpr std::size_t n = std::meta::extract<std::span<const int>>(^^s).size();
+      |                       ^   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+=== GCC ===
+tests/static_fail/extract_non_structural_by_value.cpp:30:67: error: 'std::span<const int>' must be a cv-unqualified structural type that is not a reference type
+   30 | constexpr std::size_t n = std::meta::extract<std::span<const int>>(^^s).size();
+      |                           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~~~
+tests/static_fail/extract_non_structural_by_value.cpp:30:67: error: 'std::span<const int>' must be a cv-unqualified structural type that is not a reference type
+tests/static_fail/extract_non_structural_by_value.cpp:30:67: error: 'std::span<const int>' must be a cv-unqualified structural type that is not a reference type
+tests/static_fail/extract_non_structural_by_value.cpp:30:78: error: uncaught exception of type 'std::meta::exception'; 'what()': 'value cannot be extracted'
+   30 | constexpr std::size_t n = std::meta::extract<std::span<const int>>(^^s).size();
+      |                                                                              ^
