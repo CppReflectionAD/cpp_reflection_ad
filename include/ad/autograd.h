@@ -757,7 +757,7 @@ template <info Fn> consteval std::vector<Node> build_nodes() {
   for (info p : m::parameters_of(Fn)) {
     std::size_t s = c.nodes.size();
     c.nodes.push_back(Node{OpKind::Input, s, 0, 0});
-    c.envDecl.push_back(m::variable_of(params[i]));
+    c.envDecl.push_back(m::variable_of(p));
     c.envSlot.push_back(s);
   }
 
