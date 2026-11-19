@@ -1,0 +1,6 @@
+=== Clang ===
+tests/known_gap/clang/builtin_subscript_operator.cpp:39:15: error: static assertion failed due to requirement 'm::expression_operator_of(initializer(^^(...))) == m::op_square_brackets'
+   39 | static_assert(m::expression_operator_of(initializer(^^builtin)) ==
+      |               ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   40 |               m::op_square_brackets);
+      |               ~~~~~~~~~~~~~~~~~~~~~
