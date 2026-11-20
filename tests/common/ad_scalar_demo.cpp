@@ -36,6 +36,23 @@ constexpr double collide_sum(double x, double y) {
 constexpr double collide_sin(double x) { return myns::sin(x); } // f' = 2x
 inline double exp_neg(double x) { return std::exp(-x); }
 
+// Sum of squares, so that each partial derivative (2 * x_i) is different.
+template <typename... Ts> constexpr double fold_sum_sq(Ts... xs) {
+  return ((xs * xs) + ...);
+}
+constexpr auto f = ^^fold_sum_sq<double, double, double>;
+constexpr double x = 0.5;
+constexpr double y = 2.0;
+constexpr double z = -1.5;
+static_assert(ad::forward_derivative<f, 0>(x, y, z) == 2 * x);
+static_assert(ad::forward_derivative<f, 1>(x, y, z) == 2 * y);
+static_assert(ad::forward_derivative<f, 2>(x, y, z) == 2 * z);
+static_assert(ad::gradient_reverse<f>(x, y, z)[0] == 2 * x);
+static_assert(ad::gradient_reverse<f>(x, y, z)[1] == 2 * y);
+static_assert(ad::gradient_reverse<f>(x, y, z)[2] == 2 * z);
+static_assert(ad::partial_derivative<f, 1, 1>(x, y, z) == 2.0);
+static_assert(ad::partial_derivative<f, 0, 2>(x, y, z) == 0.0);
+
 int main() {
   // forward mode (one directional derivative)
   {

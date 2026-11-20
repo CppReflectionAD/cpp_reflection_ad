@@ -312,7 +312,7 @@ The binaries are in `build/cmake/<preset>/benchmarks/`.
 
 ## Formatting and linting
 
-[pre-commit](https://pre-commit.com) checks formatting (clang-format 21 for C++, ruff for Python), lint and whitespace. CI runs the same hooks. Python tooling is managed by [uv](https://docs.astral.sh/uv/):
+[pre-commit](https://pre-commit.com) checks formatting (clang-format 21 for C++, ruff for Python), lint, Python types (mypy) and whitespace. CI runs the same hooks. Python tooling is managed by [uv](https://docs.astral.sh/uv/):
 
 ```sh
 uv run pre-commit run --all-files   # check and fix everything
@@ -341,6 +341,8 @@ say why in a comment next to the suppression:
   lines to leave alone.
 - **ruff:** `# noqa: <code>` at the end of the line, e.g. `# noqa: E731`. The
   rule set is spelled out in `[tool.ruff.lint]` in `pyproject.toml`.
+- **mypy:** `# type: ignore[<code>]` at the end of the line. `[tool.mypy]` in
+  `pyproject.toml` holds its settings.
 - **The other pre-commit hooks:** an `exclude:` pattern on the hook in
   `.pre-commit-config.yaml`, as for the `.fail.txt` snapshots there.
 - **Compiler warnings:** tests and benchmarks build with `-Wall -Wextra` as

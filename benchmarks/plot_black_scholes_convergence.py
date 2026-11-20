@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import math
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 
 WIDTH = 1200
@@ -104,7 +105,7 @@ def add_panel(
     parts: list[str],
     x_values: list[float],
     x_tick_labels: list[str],
-    series: list[tuple[str, list[float], str, str | None, float]],
+    series: Sequence[tuple[str, list[float], str, str | None, float]],
     plot_left: float,
     plot_top: float,
     plot_width: float,
