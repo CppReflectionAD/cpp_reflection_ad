@@ -174,6 +174,34 @@ struct binding {
   std::string text;
 };
 
+// constexpr integer-to-decimal helper (libc++'s std::to_string isn't constexpr).
+consteval std::string to_dec(unsigned long long n) {
+  if (n == 0)
+    return "0";
+  std::string r;
+  while (n > 0) {
+    r.push_back(static_cast<char>('0' + (n % 10)));
+    n /= 10;
+  }
+  for (std::size_t i = 0, j = r.size() - 1; i < j; ++i, --j) {
+    char tmp = r[i];
+    r[i] = r[j];
+    r[j] = tmp;
+  }
+  return r;
+}
+
+consteval std::string to_dec(long long n) {
+  if (n < 0)
+    return "-" + to_dec(static_cast<unsigned long long>(-(n + 1)) + 1ULL);
+  return to_dec(static_cast<unsigned long long>(n));
+}
+
+consteval std::string to_dec(int n) { return to_dec(static_cast<long long>(n)); }
+consteval std::string to_dec(std::size_t n) {
+  return to_dec(static_cast<unsigned long long>(n));
+}
+
 // A pending jump within a loop's body: the label, and the condition under
 // which a goto to it has been taken.
 struct jump {
@@ -239,7 +267,7 @@ consteval std::string num(const context &c, int v) {
   if (!c.ints)
     return bv(v);
   const long long w = v;
-  return w < 0 ? "(- " + std::to_string(-w) + ")" : std::to_string(w);
+  return w < 0 ? "(- " + to_dec(-w) + ")" : to_dec(w);
 }
 
 consteval std::string zero(const context &c) {
@@ -311,7 +339,7 @@ consteval void set(state &s, const std::string &name, std::string symbol) {
 // let for define_fun, a define-fun for verify.
 consteval std::string bind(context &c, const std::string &name,
                            std::string text, const char *sort) {
-  std::string symbol = name + "!" + std::to_string(++c.fresh);
+  std::string symbol = name + "!" + to_dec(++c.fresh);
   if (c.ints)
     c.decls += "(define-fun " + symbol + " () " + sort + " " + text + ")\n";
   else
@@ -620,7 +648,7 @@ consteval term expr(context &c, m::info e, const state &s) {
       const std::string hi = as_num(c, expr(c, args[1], s));
       const m::info op = lambda_operator(f);
       const std::string k(m::identifier_of(m::parameters_of(op).front()));
-      const std::string bound = k + "!" + std::to_string(++c.fresh);
+      const std::string bound = k + "!" + to_dec(++c.fresh);
       state inner = s;
       inner.env.push_back({k, bound});
       const std::string body = as_bool(c, expr(c, returned_by(op), inner));
@@ -1047,7 +1075,7 @@ consteval std::string ghost(context &c, m::info e, const state &s) {
 }
 
 consteval void hypothesis(context &c, const std::string &h) {
-  c.decls += "(define-fun hyp!" + std::to_string(c.hyps.size()) + " () Bool " +
+  c.decls += "(define-fun hyp!" + to_dec(c.hyps.size()) + " () Bool " +
              h + ")\n";
   c.hyps.push_back(h);
 }
@@ -1084,7 +1112,7 @@ consteval void verify_loop(context &c, state &s, m::info st) {
   for (const auto &e : in_scope)
     for (const std::string &n : names)
       if (n == e.first) {
-        const std::string fresh = n + "!" + std::to_string(++c.fresh);
+        const std::string fresh = n + "!" + to_dec(++c.fresh);
         if (is_array(c, e.second)) {
           c.decls += "(declare-const " + fresh + " (Array Int Int))\n";
           c.arrays.push_back({fresh, length_of(c, e.second)});
@@ -1156,7 +1184,7 @@ consteval void stmt(context &c, state &s, m::info st) {
     m::info operand;
     try {
       operand = m::return_operand_of(st);
-    } catch (const std::meta::exception &) { // `return;`
+    } catch (...) { // `return;`
     }
     if (operand != m::info{}) {
       term v = expr(c, operand, s);
@@ -1397,7 +1425,7 @@ consteval std::string verify(m::info fn, m::info pre, m::info post) {
   for (const detail::obligation &o : c.obligations) {
     r += "(echo \"" + name + ": " + o.what + "\")\n(push)\n";
     for (std::size_t i = 0; i < o.hyps; ++i)
-      r += "(assert hyp!" + std::to_string(i) + ")\n";
+      r += "(assert hyp!" + detail::to_dec(i) + ")\n";
     r += "(assert (not " + o.claim + "))\n(check-sat)\n(pop)\n";
   }
   return r;
