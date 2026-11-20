@@ -127,6 +127,36 @@ template <class I> consteval I label(I s) {
     throw "smt: this compiler has no label_of";
 }
 
+template <class I>
+concept has_do_api = requires(I i) { is_do_statement(i); };
+
+template <class I>
+concept has_break_api = requires(I i) { is_break_statement(i); };
+
+template <class I>
+concept has_continue_api = requires(I i) { is_continue_statement(i); };
+
+template <class I> consteval bool is_do(I s) {
+  if constexpr (has_do_api<I>)
+    return is_do_statement(s);
+  else
+    return false;
+}
+
+template <class I> consteval bool is_break(I s) {
+  if constexpr (has_break_api<I>)
+    return is_break_statement(s);
+  else
+    return false;
+}
+
+template <class I> consteval bool is_continue(I s) {
+  if constexpr (has_continue_api<I>)
+    return is_continue_statement(s);
+  else
+    return false;
+}
+
 } // namespace detail
 
 // Both GCC and Clang support Option 2 loop reflection.
@@ -817,7 +847,7 @@ consteval void assigned_in(m::info st, std::vector<std::string> &out) {
     assigned_in(m::increment_of(st), out);
     return;
   }
-  if (m::is_while_statement(st) || m::is_do_statement(st)) {
+  if (m::is_while_statement(st) || is_do(st)) {
     assigned_in(m::loop_body_of(st), out);
     return;
   }
@@ -917,7 +947,7 @@ struct loop_match {
 };
 
 consteval bool is_loop(m::info st) {
-  return m::is_while_statement(st) || m::is_do_statement(st) ||
+  return m::is_while_statement(st) || is_do(st) ||
          m::is_for_statement(st);
 }
 
@@ -929,7 +959,7 @@ consteval void block(context &c, state &s, const std::vector<m::info> &k,
 consteval void run_loop(context &c, state &s, m::info st) {
   if (c.unroll <= 0)
     throw "smt: a loop needs an unrolling bound";
-  const bool is_do = m::is_do_statement(st);
+  const bool is_do_loop = is_do(st);
   const bool is_for = m::is_for_statement(st);
   if (is_for) {
     if (const m::info init = m::init_statement_of(st); init != m::info{})
@@ -944,7 +974,7 @@ consteval void run_loop(context &c, state &s, m::info st) {
   s.continued = "false";
   for (int it = 0; it < c.unroll; ++it) {
     const std::string go =
-        (is_do && it == 0)
+        (is_do_loop && it == 0)
             ? std::string("true")
             : (cond == m::info{} ? std::string("true")
                                  : as_bool(c, expr(c, cond, s)));
@@ -1030,7 +1060,7 @@ consteval void hypothesis(context &c, const std::string &h) {
 // another loop's body is reached only on some paths, and elsewhere the state
 // stays as it was.
 consteval void verify_loop(context &c, state &s, m::info st) {
-  const bool is_do = m::is_do_statement(st);
+  const bool is_do_loop = is_do(st);
   const bool is_for = m::is_for_statement(st);
   if (is_for) {
     if (const m::info init = m::init_statement_of(st); init != m::info{})
@@ -1069,7 +1099,7 @@ consteval void verify_loop(context &c, state &s, m::info st) {
 
   const state head = s;
   const std::string go =
-      is_do ? std::string("true")
+      is_do_loop ? std::string("true")
             : (cond == m::info{} ? std::string("true")
                                  : as_bool(c, expr(c, cond, head)));
   state a = head;
@@ -1084,7 +1114,7 @@ consteval void verify_loop(context &c, state &s, m::info st) {
   a.pending.clear();
   const std::string done = or_(a.returned, a.broken);
   state after;
-  if (is_do) {
+  if (is_do_loop) {
     const std::string again =
         cond == m::info{} ? std::string("true")
                           : as_bool(c, expr(c, cond, a));
@@ -1170,11 +1200,11 @@ consteval void stmt(context &c, state &s, m::info st) {
       run_loop(c, s, st);
     return;
   }
-  if (m::is_break_statement(st)) {
+  if (is_break(st)) {
     s.broken = taken(c, s, s.broken, "broken");
     return;
   }
-  if (m::is_continue_statement(st)) {
+  if (is_continue(st)) {
     s.continued = taken(c, s, s.continued, "continued");
     return;
   }
