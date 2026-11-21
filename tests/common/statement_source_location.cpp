@@ -3,9 +3,11 @@
 // constexpr variable or passed to a consteval function.
 //
 // GCC gave line 0 for every statement (#286), fixed in CppReflectionAD/gcc#45,
-// which has more checks in g++.dg/reflect/source_location_statement1.C. A block
-// still gives line 0 on GCC, which keeps only where a block ends, so it isn't
-// checked here. Columns differ between the compilers, so only lines are.
+// which has more checks in g++.dg/reflect/source_location_statement1.C, and
+// for an `if` or `switch` that declares a variable, which is in a scope of its
+// own on GCC, fixed in CppReflectionAD/gcc#45 and CppReflectionAD/gcc#47. A
+// block still gives line 0 on GCC, which keeps only where a block ends, so it
+// isn't checked here. Columns differ between the compilers, so only lines are.
 #include <ad/meta.h>
 
 #include <cstddef>
@@ -48,6 +50,18 @@ template <typename T> T g(T x) {
   return x;
 }
 
+inline int scoped(int x) {
+  if (int y = sink(x))
+    sink(y);
+  if (int y = sink(x); y > 1)
+    sink(y);
+  switch (int y = sink(x)) {
+  default:
+    sink(y);
+  }
+  return 0;
+}
+
 consteval info st(info fn, std::size_t k) {
   return m::statements_of(m::body_of(fn))[k];
 }
@@ -80,6 +94,10 @@ static_assert(offset(m::statements_of(st(^^f, 2))[2], ^^f) == 7,
 static_assert(at(^^g<int>, 0) == 1 && at(^^g<int>, 1) == 2,
               "statements of a template instantiation");
 
+static_assert(at(^^scoped, 0) == 1, "an `if` that declares a variable");
+static_assert(at(^^scoped, 1) == 3, "an `if` with an init-statement");
+static_assert(at(^^scoped, 2) == 5, "a `switch` that declares a variable");
+
 constexpr info stored = st(^^f, 10);
 static_assert(offset(stored, ^^f) == 22, "stored in a constexpr variable");
 
@@ -89,4 +107,4 @@ consteval int line_of(info r) {
 static_assert(line_of(st(^^f, 1)) == line_of(st(^^f, 0)) + 1,
               "passed to a consteval function");
 
-int main() { return f(0) + g(0); }
+int main() { return f(0) + g(0) + scoped(0); }
