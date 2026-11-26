@@ -70,6 +70,10 @@ set_source_files_properties(known_gap/gcc/ubsan_reflection_repro.cpp
 # GCC used to get this wrong only with these UBSan checks enabled (#262).
 set_source_files_properties(common/sanitize_nonnull_static_string.cpp
     PROPERTIES COMPILE_OPTIONS -fsanitize=nonnull-attribute,returns-nonnull-attribute)
+# GCC used to get this wrong only with debug markers, which -g turns on from
+# -O1 (#279); clang has no such option.
+set_source_files_properties(common/if_clause_statement.cpp
+    PROPERTIES COMPILE_OPTIONS $<$<CXX_COMPILER_ID:GNU>:-gstatement-frontiers>)
 
 foreach(_src IN LISTS _common)
     get_filename_component(_name "${_src}" NAME_WE)
