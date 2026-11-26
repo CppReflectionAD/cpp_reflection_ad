@@ -1,5 +1,5 @@
-// Known GCC gap: UBSan instrumentation leaks into the expression trees seen by
-// std::meta. From #92's minimal reproducer.
+// Known GCC gap (#301): UBSan instrumentation leaks into the expression trees
+// seen by std::meta. From #92's minimal reproducer.
 //
 // Without -fsanitize=float-divide-by-zero this compiles. With it, the right
 // operand of `1.0 / x` is no longer reported as a variable reference, so the
