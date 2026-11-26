@@ -90,10 +90,9 @@ printed on both. What's left is about tree shape:
 The list that stood here was right on 2026-11-04 and has gone stale: most of
 its gaps are fixed in the GCC fork, and more have been found since. Every
 difference in shape between the forks, open or fixed, is now listed with its
-fix in `notes/gcc-clang-ast-differences.md` in CppReflectionAD/p4395
-([p4395#9](https://github.com/CppReflectionAD/p4395/pull/9)), for #294.
-p4395 is private, so that link works only for members of the CppReflectionAD
-org. The probes here for those gaps are p03 (#250), p04 (#245), p13 (#246),
+fix in [`notes/gcc-clang-ast-differences.md`](https://github.com/CppReflectionAD/p4395/blob/main/notes/gcc-clang-ast-differences.md)
+in CppReflectionAD/p4395, for #294. p4395 is private, so that link works only
+for members of the CppReflectionAD org. The probes here for those gaps are p03 (#250), p04 (#245), p13 (#246),
 p21 (#237), p22 (#249), p23 (#248) and p24 (#247).
 
 `tests/known_gap/gcc/ubsan_reflection_repro.cpp` is also still a gap at this
