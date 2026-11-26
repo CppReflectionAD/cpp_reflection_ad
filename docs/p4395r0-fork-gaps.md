@@ -87,26 +87,13 @@ printed on both. What's left is about tree shape:
 
 ## Open gaps
 
-All of these are CompilerGap issues.
-
-- #237: a null statement is an expression statement on neither fork (p21). The
-  fix is gcc#24, gcc-darwin-arm64#21 and clang-p4395#9, in integration PR #244.
-- #245: a nested block that declares nothing isn't a statement on GCC (p04).
-- #246: GCC lowers a compound assignment (p13). #213 and #218 cover the AD
-  engine's support for assignments, not this reflection shape.
-- #247: on GCC, a loop is a compound statement of lowered pieces (p24).
-- #248: on GCC, a class-type argument passed by value has no operands (p23). The
-  engine can't differentiate through such an operator on GCC.
-- #249: an operand naming a reference is a conversion on GCC and an
-  id-expression on clang (p22).
-- #250: on GCC, what's left of an `if constexpr` depends on the rest of the body
-  (p03). A body that is a taken `if constexpr` differentiates on GCC and gets
-  "unsupported statement" on clang.
-- #232: equality and mangling of expression reflections differ between the
-  forks. P4395R0 doesn't say which is right.
-- #242: on GCC, `constant_of` of an id-expression throws, where clang gives the
-  named variable's constant. It's outside the paper's API. The fix is gcc#23 and
-  gcc-darwin-arm64#20, also in #244.
+The list that stood here was right on 2026-11-04 and has gone stale: most of
+its gaps are fixed in the GCC fork, and more have been found since. Every
+difference in shape between the forks, open or fixed, is now listed with its
+fix in `notes/gcc-clang-ast-differences.md` in CppReflectionAD/p4395
+([p4395#9](https://github.com/CppReflectionAD/p4395/pull/9)), for #294. The
+probes here for those gaps are p03 (#250), p04 (#245), p13 (#246), p21 (#237),
+p22 (#249), p23 (#248) and p24 (#247).
 
 `tests/known_gap/gcc/ubsan_reflection_repro.cpp` is also still a gap at this
 pin.
