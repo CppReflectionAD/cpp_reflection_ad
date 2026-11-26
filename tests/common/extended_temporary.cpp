@@ -1,7 +1,8 @@
 // A declaration that extends the lifetime of a temporary is one declaration
 // statement on both compilers ([class.temporary]), whether or not the
 // temporary's type has a destructor, and so is one whose initializer is a
-// std::initializer_list. A label before it labels the declaration.
+// std::initializer_list. A label before it labels the declaration, and the
+// init-statement of a `for` that declares one is the declaration.
 //
 // GCC used to give the variable that holds the temporary, which it declares
 // ahead of the declaration, as a statement of its own before it (#293). Fixed
@@ -72,6 +73,16 @@ inline int nested(int x) {
   }
   return x;
 }
+inline int for_init(int x) {
+  for (const T &r = T{}; x; --x)
+    sink(r.v);
+  return 0;
+}
+inline int for_init_trivial(int x) {
+  for (const U &r = U{}; x; --x)
+    sink(r.v);
+  return 0;
+}
 template <typename X> X in_template(X x) {
   const T &r = T{};
   return x + r.v;
@@ -118,8 +129,17 @@ static_assert(parts(st(^^nested, 0)) == 2 &&
                   m::is_expression_statement(part(st(^^nested, 0), 1)),
               "in a nested block");
 
+// The init-statement of a `for` that declares such a reference.
+consteval bool declares_init(info fn) {
+  info init = m::init_statement_of(st(fn, 0));
+  return m::is_declaration_statement(init) &&
+         m::initializers_of(init).size() == 1;
+}
+static_assert(declares_init(^^for_init), "a for, with a destructor");
+static_assert(declares_init(^^for_init_trivial), "a for, with none");
+
 int main() {
   return with_dtor(0) + trivial(0) + scalar(0) + rvalue(0) + static_local(0) +
          init_list(0) + aggregate(0) + conditional(0) + two(0) + labeled(0) +
-         nested(0) + in_template(0) - 18;
+         nested(0) + for_init(0) + for_init_trivial(0) + in_template(0) - 18;
 }
