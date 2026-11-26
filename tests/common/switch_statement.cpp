@@ -5,11 +5,11 @@
 // CppReflectionAD/gcc#37.
 //
 // Not checked here: GCC gives the condition as an expression, and clang as an
-// expression statement (#288); GCC gives a `case` label and the statement it
-// labels as two statements of the body, and clang as one (#287); and a
-// `switch` that declares a variable is still a compound statement around it on
-// GCC (#278). The engine still rejects any `switch` in a body it
-// differentiates.
+// expression statement (#288). A `case` label and the statement it labels are
+// one statement on both compilers since CppReflectionAD/gcc#48 (#287,
+// labeled_statement.cpp), and a `switch` that declares a variable is the
+// `switch` since CppReflectionAD/gcc#47 (#278, switch_condition_scope.cpp).
+// The engine still rejects any `switch` in a body it differentiates.
 #include <ad/meta.h>
 
 #include <cstddef>

@@ -5,7 +5,8 @@
 // GCC used to give the scope around such an `if` as a compound statement of
 // the declarations and the `if` (#278). Fixed for `if` in
 // CppReflectionAD/gcc#41, which has more checks in
-// g++.dg/reflect/if_cond_scope1.C; a `switch` is still wrapped on GCC.
+// g++.dg/reflect/if_cond_scope1.C, and for `switch` in CppReflectionAD/gcc#47
+// (switch_condition_scope.cpp).
 //
 // The engine still rejects any `if` in a body it differentiates.
 #include <ad/meta.h>
