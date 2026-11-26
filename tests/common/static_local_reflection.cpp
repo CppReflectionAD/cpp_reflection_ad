@@ -7,6 +7,11 @@
 // CppReflectionAD/gcc#19.
 // A constant initializer was never split; it is a control. The fork has the
 // same checks in g++.dg/reflect/static_local_init1.C.
+//
+// A constant-initialized static local with a destructor, s_const_dtor, had
+// the guard too, as a second statement that only registers the destructor
+// (#298). Fixed in CppReflectionAD/gcc#51; the fork's checks are in
+// g++.dg/reflect/static_local_init3.C.
 #include <ad/meta.h>
 
 #include <cstddef>
@@ -28,9 +33,18 @@ struct D {
 struct T {
   double v;
 };
+struct E {
+  constexpr E(double x) : v(x) {}
+  ~E() { destroyed(v); }
+  double v;
+};
 
 double s_const(double) {
   static C b(1.0);
+  return b.v;
+}
+double s_const_dtor(double) {
+  static E b(1.0);
   return b.v;
 }
 double s_scalar(double x) {
@@ -93,6 +107,8 @@ consteval bool constructed_from(m::info fn, std::size_t n) {
 }
 
 static_assert(one_initialized_declaration(^^s_const));
+static_assert(one_initialized_declaration(^^s_const_dtor),
+              "`static E b(1.0);` with a destructor is not one declaration");
 static_assert(one_initialized_declaration(^^s_scalar),
               "`static double b = x;` is not one declaration with an "
               "initializer");
