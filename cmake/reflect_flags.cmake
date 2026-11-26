@@ -50,8 +50,8 @@ if(REFLECTION_AD_SANITIZE)
     )
     if(_is_gcc)
         # GCC's UBSan instrumentation leaks into the expression trees that
-        # std::meta sees (tests/known_gap/gcc/ubsan_reflection_repro.cpp), and
-        # each of these checks on its own breaks some tests' static_asserts.
+        # std::meta sees (#301, tests/known_gap/gcc/ubsan_reflection_repro.cpp),
+        # and each of these checks on its own breaks some tests' static_asserts.
         # Drop this once that known gap is fixed.
         list(APPEND _sanitize_flags
             -fno-sanitize=shift,integer-divide-by-zero,signed-integer-overflow,null,alignment,vptr)
