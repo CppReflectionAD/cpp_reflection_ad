@@ -18,22 +18,22 @@ enum class ExpressionKind {
   Operator
 };
 
+template<ExpressionKind k>
+struct ExpressionKindToClass {
+  using type = NoType;
+};
+
+template<ExpressionKind k>
+using ExpressionKindToClass_t = typename ExpressionKindToClass<k>::type;
+
 struct Expression : public ASTItem {
   ExpressionKind kind;
 
   constexpr Expression(ExpressionKind kind) : ASTItem(ASTKind::Expression), kind(kind) {}
 
-#define DECL_IS(name) \
-  constexpr bool is ## name() { \
-    return ExpressionKind:: name == kind; \
+  constexpr bool is(ExpressionKind k) const {
+    return k == kind;
   }
-
-  DECL_IS(Literal)
-  DECL_IS(Id)
-  DECL_IS(FunctionCall)
-  DECL_IS(Operator)
-
-#undef DECL_IS
 
   template<typename Walker>
   constexpr void walk(Walker* walker) {
@@ -46,11 +46,6 @@ struct Expression : public ASTItem {
 
   constexpr Expression* clone() override = 0;
 };
-
-#define DECL_BODY(name) \
-static constexpr name* cast(Expression* expr) { \
-  return static_cast<name*>(expr); \
-}
 
 consteval Expression* expressionFromInfo(info expr);
 constexpr std::vector<Expression*> cloneExpressionVec(std::vector<Expression*> const& vec);
@@ -77,12 +72,15 @@ struct LiteralExpression : public Expression {
 
   consteval LiteralExpression(info expr) : LiteralExpression(m::display_string_of(m::constant_of(expr))) {}
 
-  DECL_BODY(LiteralExpression)
+  static constexpr LiteralExpression* cast(Expression* expr) {
+    return static_cast<LiteralExpression*>(expr);
+  }
 
   constexpr LiteralExpression* clone() override {
     return new LiteralExpression(literal);
   }
 };
+template <> struct ExpressionKindToClass<ExpressionKind::Literal> { using type = LiteralExpression; };
 
 struct IdExpression : public Expression {
 
@@ -92,12 +90,15 @@ struct IdExpression : public Expression {
 
   consteval IdExpression(info expr) : IdExpression(m::identifier_of(m::declaration_of(expr))) {}
 
-  DECL_BODY(IdExpression)
+  static constexpr IdExpression* cast(Expression* expr) {
+    return static_cast<IdExpression*>(expr);
+  }
 
   constexpr IdExpression* clone() override {
     return new IdExpression(id);
   }
 };
+template <> struct ExpressionKindToClass<ExpressionKind::Id> { using type = IdExpression; };
 
 struct OperatorExpression : public Expression {
 
@@ -121,7 +122,9 @@ struct OperatorExpression : public Expression {
     }
   }
 
-  DECL_BODY(OperatorExpression)
+  static constexpr OperatorExpression* cast(Expression* expr) {
+    return static_cast<OperatorExpression*>(expr);
+  }
 
   template<typename Walker>
   constexpr void walk(Walker* walker) {
@@ -134,6 +137,7 @@ struct OperatorExpression : public Expression {
     return new OperatorExpression(op, cloneExpressionVec(operands));
   }
 };
+template <> struct ExpressionKindToClass<ExpressionKind::Operator> { using type = OperatorExpression; };
 
 struct FunctionCallExpression : public Expression {
 
@@ -157,7 +161,9 @@ struct FunctionCallExpression : public Expression {
     }
   }
 
-  DECL_BODY(FunctionCallExpression)
+  static constexpr FunctionCallExpression* cast(Expression* expr) {
+    return static_cast<FunctionCallExpression*>(expr);
+  }
 
   template<typename Walker>
   constexpr void walk(Walker* walker) {
@@ -170,6 +176,7 @@ struct FunctionCallExpression : public Expression {
     return new FunctionCallExpression(func_name, cloneExpressionVec(operands));
   }
 };
+template <> struct ExpressionKindToClass<ExpressionKind::FunctionCall> { using type = FunctionCallExpression; };
 
 consteval Expression* expressionFromInfo(info e) {
   info expr = ad::detail::stripCasts(e); // TODO: Handle casts.
@@ -207,23 +214,17 @@ constexpr void freeExpression(Expression*& expr) {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdelete-non-abstract-non-virtual-dtor"
 
-  if (expr->isOperator()) {
-    delete OperatorExpression::cast(expr);
-  }
-  else if (expr->isLiteral()) {
-    delete LiteralExpression::cast(expr);
-  }
-  else if (expr->isFunctionCall()) {
-    delete FunctionCallExpression::cast(expr);
-  }
-  else if (expr->isId()) {
-    delete IdExpression::cast(expr);
-  }
-  else {
-    throw "Unknown expression";
+  constexpr static auto enumerators = std::define_static_array(enumerators_of(^^ExpressionKind));
+  template for (constexpr auto enumerator : enumerators) {
+    if (nullptr != expr && expr->is([:enumerator:])) {
+      delete ExpressionKindToClass_t<([:enumerator:])>::cast(expr);
+      expr = nullptr;
+      return;
+    }
   }
 
-  expr = nullptr;
+  throw "Unknown expression";
+
 #pragma GCC diagnostic pop
 }
 
@@ -250,6 +251,4 @@ constexpr Wrap operator+(Wrap arg1, Wrap arg2) {
 constexpr Wrap operator*(Wrap arg1, Wrap arg2) {
   return {new OperatorExpression(m::operators::op_star, {arg1.wrap, arg2.wrap})};
 }
-
-#undef DECL_BODY
 }

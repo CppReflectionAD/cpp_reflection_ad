@@ -9,6 +9,7 @@
 #include "expressions.hpp"
 
 namespace ad {
+
 using std::meta::info;
 namespace m = ad::meta;
 
@@ -20,23 +21,22 @@ enum class StatementKind {
   Return
 };
 
+template<StatementKind k>
+struct StatementKindToClass {
+  using type = NoType;
+};
+
+template<StatementKind k>
+using StatementKindToClass_t = typename StatementKindToClass<k>::type;
+
 struct Statement : public ASTItem {
   StatementKind kind;
 
   explicit constexpr Statement(StatementKind kind) : ASTItem(ASTKind::Statement), kind(kind) {}
 
-#define DECL_IS(name) \
-  constexpr bool is ## name() { \
-    return StatementKind:: name == kind; \
+  constexpr bool is(StatementKind k) const {
+    return k == kind;
   }
-
-  DECL_IS(Comment)
-  DECL_IS(Declaration)
-  DECL_IS(EmptyLine)
-  DECL_IS(Expression)
-  DECL_IS(Return)
-
-#undef DECL_IS
 
   constexpr static Statement* cast(ASTItem* item) {
     return static_cast<Statement*>(item);
@@ -63,6 +63,7 @@ struct CommentStatement : public Statement {
     return new CommentStatement(comment);
   }
 };
+template <> struct StatementKindToClass<StatementKind::Comment> { using type = CommentStatement; };
 
 struct DeclarationStatement : public Statement {
 
@@ -101,6 +102,7 @@ struct DeclarationStatement : public Statement {
     return new DeclarationStatement(type_name, var_name, initializer->clone());
   }
 };
+template <> struct StatementKindToClass<StatementKind::Declaration> { using type = DeclarationStatement; };
 
 struct EmptyLineStatement : public Statement {
 
@@ -114,6 +116,7 @@ struct EmptyLineStatement : public Statement {
     return new EmptyLineStatement();
   }
 };
+template <> struct StatementKindToClass<StatementKind::EmptyLine> { using type = EmptyLineStatement; };
 
 struct ExpressionStatement : public Statement {
 
@@ -143,6 +146,7 @@ struct ExpressionStatement : public Statement {
     return new ExpressionStatement(expression->clone());
   }
 };
+template <> struct StatementKindToClass<StatementKind::Expression> { using type = ExpressionStatement; };
 
 struct ReturnStatement : public Statement {
 
@@ -172,29 +176,23 @@ struct ReturnStatement : public Statement {
     return new ReturnStatement(return_expression->clone());
   }
 };
+template <> struct StatementKindToClass<StatementKind::Return> { using type = ReturnStatement; };
 
 constexpr void releaseStatement(Statement*& stmt) {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdelete-non-abstract-non-virtual-dtor"
 
-#define CASE(name) \
-  else if (stmt->is ## name()) { \
-    delete name ## Statement::cast(stmt); \
+  constexpr static auto enumerators = std::define_static_array(enumerators_of(^^StatementKind));
+  template for (constexpr auto enumerator : enumerators) {
+    if (nullptr != stmt && stmt->is([:enumerator:])) {
+      delete StatementKindToClass_t<([:enumerator:])>::cast(stmt);
+      stmt = nullptr;
+      return;
+    }
   }
 
-  if (false) {}
-  CASE(Comment)
-  CASE(Declaration)
-  CASE(EmptyLine)
-  CASE(Expression)
-  CASE(Return)
-  else {
-    throw "Unknown statement.";
-  }
+  throw "Unknown expression";
 
-#undef CASE
-
-  stmt = nullptr;
 #pragma GCC diagnostic pop
 }
 

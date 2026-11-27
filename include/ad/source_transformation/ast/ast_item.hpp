@@ -6,6 +6,9 @@
 #include "../../meta.h"
 
 namespace ad {
+
+struct NoType {};
+
 using std::meta::info;
 namespace m = ad::meta;
 
@@ -38,14 +41,8 @@ struct ASTItem {
     member->parent = this;
   }
 
-#define DECL_IS(name) \
-  constexpr bool is ## name() { \
-    return ASTKind:: name == kind; \
+  constexpr bool is(ASTKind k) const {
+    return k == kind;
   }
-
-  DECL_IS(Expression)
-  DECL_IS(Statement)
-
-#undef DECL_IS
 };
 }

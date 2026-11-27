@@ -96,7 +96,7 @@ struct ForwardADWalker : public AstWalker {
     ForwardADExpressionWalker init_ad_expr = {};
     init_ad_expr.walk(stmt->initializer);
 
-    if (init_ad_expr.ad_expr->isFunctionCall()) {
+    if (init_ad_expr.ad_expr->is(ExpressionKind::FunctionCall)) {
       freeExpression(stmt->initializer);
 
       stmt->type_name = "auto";
@@ -111,11 +111,11 @@ struct ForwardADWalker : public AstWalker {
   constexpr void walk(ExpressionStatement* stmt) override {
 
     bool function_handled = false;
-    if (stmt->expression->isOperator()) {
+    if (stmt->expression->is(ExpressionKind::Operator)) {
       OperatorExpression* op_expr = OperatorExpression::cast(stmt->expression);
       OperatorInfo op_info = getOperatorInfo(op_expr->op);
 
-      if (OperatorKind::Assign == op_info.kind && op_expr->operands[1]->isFunctionCall()) {
+      if (OperatorKind::Assign == op_info.kind && op_expr->operands[1]->is(ExpressionKind::FunctionCall)) {
         ForwardADExpressionWalker expr_ad_expr = {};
         expr_ad_expr.walk(op_expr->operands[1]);
 
@@ -145,7 +145,7 @@ struct ForwardADWalker : public AstWalker {
     ForwardADExpressionWalker expr_ad_expr = {};
     expr_ad_expr.walk(stmt->return_expression);
 
-    if (expr_ad_expr.ad_expr->isFunctionCall()) {
+    if (expr_ad_expr.ad_expr->is(ExpressionKind::FunctionCall)) {
       freeExpression(stmt->return_expression);
       stmt->setMember(stmt->return_expression, expr_ad_expr.ad_expr);
     }

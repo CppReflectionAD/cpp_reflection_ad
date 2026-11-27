@@ -19,18 +19,18 @@ struct ExtractFunctionWalker : public AstWalker {
   using AstWalker::walk;
 
   constexpr void walk(Expression*& e) override {
-    bool handle = e->isFunctionCall();
-    if (handle && e->hasParent() && e->parent->isStatement()) {
+    bool handle = e->is(ExpressionKind::FunctionCall);
+    if (handle && e->hasParent() && e->parent->is(ASTKind::Statement)) {
       Statement* parent = Statement::cast(e->parent);
 
       // Do not extract direct assignments
-      handle = !parent->isDeclaration();
+      handle = !parent->is(StatementKind::Declaration);
     }
 
-    if (handle && e->hasParent() && e->parent->isExpression()) {
+    if (handle && e->hasParent() && e->parent->is(ASTKind::Expression)) {
       Expression* parent = Expression::cast(e->parent);
 
-      if (parent->isOperator()) {
+      if (parent->is(ExpressionKind::Operator)) {
         OperatorExpression* op_parent = OperatorExpression::cast(parent);
         OperatorInfo op = getOperatorInfo(op_parent->op);
 

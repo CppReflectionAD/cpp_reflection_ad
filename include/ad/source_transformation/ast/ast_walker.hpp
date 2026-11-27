@@ -51,36 +51,25 @@ struct AstWalker {
 #undef DECL_HANDLE
 
   constexpr virtual void walk(Expression*& expr) {
-    if (expr->isOperator()) {
-      walk(OperatorExpression::cast(expr));
-    } else if (expr->isLiteral()) {
-      walk(LiteralExpression::cast(expr));
-    } else if (expr->isFunctionCall()) {
-      walk(FunctionCallExpression::cast(expr));
-    } else if (expr->isId()) {
-      walk(IdExpression::cast(expr));
-    } else {
-      throw "Unknown expression";
+    constexpr static auto enumerators = std::define_static_array(enumerators_of(^^ExpressionKind));
+    template for (constexpr auto enumerator : enumerators) {
+      if (expr->is([:enumerator:])) {
+        walk(ExpressionKindToClass_t<([:enumerator:])>::cast(expr));
+        return;
+      }
     }
+    throw "Unknown expression";
   }
 
   constexpr virtual void walk(Statement*& stmt) {
-#define CASE(name) \
-  else if (stmt->is ## name()) { \
-    walk(name ## Statement::cast(stmt)); \
-  }
-
-    if (false) {}
-    CASE(Comment)
-    CASE(Declaration)
-    CASE(EmptyLine)
-    CASE(Expression)
-    CASE(Return)
-    else {
-      throw "Unknown statement.";
+    constexpr static auto enumerators = std::define_static_array(enumerators_of(^^StatementKind));
+    template for (constexpr auto enumerator : enumerators) {
+      if (stmt->is([:enumerator:])) {
+        walk(StatementKindToClass_t<([:enumerator:])>::cast(stmt));
+        return;
+      }
     }
-
-#undef CASE
+    throw "Unknown statement";
   }
 
   constexpr virtual void walk(std::vector<Statement*>* stmts) {
